@@ -9,7 +9,8 @@ Theo dõi rủi ro **ngập úng / lũ / hạn hán** cho Hà Nội, chi tiết 
 |---|---|---|---|
 | 1 | Bắt đầu từ bài toán nghiệp vụ | [01-business-problem.md](01-business-problem.md) | ✅ Xong (chờ duyệt) |
 | 2 | Xác định & đánh giá nguồn dữ liệu | [02-data-sources.md](02-data-sources.md) | ✅ Xong (chờ duyệt) |
-| 3 | Thiết kế kiến trúc | `03-architecture.md` | ⬜ Chưa bắt đầu |
+| 3 | Thiết kế kiến trúc | [03-architecture.md](03-architecture.md) | ✅ Xong (chờ duyệt) |
+| 3a | Cấu trúc repository | [03a-repo-structure.md](03a-repo-structure.md) | ✅ Xong (chờ duyệt) |
 | 4 | Ingest dữ liệu | `04-ingestion.md` | ⬜ |
 | 5 | Clean & Transform | `05-transformation.md` | ⬜ |
 | 6 | Lưu trữ — single source of truth | `06-storage-modeling.md` | ⬜ |

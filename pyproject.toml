@@ -7,7 +7,11 @@ authors = [
     { name = "Antigravity", email = "antigravity@bmad-method.org" }
 ]
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "dbt-duckdb>=1.11.0",
+    "dlt>=1.30.0",
+    "duckdb>=1.5.5",
+]
 
 [project.scripts]
 vn-climate-risk-monitor = "vn_climate_risk_monitor:main"

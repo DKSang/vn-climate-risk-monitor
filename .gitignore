@@ -8,3 +8,29 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Secrets / local config
+.env
+
+# Data lake / lakehouse local state (gitignored — tái tạo được)
+lake/
+catalog/
+
+# Airflow runtime
+orchestration/airflow_logs/
+logs/
+airflow.db
+
+# dbt runtime artifacts
+transform/dbt/target/
+transform/dbt/dbt_packages/
+transform/dbt/logs/
+transform/dbt/.user.yml
+
+# dlt state
+ingest/.dlt/
+ingest/dlt_pipelines/.state/
+
+# Notebook / OS
+.ipynb_checkpoints/
+.DS_Store
