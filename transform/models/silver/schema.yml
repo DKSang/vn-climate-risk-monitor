@@ -1,0 +1,52 @@
+version: 2
+
+models:
+  - name: wards_cleaned
+    description: >
+      SILVER — danh mục phường/xã GSO đã làm sạch. Grain nguồn: 3.321 phường/xã
+      toàn quốc, chưa lọc tỉnh.
+    columns:
+      - name: ward_code
+        description: "Mã phường/xã 5 ký tự — khoá join"
+        tests: [unique, not_null]
+      - name: ward_name
+        tests: [not_null]
+      - name: province_code
+        description: "Mã tỉnh 2 ký tự đã zero-pad ('01' = Hà Nội)"
+        tests: [not_null]
+
+  - name: ward_coordinates_cleaned
+    description: >
+      SILVER — toạ độ centroid phường/xã đã làm sạch và ép kiểu.
+      Grain nguồn: 3.321 phường/xã toàn quốc.
+    columns:
+      - name: location_key
+        tests: [unique, not_null]
+      - name: ward_code
+        description: "Mã phường/xã 5 ký tự đã zero-pad từ BIGINT"
+        tests: [unique, not_null]
+      - name: province_code
+        tests: [not_null]
+      - name: latitude
+        tests: [not_null]
+      - name: longitude
+        tests: [not_null]
+
+  - name: ward_locations
+    description: >
+      SILVER — ward master toàn quốc: toạ độ JOIN danh mục GSO. Đã validate,
+      CHƯA aggregate (đúng yêu cầu của Microsoft cho lớp silver).
+    columns:
+      - name: location_key
+        tests: [unique, not_null]
+      - name: ward_code
+        tests: [unique, not_null]
+      - name: province_code
+        tests: [not_null]
+      - name: latitude
+        tests: [not_null]
+      - name: longitude
+        tests: [not_null]
+      - name: has_gso_match
+        description: "FALSE ở 2 dòng lệch mã giữa 2 nguồn (Ba Chẽ, Ia Mơ)"
+        tests: [not_null]

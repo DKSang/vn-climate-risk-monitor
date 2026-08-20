@@ -1,0 +1,34 @@
+transform:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: ':memory:'
+      extensions:
+        - httpfs      # đọc file trên MinIO (S3)
+        - ducklake    # lakehouse catalog
+        - postgres    # đọc thẳng Postgres nguồn, không cần bước ingest trung gian
+
+      secrets:
+        - type: s3
+          name: minio_secret
+          key_id: minioadmin
+          secret: minioadmin
+          endpoint: 127.0.0.1:9000
+          use_ssl: false
+          url_style: path
+
+      attach:
+        # 1) Lakehouse đích: metadata trong Postgres, dữ liệu Parquet trên MinIO
+        - path: "ducklake:postgres:dbname=vnclimate host=127.0.0.1 port=5432 user=vnclimate password=vnclimate"
+          alias: catalog1
+          options:
+            data_path: "s3://vn-climate"
+            metadata_schema: "ducklake"
+
+        # 2) Postgres NGUỒN (chỉ đọc) — dbt đọc trực tiếp, bỏ hẳn hop dlt cho dữ liệu địa lý
+        - path: "dbname=vnclimate host=127.0.0.1 port=5432 user=vnclimate password=vnclimate"
+          alias: pg_source
+          type: postgres
+          options:
+            read_only: true

@@ -1,12 +1,9 @@
 # Bước 3 — Thiết kế kiến trúc
 
-**Hanoi Flood & Climate Risk Monitor** · v0.3 · 2026-08-20 · *Trạng thái: CHỜ DUYỆT*
+**Hanoi Flood & Climate Risk Monitor** · v1.0 · 2026-08-20 · *Trạng thái: ĐÃ TRIỂN KHAI & KIỂM CHỨNG*
 
-> Đã chốt từ Bước 1 §10.2: **mục đích = portfolio/học tập**, **ngân sách = 0đ, chạy local**.
-> v0.2: chuyển mô hình lưu trữ sang **Medallion Architecture** (Bronze → Silver → Gold) và trình
-> bày **lựa chọn stack theo từng phase của data lifecycle**.
-> v0.3: **đánh giá stack thay thế** dlt + MinIO/DuckLake + DuckDB + dbt + Airflow Lite/Postgres (§6.2);
-> quyết định cuối chờ duyệt ở §11.
+> v1.0 viết lại toàn bộ theo **kiến trúc đã chạy thật**, thay cho v0.3 vốn còn để mở lựa chọn
+> stack. Mọi con số trong tài liệu này đều lấy từ hệ thống đang chạy, không phải ước lượng.
 
 ---
 
@@ -14,288 +11,196 @@
 
 | Ràng buộc | Giá trị | Hệ quả thiết kế |
 |---|---|---|
-| Nguồn | Chỉ S1 Forecast, S2 Archive, S5 QĐ 2280, S13 wards | Không tích hợp thêm; 2 API ngoài, 2 dữ liệu tĩnh |
-| Độ phân giải mưa | **49 ô lưới** (R1) | Mưa tính theo ô, phường gán vào ô — không giả vờ chính xác hơn |
-| Nhịp | Hourly (forecast) + Daily (archive) | **2 pipeline riêng biệt**, không chung |
-| Freshness | Forecast ≤ 1h · Archive ~5 ngày trễ | Lịch giờ, có retry; hiển thị "as-of" trung thực |
-| Latency | Nguồn → dashboard ≤ 20 phút | Budget ở §8: thực tế ~2 phút, dư địa lớn |
-| DQ | 100% pass, fail → **chặn publish** | Gate trong orchestration, chỉ gold được serve |
-| Chi phí | 0đ, local | 100% open-source, một máy |
+| Nguồn | Open-Meteo Forecast + Archive, QĐ 2280, danh mục hành chính | 2 API ngoài + 2 nguồn tĩnh |
+| Độ phân giải mưa | **49 ô lưới cho 126 phường/xã** (R1) | Mưa theo ô, phường gán vào ô |
+| Nhịp | Hourly (forecast) + Daily (archive) | 2 pipeline riêng |
+| Chi phí | 0đ, chạy local | 100% open-source, Docker Compose |
+| DQ | Fail → chặn publish | `dbt test` là cổng chặn |
 
-## 2. Nguyên tắc thiết kế
-
-1. **Simplicity over scale** — 1 thành phố, 49 ô, 2 API. Không cần Spark/Kafka/container phức tạp.
-   Distributed ở đây là over-engineering, không phải điểm cộng portfolio.
-2. **Chạy được trên 1 máy** — toàn bộ stack gọn trong một tiến trình/local, khởi động lại dễ.
-3. **Medallion Architecture** — dữ liệu đi qua đúng 3 lớp Bronze → Silver → Gold, mỗi lớp một vai
-   trò, dễ trace dữ liệu hỏng nằm ở đâu.
-4. **Trung thực với dữ liệu** — kết quả mang nhãn "dự báo theo ô lưới ~11km", không bao giờ tô
-   vẽ mưa theo phường.
-5. **Idempotent + backfill được** — mọi bước có thể chạy lại không tạo trùng; lịch sử archive
-   backfill theo chunk.
-6. **Minh bạch** — luật rủi ro là SQL/if-else đọc được (không mô hình đen hộp), DQ là checks
-   đọc được.
-7. **DQ chặn publish, không chỉ cảnh báo** — chỉ dữ liệu ở lớp **Gold** được API/dashboard đọc.
-
-## 3. Sơ đồ kiến trúc tổng thể (Medallion)
+## 2. Stack đã chốt
 
 ```
-                        ┌───────────────────────────────────────────────┐
-                        │        ORCHESTRATION — Dagster (local)        │
-                        │  Hourly:  ingest→bronze → silver → gold → DQ  │
-                        │           → publish_gate                       │
-                        │  Daily:   archive→bronze → silver → gold → DQ  │
-                        │           → publish_gate                       │
-                        │  On-demand: ref_ingest (S13, S5) → reference   │
-                        └──────┬──────────────────────────┬─────────────┘
-                               │ fetch                     │ fetch
-                   ┌───────────▼──────────┐   ┌────────────▼───────────┐
-                   │  S1 Open-Meteo        │   │  S2 Open-Meteo         │
-                   │  Forecast API         │   │  Archive API (ERA5)    │
-                   │  49 ô · hourly · 48h  │   │  1981–nay · daily      │
-                   └───────────┬──────────┘   └────────────┬───────────┘
-                               │                            │
-        ┌──────────────────────▼────────────────────────────▼───────────┐
-        │              STORAGE — DuckDB (single file, SOT)              │
-        │                                                                │
-        │  ┌─────────────┐   ┌──────────────┐   ┌────────────────────┐  │
-        │  │  BRONZE     │   │  SILVER      │   │  GOLD              │  │
-        │  │ raw as-is   │→  │ clean/mapped │→  │ risk / flood /     │  │
-        │  │ + metadata  │   │ typed, DQ'd  │   │ drought marts      │  │
-        │  └─────────────┘   └──────────────┘   └─────────┬──────────┘  │
-        │                    reference.* (S13, S5, ward↔grid)           │
-        │                    audit.run_log                               │
-        └──────────────────────┬────────────────────────────┬───────────┘
-                               │ đọc (chỉ GOLD, đã qua gate) │ đọc
-                   ┌───────────▼───────────┐   ┌─────────────▼──────────┐
-                   │  SERVING — FastAPI    │   │  DASHBOARD — Streamlit │
-                   │  read-only /v1/*      │   │  Q1–Q9 + as-of stamp   │
-                   └───────────────────────┘   └────────────────────────┘
+Docker Compose (local, 0đ)
+├── Postgres 17.5   → DuckLake catalog metadata (schema `ducklake`)
+│                     + nguồn danh mục hành chính (schema `public`)
+├── MinIO           → object storage, Parquet cho bronze/silver/gold
+├── pgAdmin         → xem catalog
+└── DuckDB 1.5.5    → compute engine (embedded, không phải service)
+    └── dbt 1.12.2 + dbt-duckdb 1.11.0 → toàn bộ transform
 ```
 
-**Một máy, một DuckDB file, một scheduler.** Pipeline hai nhịp đều đi qua đủ 3 lớp medallion;
-chỉ Gold được serve.
+**Chưa có:** orchestration (Bước 8), serving/API/dashboard (Bước 8), ingest Open-Meteo (Bước 4).
 
-## 4. Các lớp Medallion
+## 3. Sơ đồ luồng dữ liệu
 
-| Lớp | Vai trò | Quy tắc | Ví dụ bảng (DuckDB) |
+```
+┌─ NGUỒN ────────────────────────────────────────────────────────┐
+│  Postgres public.*          MinIO raw/*.csv       Open-Meteo    │
+│  (danh mục hành chính)      (toạ độ centroid)     (CHƯA LÀM)    │
+└──────────┬────────────────────────┬────────────────────────────┘
+           │  ATTACH postgres        │  read_csv_auto('s3://...')
+           │  (read_only)            │
+           └───────────┬─────────────┘
+                       │   dbt + DuckDB
+        ┌──────────────▼──────────────────────────────────────┐
+        │  DuckLake  (catalog: Postgres · data: MinIO Parquet) │
+        │                                                       │
+        │  bronze.*_raw      as-is, cấm mọi biến đổi           │
+        │        ↓                                              │
+        │  silver.*_cleaned  làm sạch, ép kiểu, dedup, JOIN     │
+        │        ↓           (view — không tốn dung lượng)      │
+        │  gold.dim_* fct_*  dimensional model, lọc phạm vi     │
+        └──────────────┬───────────────────────────────────────┘
+                       │ dbt test = cổng chặn publish
+                       ▼
+              Serving / Dashboard  (Bước 8, chưa làm)
+```
+
+## 4. Chuẩn medallion — bám tài liệu Microsoft
+
+Nguồn: [Implement Medallion Lakehouse Architecture in Fabric](https://learn.microsoft.com/en-us/fabric/onelake/onelake-medallion-lakehouse-architecture)
+· [What is the medallion lakehouse architecture? (Azure Databricks)](https://learn.microsoft.com/en-us/azure/databricks/lakehouse/medallion)
+
+### 4.1 Nhiệm vụ từng lớp
+
+| | **Bronze** | **Silver** | **Gold** |
 |---|---|---|---|
-| **Bronze** | Dữ liệu **nguyên vẹn như nguồn trả về**, kèm metadata (giờ fetch, source, response). | Bất biến, ghi thêm (append), không sửa. Tái chạy = đè theo partition. | `bronze.forecast`, `bronze.archive` |
-| **Silver** | Dữ liệu **đã chuẩn hóa, gán kiểu, dedup, mapping** (ô lưới → phường), áp luật ngưỡng. | Có thể sửa (SCD), mỗi dòng có `updated_at`. | `silver.forecast_hourly`, `silver.daily_archive` |
-| **Gold** | **Mart nghiệp vụ đã qua DQ gate** — là thứ duy nhất được serve. | Chỉ ghi khi DQ pass 100%. | `gold.risk_hourly`, `gold.flood_proxy`, `gold.drought_daily` |
-| **Reference** (bổ trợ) | Dữ liệu tĩnh version hóa, cấp cho Silver/Gold. | Ghim version (commit SHA / văn bản). | `reference.wards`, `reference.grid_cells`, `reference.ward_to_grid`, `reference.thresholds_qd2280` |
+| Microsoft gọi là | Raw data ingestion | Data cleaning and validation | Dimensional modeling and aggregation |
+| Được làm | Không sửa gì. Thêm cột provenance | Schema enforcement · null handling · **dedup** · type casting · **JOIN** · schema evolution | Dim/fact · aggregate · lọc theo vùng hoặc thời gian |
+| Cấm | Ép kiểu, đổi tên, lọc, JOIN | — | Chạm `source()` trực tiếp |
+| Người dùng | Data engineer, audit | Data engineer, analyst, data scientist | Business analyst, BI, lãnh đạo |
+| Materialization | `table` | `view` | `table` |
 
-## 5. Luồng dữ liệu chi tiết
+> **Đính chính so với tài liệu nội bộ trước đây:** từng có quy tắc *"silver cấm JOIN"*.
+> Đó là convention **staging của dbt**, không phải chuẩn Microsoft. Microsoft liệt kê `Joins`
+> là thao tác hợp lệ của silver và lấy `customer_transactions` (một bảng join) làm ví dụ.
+> Yêu cầu thật của silver là: phải có ít nhất một bản **đã validate, CHƯA aggregate** cho mỗi record.
 
-### 5.1 Luồng tĩnh — reference (chạy khi cần)
+### 4.2 Quy ước đặt tên
 
-1. **S13**: tải 126 GeoJSON (ghim commit SHA) → `reference.wards`.
-2. **Ánh xạ ô lưới**: gọi Forecast cho 126 centroid, đọc tọa độ ô lưới model trả về → dedup →
-   **49 ô** → `reference.grid_cells` + `reference.ward_to_grid` (126 bản ghi).
-   → Bản cài đặt đúng **R1**: phường cùng ô = cùng chuỗi mưa.
-3. **S5**: nhập tay 4 ngưỡng QĐ 2280 → `reference.thresholds_qd2280` (có version + nguồn).
+| Layer | Mẫu | Ví dụ của Microsoft | Bảng trong dự án |
+|---|---|---|---|
+| bronze | `<entity>_raw` — **hậu tố** | `leads_raw` | `wards_raw`, `provinces_raw` |
+| silver | `<entity>_cleaned` | `leads_cleaned` | `wards_cleaned` |
+| silver | tên thực thể đã join | `customer_transactions` | `ward_locations` |
+| gold | `dim_<entity>` / `fct_<process>` | *(MS dùng tên nghiệp vụ)* | `dim_hanoi_ward` |
+| gold | `<business>_summary` | `business_summary` | *(chưa có)* |
 
-### 5.2 Luồng theo giờ — cảnh báo (S1)
+Schema đặt đúng theo mẫu `ops.bronze` / `ops.silver` / `ops.gold` của Microsoft →
+`catalog1.bronze` / `catalog1.silver` / `catalog1.gold`.
 
-- Chạy **phút :05 mỗi giờ** (freshness ≤ 1h).
-- Fetch 49 ô: `hourly=precipitation`, horizon 48h → **Bronze** `bronze.forecast` (partition giờ).
-- **Silver**: gán kiểu, dedup, map ô→phường (`ward_to_grid`), áp luật ngưỡng S5 (mm/h → cấp 1–4),
-  thêm mưa tích lũy 6h/24h (proxy lũ).
-- **DQ gate** → **Gold** `gold.risk_hourly` → API/dashboard.
-- Trả lời Q1–Q6.
+**Lệch có chủ ý:** giữ tiền tố `dim_`/`fct_` ở gold. Ví dụ gold của Microsoft toàn bảng tổng hợp
+nên không có tiền tố, nhưng chính họ định nghĩa gold là *"dimensional model"* — `dim_`/`fct_`
+là chuẩn Kimball, bổ sung chứ không mâu thuẫn.
 
-### 5.3 Luồng theo ngày — lịch sử & chuẩn khí hậu (S2)
+## 5. Các bảng hiện có
 
-- Chạy **1 lần/ngày**, fetch ngày `T-5` (lag ERA5) → **Bronze** `bronze.archive` (idempotent).
-- **Silver**: chuẩn hóa; tính chuẩn khí hậu 1991–2020 (A4) → `silver.climate_normal`.
-- **DQ gate** → **Gold**: `gold.climate_normal_daily`, `gold.drought_daily` (30/60/90 ngày vs chuẩn,
-  Q8), `gold.flood_proxy_daily` (mưa tích lũy nhiều ngày, proxy lũ).
-- Backfill 1981–nay chạy 1 lần theo chunk năm, idempotent.
-
-## 6. Lựa chọn stack theo từng phase của data lifecycle
-
-> Đi từng phase trong vòng đời dữ liệu: **Ingest → Bronze storage → Transform/Validate (Silver)
-> → Aggregate (Gold) → Serve → Observe/Govern**. Chọn stack phù hợp thang bài toán (0đ, local, 1 máy)
-> chứ không chọn stack "nghe cho sang".
-
-### Phase 1 — Ingest (fetch nguồn → Bronze)
-
-| Mục | Chọn | Lý do |
+| Bảng | Dòng | Vai trò |
 |---|---|---|
-| HTTP client | `httpx` (async) | 1 request multi-point cho 49 ô; retry/timeout linh hoạt |
-| Lưu raw | DuckDB `bronze.*` + mirror parquet | Ghi nguyên vẹn response + metadata (source, fetched_at); parquet là dạng trung lập, dễ đọc lại |
-| Cách khác (không dùng) | Kafka/Spark Streaming, Airbyte/Fivetran | Over-engineering cho 2 HTTP API theo giờ; không có CDC, không có sink phức tạp |
+| `bronze.provinces_raw` | 34 | 34 tỉnh/thành sau sáp nhập 2025 |
+| `bronze.wards_raw` | 3.321 | Danh mục phường/xã GSO toàn quốc |
+| `bronze.administrative_units_raw` | 5 | Loại đơn vị hành chính |
+| `bronze.administrative_regions_raw` | 8 | Vùng địa lý |
+| `bronze.ward_coordinates_raw` | 3.321 | Toạ độ centroid phường/xã |
+| `silver.wards_cleaned` | 3.321 | Làm sạch danh mục GSO |
+| `silver.ward_coordinates_cleaned` | 3.321 | Làm sạch + ép kiểu toạ độ |
+| `silver.ward_locations` | 3.321 | **Ward master toàn quốc** — đã JOIN, chưa aggregate |
+| `gold.dim_hanoi_ward` | **126** | Chiều phường/xã Hà Nội (NQ 1656/NQ-UBTVQH15) |
 
-### Phase 2 — Bronze storage (SOT)
+`dbt build` hiện: **40 PASS / 0 ERROR** (6 table model, 3 view model, 29 test, 2 hook).
 
-| Mục | Chọn | Lý do |
-|---|---|---|
-| Storage | **DuckDB** (1 file) | 0 ops, SQL, đọc parquet trực tiếp, chạy local, analytics nhanh; đủ SOT giai đoạn 1 |
-| Partition | Theo ngày/giờ | Delete-and-reload idempotent, backfill dễ |
-| Cách khác (không dùng) | Postgres, MinIO+parquet, BigQuery | Thêm hạ tầng/chi phí không cần thiết (A8: đổi Postgres khi thành sản phẩm, giữ nguyên medallion) |
+## 6. Quyết định kiến trúc (ADR)
 
-### Phase 3 — Transform & Validate (Bronze → Silver)
+### ADR-1 — Bỏ dlt khỏi luồng dữ liệu địa lý
 
-| Mục | Chọn | Lý do |
-|---|---|---|
-| Transform | **SQL trong DuckDB** + script Python mapping | Luật ngưỡng/sum/join là SQL đọc được, minh bạch (nguyên tắc 6); Python chỉ lo phần mapping địa lý centroid→ô |
-| Validate (DQ) | **Dagster asset checks** viết SQL + **Soda Core** | Checks khai báo đọc được; 100% pass mới cho sang Gold; Soda free |
-| Cách khác (không dùng) | dbt + Airflow, Spark jobs | dbt mạnh nhưng thêm khái niệm + profile; với 2 nguồn thì SQL thẳng trong DuckDB là đủ |
+**Bối cảnh:** luồng ban đầu là `Postgres/CSV → dlt → Parquet trên MinIO → Python CREATE TABLE → DuckLake`.
+Bước cuối là **transform viết bằng Python**, trái nguyên tắc "transform thuộc về dbt".
 
-### Phase 4 — Aggregate (Silver → Gold)
+**Quyết định:** dbt đọc thẳng nguồn.
+- Postgres: `ATTACH ... (TYPE postgres, READ_ONLY)` trong `profiles.yml`
+- CSV: `read_csv_auto('s3://...')` qua `meta.external_location` của source
 
-| Mục | Chọn | Lý do |
-|---|---|---|
-| Aggregation | **SQL view / marts trong DuckDB** | Mart là view/tables tái chạy được, join reference; không cần engine riêng |
-| Grain | Gold mart theo `(phường, giờ)`, `(phường, ngày)`, `(ô, ngày)` | Khớp fact ở Bước 1 §5 |
-| Cách khác (không dùng) | ClickHouse, dbt incremental | ClickHouse dư sức mạnh cho vài trăm nghìn dòng/năm |
+**Lý do:** với bảng quan hệ tĩnh, dlt không mang lại gì — không cần incremental state, không có
+JSON lồng nhau, và DuckLake đã có snapshot/time-travel riêng. Bỏ được 2 hop.
 
-### Phase 5 — Serve (Gold → consumer)
+**Hệ quả:** 4 hop → 1 hop. dlt **vẫn giữ trong dự án** cho Open-Meteo (Bước 4), nơi cần HTTP
+retry, state để không fetch lại 1981–2020 mỗi lần chạy, và unnest mảng `hourly` lồng nhau.
 
-| Mục | Chọn | Lý do |
-|---|---|---|
-| API | **FastAPI** read-only (`/v1/*`) | Nhẹ, chuẩn OpenAPI, chỉ đọc Gold (bắt buộc theo thiết kế) |
-| Dashboard | **Streamlit** | Làm nhanh, đẹp cho demo; hiển thị as-of + nhãn độ phân giải ô lưới |
-| Cách khác (không dùng) | Metabase/Superset, dbt Semantic Layer | Metabase nặng hơn cần; Semantic Layer dư cho 1 dashboard |
+### ADR-2 — Materialization `table` tuỳ biến cho DuckLake
 
-### Phase 6 — Observe & Govern (xuyên suốt)
-
-| Mục | Chọn | Lý do |
-|---|---|---|
-| Orchestration | **Dagster** (community) | Schedule hourly/daily, retries, catch-up, lineage UI, DQ-as-asset-checks — đồng bộ với nguyên tắc gate |
-| Freshness/alert | Dagster + **ntfy** webhook | Báo fail/stale miễn phí tới điện thoại |
-| Lineage & audit | Dagster asset graph + `audit.run_log` | Biết chính xác bản ghi nào từ nguồn nào, qua lớp nào, DQ ra sao |
-| Cách khác (không dùng) | Airflow, cron+script rải rác | Airflow nặng cho 1 máy; cron rải rác thì mất lineage & gate |
-
-**Tóm tắt stack** — toàn bộ chạy local, 0đ:
+**Vấn đề:** materialization mặc định của dbt-duckdb dùng create-then-swap:
 
 ```
-Python 3.13 + uv
-├── DuckDB          → Bronze / Silver / Gold / Reference (1 file SOT)
-├── Dagster         → orchestration, retry, catch-up, DQ gates, lineage
-├── Soda Core       → DQ checks khai báo (thay thế: SQL checks thuần)
-├── httpx           → fetch Open-Meteo (S1, S2)
-├── FastAPI         → serve Gold (read-only)
-└── Streamlit       → dashboard (Q1–Q9)
+1. CREATE TABLE <model>__dbt_tmp AS (...)
+2. RENAME <model>        -> <model>__dbt_backup
+3. RENAME <model>__dbt_tmp -> <model>
+4. DROP <model>__dbt_backup
 ```
 
-### 6.2 Đánh giá stack thay thế đề xuất (v0.3)
+Với DuckLake, đường dẫn Parquet được quyết định ở **bước 1** theo tên lúc tạo. Bước 3 chỉ đổi tên
+trong catalog Postgres, **không di dời file**. Kết quả: dữ liệu bảng `wards_raw` nằm vĩnh viễn ở
+`s3://vn-climate/bronze/wards_raw__dbt_tmp/`.
 
-Stack được đề xuất để cân nhắc thay thế: **ingest = dlt · lakehouse = MinIO + DuckLake ·
-process = DuckDB · transform = dbt · orchestration = Airflow Lite + Postgres**.
+**Đã thử và loại:**
+- `ducklake_rewrite_data_files()` — chạy OK nhưng không đổi đường dẫn
+- `ducklake_merge_adjacent_files()` — tương tự
+- `adapter.use_ducklake_table_workarounds()` của dbt-duckdb — chỉ xử lý `persist_docs` cho
+  DuckLake < 1.5.3, không liên quan đường dẫn
 
-**Đánh giá từng phase (so với v0.2):**
+**Quyết định:** override materialization `table`, dùng `CREATE OR REPLACE TABLE` thẳng vào tên đích.
 
-| Phase | v0.2 (hiện tại) | Đề xuất mới | Đánh giá | Verdict |
-|---|---|---|---|---|
-| Ingest | `httpx` gọi API + ghi DuckDB | **dlt** (filesystem/destination Parquet) | dlt khai báo pipeline (`rest_api` source), tự incremental + retry + schema evolution; lưu Bronze dạng file giữ "as-is". Học giá trị cao, chuẩn công cụ ELT hiện đại | ✅ Nên nâng cấp |
-| Bronze storage (SOT) | DuckDB 1 file | **MinIO** (Parquet) + **DuckLake** catalog | DuckLake (DuckDB team, **stable từ DuckDB 1.5.2 04/2026**): metadata trong SQL DB, data là Parquet, có ACID/time-travel/schema evolution/multi-writer. Dữ liệu dự án rất nhỏ → lợi ích chủ yếu là *học đúng lakehouse* + forward-compatible, không phải vì volume | ⚠️ Hợp lý nếu muốn học lakehouse |
-| Process | DuckDB | **DuckDB** (qua DuckLake extension) | Giữ nguyên engine; DuckDB đọc/ghi Parquet trên MinIO thay vì file cục bộ | ✅ Không đổi |
-| Transform & Validate | SQL thủ công + Dagster checks | **dbt** (dbt-duckdb) + `dbt test` | dbt là chuẩn ngành: SQL-first minh bạch (đúng nguyên tắc 6), model = medallion, test = DQ gate, docs + lineage đẹp cho portfolio. `dbt-duckdb` nạp extension (cần POC DuckLake, xem R13) | ✅ Nên nâng cấp |
-| Orchestration | Dagster | **Airflow Lite + Postgres** | Airflow = orchestrator phổ biến nhất (giá trị portfolio cao), 3.x đã nhẹ hơn nhưng footprint vẫn ~1GB+ (Dagster ~200MB, APScheduler ~50MB). Bù: Postgres dùng **kép** cho Airflow metadata + DuckLake catalog → giảm một DB | ⚠️ Chấp nhận nếu chịu footprint |
-| Serve | FastAPI + Streamlit | **giữ nguyên** | Không phụ thuộc lựa chọn trên | ✅ Không đổi |
+**Cảnh báo quan trọng — bài học đã trả giá:** một bản override trước đây làm đúng ý tưởng này
+nhưng **bỏ `adapter.commit()`** và toàn bộ hooks. Hậu quả đo được: DuckLake ghi metadata vào
+Postgres nhưng Parquet không finalize → **bảng ma** (`COUNT(*)` trả 126 từ metadata, `SELECT *`
+lỗi HTTP 404), và `dbt test` cho **green giả** vì `not_null` cũng đọc từ thống kê.
 
-**Vì sao stack này nhất quán nội tại (không chỉ "trendy"):**
-- **DuckLake giải quyết điểm yếu thật của DuckDB file**: DuckDB đơn file là *single-writer* (một process
-  ghi tại một thời điểm). Dưới Airflow, scheduler/worker chạy nhiều process ghi cùng dataset → DuckLake
-  (multi-writer, ACID qua catalog DB) là giải pháp đúng vấn đề, không phải thêm cho sang.
-- **Postgres dùng kép**: Airflow bắt buộc có metadata DB; DuckLake cần catalog DB. Dùng **một** Postgres
-  cho cả hai → hợp nhất hạ tầng.
-- **dlt + dbt + DuckDB là bộ ba "ELT hiện đại"**: dlt lo EL (load raw → Bronze), dbt lo T (Bronze→Silver→Gold),
-  DuckDB lo engine — đúng tinh thần medallion.
+Bản hiện tại giữ đầy đủ vòng đời: pre/post hooks, grants, `persist_docs`, và `adapter.commit()`.
+Chỉ hỗ trợ SQL — model Python sẽ báo lỗi rõ ràng thay vì hỏng ngầm.
+Xem `transform/macros/materializations.sql`.
 
-**Thành phần đề xuất cụ thể (nếu chốt):**
+### ADR-3 — Silver materialize thành `view`
 
+Silver chỉ làm sạch cơ học và join, không aggregate. Dùng `view` → **0 byte trên MinIO**, không
+tốn thời gian build, luôn đồng bộ với bronze. Kiểm chứng: prefix `silver/` trên MinIO rỗng.
+
+Khi nào đổi sang `table`: nếu silver có phép tính nặng bị lặp lại nhiều lần bởi gold.
+
+### ADR-4 — Bảo trì lakehouse tự động
+
+dbt materialize theo kiểu ghi bản mới, nên mỗi lần build để lại Parquet phiên bản cũ.
+`on-run-end` trong `dbt_project.yml`:
+
+```sql
+CALL ducklake_expire_snapshots('catalog1', older_than => now() - INTERVAL 7 DAY);
+CALL ducklake_cleanup_old_files('catalog1', cleanup_all => true);
 ```
-Docker Compose (1 máy, 0đ)
-├── MinIO     → Bronze/Silver/Gold Parquet (lake)
-├── Postgres  → Airflow metadata DB + DuckLake catalog (1 DB, 2 vai trò)
-├── Airflow   → orchestration, retry, catch-up, trigger dbt
-├── dbt + DuckDB (DuckLake ext) → transform + DQ gate (dbt test)
-├── dlt       → ingest S1/S2 → Bronze Parquet trên MinIO
-├── FastAPI   → serve Gold (read-only)
-└── Streamlit → dashboard (Q1–Q9)
-```
 
-**Điểm yếu trung thực (không giấu):**
-- **Ops weight**: MinIO + Postgres + Airflow = 3 container + footprint Airflow (~1GB RAM idle) —
-  nặng hơn hẳn v0.2 (1 process). Máy local cần ~4–8GB RAM; phải Docker Compose + limit resource.
-- **dbt-duckdb + DuckLake**: tích hợp còn mới, cần POC ở Bước 4 (R13).
-- **dlt normalization**: dlt biến đổi JSON lồng nhau thành bảng; muốn Bronze "as-is" phải dùng
-  destination file (parquet/jsonl), không ghi thẳng bảng (A13).
-- Với đúng khối lượng dữ liệu này, stack mới **thừa sức** — chấp nhận vì giá trị học + forward-compatible,
-  không phải vì dữ liệu đòi hỏi.
+Giữ 7 ngày để **vẫn time-travel được** — file của các build trong 7 ngày còn nằm đó là **chủ ý**,
+không phải rác. Khi cần squash sạch: `make clean-lake` (mất time-travel, giữ bản hiện tại).
 
-## 7. Mô hình lưu trữ (chi tiết Bước 6)
+### ADR-5 — Bảng nhỏ được DuckLake inline
 
-- DuckDB **1 file**, 4 namespace theo medallion + reference + audit.
-- Mọi bảng có partition (ngày/giờ) để idempotent; `audit.run_log` ghi mọi run để trace.
-- Chỉ Gold được đọc bởi FastAPI/dashboard — áp ở tầng query, không chỉ ở tầng quy ước.
-- Nếu chốt stack v0.3 (MinIO + DuckLake): đổi "1 file" thành "Parquet trên MinIO + catalog Postgres",
-  **giữ nguyên** namespace medallion và quy tắc trên — chỉ đổi tầng vật lý, không đổi mô hình logic.
+`administrative_units_raw` (5 dòng) và `administrative_regions_raw` (8 dòng) **không có file
+Parquet nào** trên MinIO nhưng đọc bình thường — DuckLake inline dữ liệu nhỏ thẳng vào catalog.
+Không phải lỗi. Cần biết điều này khi đối chiếu danh sách file với danh sách bảng.
 
-## 8. Budget độ trễ (mục tiêu ≤ 20 phút)
+## 7. Data quality — cổng chặn
 
-| Bước | Ước lượng |
+`dbt test` chạy trong `dbt build`, fail thì model downstream bị SKIP.
+
+**Test đặc biệt `assert_gold_is_readable`:** dùng `COUNT(DISTINCT <cột VARCHAR>)` để **buộc engine
+đọc Parquet thật**. Sinh ra sau sự cố bảng ma — khi đó `COUNT(*)` và `not_null` đều PASS vì trả lời
+từ thống kê metadata mà không chạm file. Bài học: **test dựa trên metadata không chứng minh được
+dữ liệu tồn tại.**
+
+## 8. Còn thiếu
+
+| Hạng mục | Bước |
 |---|---|
-| Fetch 49 ô (1 request multi-point) | ~5–30 s |
-| Bronze → Silver → Gold (SQL) | < 30 s |
-| DQ checks | < 10 s |
-| Publish (ghi Gold, API đọc trực tiếp) | < 5 s |
-| **Tổng** | **~1–2 phút** — dư địa lớn so với 20 phút, chấp nhận retry 2–3 lần |
-
-## 9. Xử lý lỗi & retry
-
-- **Network/5xx**: retry exponential backoff (tối đa 3), có jitter.
-- **Thiếu giờ forecast** (máy tắt, mất mạng): Dagster catch-up khi máy bật lại → tự chạy các giờ
-  lỡ; đối chứng quá khứ lấy từ Archive (S2) khi về (~5 ngày sau).
-- **Trùng lặp**: mọi bước idempotent theo partition; chạy lại = ghi đè không trùng.
-- **DQ fail**: chặn Gold; run fail + alert qua ntfy; Gold cũ vẫn phục vụ (không mất sản phẩm đột
-  ngột), gắn nhãn "stale".
-
-## 10. Observability & DQ
-
-- **Dagster UI**: lịch sử run, success/fail, lineage Bronze→Silver→Gold.
-- **Freshness check**: Gold hourly phải mới hơn 1h; vi phạm → alert.
-- **DQ checks** (mỗi mart Gold): non-null, phạm vi hợp lý (mưa ≥ 0, cấp 1–4), số ô/giờ đủ, ổn định
-  giữa 2 giờ liên tiếp, khớp `reference.ward_to_grid`.
-- **Alert**: ntfy khi fail/stale.
-- **Trung thực**: dashboard hiển thị **as-of timestamp** (dữ liệu đến giờ nào, từ nguồn nào).
-
-## 11. Giả định & câu hỏi mở
-
-**Giả định mới (tiếp theo A6–A9)**
-- **A10** — Soda Core là tùy chọn: nếu thấy thừa dep thì dùng thẳng Dagster asset checks viết SQL
-  (cùng kết quả gating).
-- **A11** — DuckDB là SOT giai đoạn 1; khi chuyển Postgres (A8) thì cấu trúc medallion giữ nguyên,
-  chỉ đổi engine — đây là lý do giữ bronze/silver/gold tách lớp rõ.
-- **A12** — Nếu chốt stack mới: DuckLake dùng **catalog Postgres** (dùng chung với Airflow metadata),
-  không thêm DB riêng — hợp nhất hạ tầng.
-- **A13** — Nếu chốt stack mới: Bronze qua dlt dùng **filesystem destination** (Parquet/JSONL trên
-  MinIO) để giữ đúng "as-is" theo nguyên tắc medallion, thay vì để dlt normalize thành bảng.
-- **A14** — Nếu chốt stack mới: Airflow chạy **local profile** (LocalExecutor, không Celery/Redis),
-  chỉ cài các provider cần thiết (DuckDB/HTTP); Postgres là metadata DB.
-
-**Câu hỏi mở — chờ duyệt**
-1. **Chốt stack nào?** (a) giữ v0.2: Dagster + DuckDB file · (b) stack mới: dlt + MinIO/DuckLake +
-   dbt + Airflow Lite/Postgres · (c) hybrid: dlt + dbt + Airflow nhưng giữ DuckDB file, bỏ MinIO/DuckLake.
-2. Dagster có chấp nhận được với máy local không, hay hạ cấp APScheduler (A9)? — *chỉ khi chọn (a)*.
-3. Dashboard Streamlit đọc trực tiếp Gold, hay qua FastAPI (khuyến nghị qua FastAPI để tách serving)?
-4. Chấp nhận thêm Soda Core (A10) hay dùng thuần SQL checks? — *chỉ khi chọn (a)*.
-
-## 12. Rủi ro mới (tiếp theo R7–R11)
-
-| # | Rủi ro | Mức | Xử lý |
-|---|---|---|---|
-| **R10** | Medallion với DuckDB có thể bị hiểu lầm là "thêm lớp vô nghĩa" cho dữ liệu nhỏ. | Thấp | Giữ 3 lớp đúng vai trò (as-is / conformed / business), mỗi lớp có mục đích + DQ riêng; ghi rõ trace ở `audit.run_log`. |
-| **R11** | Silver lưu cả chuỗi lịch sử dự báo (forecast 48h × 49 ô × 8760 giờ/năm) — kích thước vẫn nhỏ nhưng cần nén/hợp nhất đúng. | Thấp | Partition theo ngày; nén định kỳ; chỉ giữ gold đã gộp cho serve. |
-| **R12** | Stack mới nặng ops: 3 container (MinIO, Postgres, Airflow) + footprint Airflow ~1GB → quá tải máy local. | Trung bình | Docker Compose + limit resource; Airflow chạy LocalExecutor, chỉ bật nhịp giờ trong mùa mưa (R6); hạ cấp APScheduler nếu quá tải (A9). |
-| **R13** | `dbt-duckdb` + DuckLake extension chưa chín → transform không chạy trên lakehouse. | Trung bình | **POC ở Bước 4** trước khi cam kết; fallback: dbt chạy trên DuckDB file rồi `COPY` Parquet lên MinIO — vẫn là lakehouse, chỉ bỏ lớp DuckLake catalog. |
-| **R14** | dlt normalize làm mất dạng "as-is" của Bronze. | Thấp | Dùng filesystem destination (A13) giữ Parquet/JSONL gốc; bảng normalized coi là Silver. |
-
-## 13. Chưa làm trong bước này (dành cho bước sau)
-
-- Chi tiết schema medallion (bảng/cột/kiểu) — **Bước 6**.
-- Cài đặt ingest thật — **Bước 4**; clean/transform — **Bước 5**.
-- DQ/observability cài đặt — **Bước 7**; API/dashboard — **Bước 8**.
-- Governance (version hóa, tài liệu, chuẩn hóa) — **Bước 9**.
+| Ingest Open-Meteo (S1 Forecast, S2 Archive) bằng dlt | 4 |
+| Bảng fact: `fct_rainfall_hourly`, `fct_flood_risk_hourly` | 5–6 |
+| Chiều `dim_grid_cell` (49 ô) + ánh xạ phường → ô lưới | 5–6 |
+| Seed ngưỡng QĐ 2280 (50/70/100 mm/h) | 5 |
+| Orchestration | 8 |
+| API + dashboard | 8 |
+| Governance, CI/CD | 9 |
