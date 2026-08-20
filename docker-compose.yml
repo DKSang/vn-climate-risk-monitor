@@ -1,0 +1,41 @@
+# vn-climate-risk-monitor — Infrastructure
+# Postgres: DuckLake catalog metadata (schema ducklake) + future Airflow metadata
+# MinIO:    S3-compatible object storage (Bronze/Silver/Gold Parquet)
+
+services:
+  postgres:
+    image: postgres:17.5
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-vnclimate}
+      POSTGRES_USER: ${POSTGRES_USER:-vnclimate}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-vnclimate}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-vnclimate} -d ${POSTGRES_DB:-vnclimate}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  minio:
+    image: minio/minio
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # Console UI
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
+    command: server --console-address ":9001" /data
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres_data:
+  minio_data:
