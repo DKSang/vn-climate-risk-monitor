@@ -1,0 +1,6 @@
+# dlt global configuration
+[runtime]
+log_level = "INFO"
+
+[destination.filesystem]
+layout = "{table_name}/{YYYY}/{MM}/{DD}/{load_id}.{ext}"

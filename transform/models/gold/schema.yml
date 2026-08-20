@@ -1,0 +1,29 @@
+version: 2
+
+models:
+  - name: dim_hanoi_ward
+    description: >
+      GOLD — Dimension: 126 phường/xã Hà Nội sau sắp xếp 2025
+      (NQ 1656/NQ-UBTVQH15, hiệu lực 01/07/2025). Khoá chiều cho các fact
+      rủi ro khí hậu sẽ xây ở bước sau.
+    columns:
+      - name: ward_key
+        description: "Khoá thay thế của chiều — fact join vào cột này"
+        tests: [unique, not_null]
+      - name: ward_code
+        description: "Mã hành chính phường/xã 5 ký tự"
+        tests: [unique, not_null]
+      - name: ward_name
+        description: "Tên phường/xã tiếng Việt"
+        tests: [not_null]
+      - name: province_code
+        description: "Luôn là '01' — phạm vi gold giới hạn ở Hà Nội"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['01']
+      - name: latitude
+        tests: [not_null]
+      - name: longitude
+        tests: [not_null]

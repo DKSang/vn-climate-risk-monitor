@@ -29,8 +29,36 @@ clean-targets:         # directories to be removed by `dbt clean`
 # In this example config, we tell dbt to build all models in the example/
 # directory as views. These settings can be overridden in the individual model
 # files using the `{{ config(...) }}` macro.
+# Bảo trì lakehouse tự động sau mỗi lần chạy dbt.
+#
+# Vì sao cần: dbt materialize bằng create-then-swap, nên mỗi lần build sẽ để lại
+# file Parquet của phiên bản cũ trên MinIO. Không dọn thì rác tích luỹ vô hạn.
+#
+# Giữ lại 7 ngày snapshot để vẫn time-travel được (DuckLake), chỉ xoá file
+# không còn snapshot nào tham chiếu.
+on-run-end:
+  - "CALL ducklake_expire_snapshots('catalog1', older_than => now() - INTERVAL 7 DAY)"
+  - "CALL ducklake_cleanup_old_files('catalog1', cleanup_all => true)"
+
 models:
   transform:
-    # Config indicated by + and applies to all files under models/example/
-    example:
+    # Mọi model đều nằm trong DuckLake catalog (Postgres metadata + MinIO Parquet)
+    +database: catalog1
+
+    # Bronze: đọc parquet dlt đã land trên MinIO -> DuckLake table (as-is, không sửa dữ liệu)
+    bronze:
+      +schema: bronze
+      +materialized: table
+      +tags: ['bronze']
+
+    # Silver: làm sạch cơ học 1:1 với bronze. View -> không tốn dung lượng.
+    silver:
+      +schema: silver
       +materialized: view
+      +tags: ['silver']
+
+    # Gold: nghiệp vụ (join, lọc phạm vi, conditional logic)
+    gold:
+      +schema: gold
+      +materialized: table
+      +tags: ['gold']

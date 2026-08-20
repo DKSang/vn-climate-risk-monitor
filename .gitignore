@@ -11,6 +11,8 @@ wheels/
 
 # Secrets / local config
 .env
+.dlt/secrets.toml
+**/.dlt/secrets.toml
 
 # Data lake / lakehouse local state (gitignored — tái tạo được)
 lake/
@@ -22,10 +24,12 @@ logs/
 airflow.db
 
 # dbt runtime artifacts
-transform/dbt/target/
-transform/dbt/dbt_packages/
-transform/dbt/logs/
-transform/dbt/.user.yml
+# (dbt project nằm ở transform/, không phải transform/dbt/)
+transform/target/
+transform/dbt_packages/
+transform/logs/
+transform/.user.yml
+transform/dev.duckdb
 
 # dlt state
 ingest/.dlt/
