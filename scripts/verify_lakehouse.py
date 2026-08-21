@@ -16,28 +16,14 @@ Usage:
 from __future__ import annotations
 
 import sys
-import os
 
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except ImportError:
-    pass
+import duckdb
 
-# ---------------------------------------------------------------------------
-# Config
-# ---------------------------------------------------------------------------
-MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", "localhost:9000")
-MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY", "minioadmin")
-MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY", "minioadmin")
-MINIO_SECURE = os.getenv("MINIO_SECURE", "false").lower() == "true"
-MINIO_BUCKET = os.getenv("MINIO_BUCKET", "vn-climate")
-
-PG_HOST = os.getenv("POSTGRES_HOST", "localhost")
-PG_PORT = os.getenv("POSTGRES_PORT", "5432")
-PG_DB = os.getenv("POSTGRES_DB", "vnclimate")
-PG_USER = os.getenv("POSTGRES_USER", "vnclimate")
-PG_PASSWORD = os.getenv("POSTGRES_PASSWORD", "vnclimate")
+from vn_climate_risk_monitor.lakehouse import (
+    BRONZE_CATALOG,
+    BRONZE_TABLE_SCHEMA,
+    get_connection,
+)
 
 PASSED = 0
 FAILED = 0
@@ -54,30 +40,8 @@ def check(name: str, ok: bool, detail: str = "") -> None:
 
 
 def get_ducklake_connection():
-    """Create a DuckDB connection with DuckLake attached."""
-    import duckdb
-
-    con = duckdb.connect()
-    con.execute(f"""
-        CREATE SECRET minio_secret (
-            TYPE s3,
-            KEY_ID '{MINIO_ACCESS_KEY}',
-            SECRET '{MINIO_SECRET_KEY}',
-            ENDPOINT '{MINIO_ENDPOINT}',
-            USE_SSL {str(MINIO_SECURE).lower()},
-            URL_STYLE 'path'
-        );
-    """)
-    pg_conn = (
-        f"dbname={PG_DB} host={PG_HOST} port={PG_PORT} "
-        f"user={PG_USER} password={PG_PASSWORD}"
-    )
-    con.execute(
-        f"ATTACH 'ducklake:postgres:{pg_conn}' "
-        f"AS catalog1 (DATA_PATH 's3://{MINIO_BUCKET}', METADATA_SCHEMA 'ducklake');"
-    )
-    con.execute("USE catalog1;")
-    return con
+    """Create a DuckDB connection with both DuckLake catalogs attached."""
+    return get_connection()
 
 
 def test_1_connection(con) -> None:
@@ -86,7 +50,7 @@ def test_1_connection(con) -> None:
     try:
         result = con.sql("SELECT current_database();").fetchone()
         check("Connected to DuckLake catalog", result is not None, f"database = {result[0]}")
-    except Exception as e:
+    except duckdb.Error as e:
         check("Connected to DuckLake catalog", False, str(e))
 
 
@@ -97,14 +61,27 @@ def test_2_metadata_tables(con) -> None:
         # Query the Postgres catalog via DuckDB's postgres scanner isn't direct,
         # but we can check DuckLake's internal tables via information_schema
         schemas = con.sql(
-            "SELECT schema_name FROM information_schema.schemata ORDER BY schema_name;"
+            "SELECT schema_name FROM information_schema.schemata "
+            "WHERE catalog_name = 'catalog1' ORDER BY schema_name;"
         ).fetchall()
         schema_names = [s[0] for s in schemas]
 
-        check("Schema 'bronze' exists", "bronze" in schema_names)
         check("Schema 'silver' exists", "silver" in schema_names)
         check("Schema 'gold' exists", "gold" in schema_names)
-    except Exception as e:
+        check("Schema 'ops' exists", "ops" in schema_names)
+
+        bronze_schemas = {
+            row[0]
+            for row in con.sql(
+                "SELECT schema_name FROM information_schema.schemata "
+                f"WHERE catalog_name = '{BRONZE_CATALOG}'"
+            ).fetchall()
+        }
+        check(
+            f"Schema '{BRONZE_CATALOG}.{BRONZE_TABLE_SCHEMA}' exists",
+            BRONZE_TABLE_SCHEMA in bronze_schemas,
+        )
+    except duckdb.Error as e:
         check("Metadata tables query", False, str(e))
 
 
@@ -136,7 +113,7 @@ def test_3_acid_operations(con) -> None:
         check("SELECT returns 3 rows", len(rows) == 3, f"got {len(rows)} rows")
         check("Data integrity", rows[0] == (1, "Hanoi", 35.2), f"row[0] = {rows[0]}")
 
-    except Exception as e:
+    except duckdb.Error as e:
         check("ACID operations", False, str(e))
 
 
@@ -163,7 +140,7 @@ def test_4_time_travel(con) -> None:
         else:
             check("Time travel query", True, "only 1 snapshot, skip version query")
 
-    except Exception as e:
+    except duckdb.Error as e:
         # Time travel syntax may vary; don't fail hard
         check("Time travel", True, f"skipped ({e})")
 
@@ -174,7 +151,7 @@ def test_5_cleanup(con) -> None:
     try:
         con.execute("DROP TABLE IF EXISTS gold._verify_test;")
         check("Dropped gold._verify_test", True)
-    except Exception as e:
+    except duckdb.Error as e:
         check("Cleanup", False, str(e))
 
 
@@ -183,12 +160,11 @@ def main() -> None:
     print("  DuckLake Lakehouse — POC Verification")
     print("=" * 60)
 
-    import duckdb
     print(f"\n  DuckDB version: {duckdb.__version__}")
 
     try:
         con = get_ducklake_connection()
-    except Exception as e:
+    except duckdb.Error as e:
         print(f"\n  ❌ Failed to connect: {e}", file=sys.stderr)
         print("  → Did you run 'docker compose up -d' and 'uv run python scripts/bootstrap.py'?")
         sys.exit(1)

@@ -36,6 +36,6 @@ SELECT
     c.climate_zone,
     (w.ward_code IS NOT NULL)   AS has_gso_match,
     c.bronze_ingested_at
-FROM {{ ref('ward_coordinates_cleaned') }} c
-LEFT JOIN {{ ref('wards_cleaned') }} w
+FROM {{ ref('ward_centroids') }} c
+LEFT JOIN {{ ref('wards') }} w
     ON c.ward_code = w.ward_code

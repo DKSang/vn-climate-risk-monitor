@@ -11,8 +11,8 @@
 
     Với DuckLake, đường dẫn vật lý của file Parquet được quyết định ở BƯỚC 1 theo
     tên bảng lúc tạo. Bước 3 chỉ đổi tên trong catalog Postgres, KHÔNG di dời file
-    trên object storage. Kết quả: dữ liệu của bảng `wards_raw` nằm vĩnh viễn ở
-        s3://vn-climate/bronze/wards_raw__dbt_tmp/ducklake-*.parquet
+    trên object storage. Kết quả: dữ liệu của bảng `gso_wards` nằm vĩnh viễn ở
+        s3://vn-climate/bronze/tables/gso_wards__dbt_tmp/ducklake-*.parquet
 
     Đã thử và loại các cách khác (2026-08-20):
       - ducklake_rewrite_data_files()   -> chạy OK nhưng KHÔNG đổi đường dẫn
@@ -46,7 +46,7 @@
   -- `BEGIN` xảy ra ở đây
   {{ run_hooks(pre_hooks, inside_transaction=True) }}
 
-  -- Ghi thẳng vào tên đích -> file Parquet nằm đúng s3://.../<schema>/<table>/
+  -- Ghi thẳng vào tên đích -> file Parquet nằm đúng data_path/schema/table/
   {% call statement('main') -%}
     CREATE OR REPLACE TABLE {{ target_relation }} AS (
       {{ compiled_code }}

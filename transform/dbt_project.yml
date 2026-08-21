@@ -39,6 +39,8 @@ clean-targets:         # directories to be removed by `dbt clean`
 on-run-end:
   - "CALL ducklake_expire_snapshots('catalog1', older_than => now() - INTERVAL 7 DAY)"
   - "CALL ducklake_cleanup_old_files('catalog1', cleanup_all => true)"
+  - "CALL ducklake_expire_snapshots('bronze_store', older_than => now() - INTERVAL 7 DAY)"
+  - "CALL ducklake_cleanup_old_files('bronze_store', cleanup_all => true)"
 
 # Seed: file CSV tĩnh, version-control cùng code.
 #
@@ -49,7 +51,7 @@ on-run-end:
 #
 # Seed nằm ở schema `seed`, KHÔNG phải `bronze`: nó là input artifact — cùng vai
 # trò với Postgres nguồn (pg_source), không phải một lớp của medallion. Nhờ vậy
-# schema bronze chỉ chứa đúng 5 bảng *_raw.
+# schema bronze dùng tên nguồn/entity, không lặp hậu tố `_raw`.
 seeds:
   transform:
     +database: catalog1
@@ -71,13 +73,15 @@ models:
     # Mọi model đều nằm trong DuckLake catalog (Postgres metadata + MinIO Parquet)
     +database: catalog1
 
-    # Bronze: đọc parquet dlt đã land trên MinIO -> DuckLake table (as-is, không sửa dữ liệu)
+    # Bronze tables dùng catalog riêng root tại s3://<bucket>/bronze. Schema
+    # `tables` tạo đúng path vật lý bronze/tables/<table>/.
     bronze:
-      +schema: bronze
+      +database: bronze_store
+      +schema: tables
       +materialized: table
       +tags: ['bronze']
 
-    # Silver: làm sạch cơ học 1:1 với bronze. View -> không tốn dung lượng.
+    # Silver: validate, chuẩn hóa, deduplicate và conform. View -> không tốn dung lượng.
     silver:
       +schema: silver
       +materialized: view

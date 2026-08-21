@@ -1,98 +1,95 @@
-# Bước 3a — Cấu trúc repository
+# Cấu trúc repository
 
-**Hanoi Flood & Climate Risk Monitor** · v0.1 · 2026-08-20 · *Trạng thái: CHỜ DUYỆT*
+**Hanoi Flood & Climate Risk Monitor** · v1.0 · 2026-08-21
 
-> Ánh xạ kiến trúc v0.3 (03-architecture.md §3–§6.2) sang cấu trúc thư mục. Mỗi thư mục ứng với
-> một phase trong data lifecycle / một layer medallion.
+Repository dùng ba data layer `bronze → silver → gold`. `ops` là schema kỹ thuật
+cho checkpoint và audit, không phải data layer thứ tư.
 
-## 1. Sơ đồ cây
+## Cây thư mục
 
-```
+```text
 vn-climate-risk-monitor/
-├── pyproject.toml              # workspace root (uv), khai báo packages + tool config
-├── Makefile                    # lệnh ngắn: make ingest / make dbt / make up ...
-├── .env.example                # mẫu biến môi trường (copy → .env, KHÔNG commit .env)
-├── docker-compose.yml          # MinIO + Postgres + Airflow + API + Dashboard
+├── src/vn_climate_risk_monitor/
+│   ├── config.py                    # cấu hình typed từ environment
+│   ├── lakehouse.py                 # kết nối DuckDB + DuckLake
+│   ├── storage/
+│   │   └── minio.py                 # adapter object storage dùng chung
+│   └── ingestion/
+│       ├── layout.py                # contract object key bronze/files
+│       ├── collectors/              # API/file → JSON/file bất biến trên MinIO
+│       ├── loaders/                 # bronze/files → Bronze DuckLake table
+│       └── state/                   # ops.pipeline_runs, ops.ingestion_files
 │
-├── docs/                       # Tài liệu 9 bước (business → governance)
+├── transform/                       # dbt + DuckDB + DuckLake
+│   ├── models/
+│   │   ├── bronze/                  # source-faithful; không hậu tố `_raw`
+│   │   ├── silver/                  # validate, dedup, conform
+│   │   └── gold/                    # dimension, fact, KPI nghiệp vụ
+│   ├── seeds/                       # reference nhỏ, tĩnh, version-control
+│   ├── macros/
+│   └── tests/
 │
-├── ingest/                     # ── PHASE 1: INGEST (dlt)
-│   └── dlt_pipelines/
-│       ├── sources/            #   nguồn dữ liệu: open_meteo_forecast.py, open_meteo_archive.py
-│       └── pipelines/          #   pipeline: forecast_pipeline.py, archive_pipeline.py
-│
-├── reference/                  # ── DỮ LIỆU TĨNH (S5, S13) — version hóa
-│   ├── s13_wards/              #   GeoJSON 126 phường-xã (ghim commit SHA)
-│   ├── qd2280/                 #   ngưỡng mưa → cấp rủi ro (nhập tay, có nguồn)
-│   └── scripts/                #   build_ward_grid_mapping.py (centroid → 49 ô lưới)
-│
-├── lake/                       # ── PHASE 2: LAKEHOUSE (MinIO/DuckLake) — GITIGNORED
-│   ├── bronze/                 #   raw as-is (dlt → Parquet)
-│   ├── silver/                 #   clean/mapped/typed
-│   └── gold/                   #   mart nghiệp vụ, qua DQ gate — chỉ Gold được serve
-│
-├── catalog/                    #   DuckLake catalog DB (metadata, gitignored)
-│
-├── transform/                  # ── PHASE 3 & 4: TRANSFORM (dbt + DuckDB)
-│   └── dbt/
-│       ├── dbt_project.yml     #   cấu hình model → mapping medallion
-│       ├── profiles.yml        #   profile dbt-duckdb (DuckLake ext) → lake/
-│       ├── models/
-│       │   ├── bronze/         #   staging: đọc Parquet Bronze
-│       │   ├── silver/         #   clean + mapping + luật ngưỡng QĐ 2280
-│       │   └── gold/           #   mart: risk_hourly, flood_proxy, drought_daily
-│       ├── tests/              #   DQ checks (dbt test) = cổng chặn publish
-│       ├── macros/             #   luật tái dùng (mm/h → cấp 1–4)
-│       ├── seeds/              #   CSV tĩnh: ngưỡng S5, ánh xạ ô lưới
-│       └── analyses/           #   phân tích ad-hoc
-│
-├── orchestration/              # ── PHASE 6: ORCHESTRATION (Airflow Lite)
-│   ├── dags/                   #   hourly_forecast_pipeline.py, daily_archive_pipeline.py,
-│   │                           #   reference_load_pipeline.py, backfill_archive.py
-│   ├── plugins/                #   hook/helper dùng chung
-│   └── Dockerfile              #   Airflow 3.x, LocalExecutor, providers cần thiết
-│
-├── serving/                    # ── PHASE 5: SERVE
-│   ├── api/                    #   FastAPI read-only — chỉ đọc Gold
-│   │   └── app/
-│   │       ├── main.py         #   /v1/risk, /v1/wards, /v1/flood, /v1/drought, /health
-│   │       ├── routers/        #   endpoint theo nghiệp vụ (Q1–Q9)
-│   │       └── schemas/        #   Pydantic models (response)
-│   └── dashboard/              #   Streamlit
-│       ├── app.py              #   bản đồ rủi ro, bảng Q1–Q9, as-of timestamp
-│       └── pages/              #   trang: ngập đô thị / lũ / hạn hán
-│
-├── scripts/                    # ── OPS (ad-hoc)
-│   ├── bootstrap.py            #   init: tạo bucket MinIO, chạy reference, tạo catalog
-│   └── backfill_archive.py     #   backfill ERA5 1981–nay theo chunk năm
-│
-├── tests/                      # ── KIỂM THỬ
-│   ├── unit/                   #   luật ngưỡng, mapping ô lưới
-│   ├── integration/            #   pipeline end-to-end trên fixture nhỏ
-│   └── fixtures/               #   response mẫu Open-Meteo, GeoJSON 1–2 phường
-│
-└── notebooks/                  # ── KHÁM PHÁ (không thuộc pipeline)
+├── reference/                       # GeoJSON và văn bản nguồn tĩnh
+├── orchestration/                   # DAG chỉ điều phối, không chứa business logic
+├── serving/                         # API/dashboard chỉ đọc Gold
+├── scripts/                         # bootstrap, verify, maintenance
+└── tests/
+    ├── unit/
+    ├── integration/
+    └── fixtures/
 ```
 
-## 2. Ánh xạ thư mục → kiến trúc
+Không còn package `ingest/` ở repository root. Ingestion là code ứng dụng và nằm
+trong package cài đặt được `vn_climate_risk_monitor.ingestion`.
 
-| Kiến trúc (03-architecture.md) | Thư mục |
+## Bố trí vật lý trên MinIO
+
+```text
+s3://vn-climate/
+├── bronze/
+│   ├── files/                       # payload nguyên bản, collector quản lý
+│   │   └── <source>/<dataset>/<load_type>/YYYY/MM/DD/HH/<run_id>/
+│   └── tables/                      # Parquet do DuckLake quản lý
+│       └── <table>/
+├── silver/<ducklake-table>/
+└── gold/<ducklake-table>/
+```
+
+`bronze/files` và `bronze/tables` có owner/lifecycle tách biệt.
+Các thủ tục maintenance DuckLake chỉ xóa file đã được catalog quản lý; collector
+không overwrite file nguồn.
+
+## Trách nhiệm từng layer
+
+| Layer | Trách nhiệm |
 |---|---|
-| Phase 1 Ingest (dlt) | `ingest/dlt_pipelines/` |
-| Bronze storage (MinIO/DuckLake) | `lake/bronze/` + `catalog/` |
-| Phase 2 SOT (lakehouse) | `lake/` + `catalog/` |
-| Phase 3–4 Transform (dbt + DuckDB) | `transform/dbt/` |
-| Phase 5 Serve (FastAPI + Streamlit) | `serving/api/`, `serving/dashboard/` |
-| Phase 6 Orchestrate (Airflow) | `orchestration/` |
-| Reference tĩnh (S5, S13) | `reference/` |
-| Observability/audit | `lake/gold/` (dq pass) + `scripts/` + orchestration DAG logs |
-| Ops/backfill | `scripts/` |
+| Bronze files | Request/response/manifest/checksum nguyên bản, append-only |
+| Bronze tables | Parse cấu trúc nguồn; được explode array nhưng không lọc/dedup |
+| Silver | Schema enforcement, type casting, validation, dedup, mapping, join |
+| Gold | Dimension/fact, rolling KPI, risk score, aggregate phục vụ sản phẩm |
+| Ops | File ledger, pipeline run, checkpoint, parser version và lỗi |
 
-## 3. Quy ước
+## Quy ước đặt tên
 
-- **Bronze không sửa, chỉ append/đè theo partition** — chống lại việc "sửa tay" dữ liệu gốc.
-- **Chỉ Gold được serving** — API/dashboard không bao giờ đọc bronze/silver trực tiếp.
-- **Mọi thứ tái tạo được**: `lake/`, `catalog/`, `.env` đều gitignored; chạy `make bootstrap`
-  để dựng lại từ reference + dữ liệu nguồn.
-- **Version hóa dữ liệu tĩnh**: s13 ghim commit SHA, qd2280 có ngày/văn bản nguồn.
-- **Không đặt logic nghiệp vụ trong DAG** — DAG chỉ điều phối; logic nằm ở dlt/dbt/scripts.
+- Schema đã biểu đạt layer nên không dùng `_raw` hoặc `_cleaned`.
+- Bronze ưu tiên `<source>_<entity>` khi cần tránh trùng tên, ví dụ
+  `gso_wards`, `open_meteo_forecast_hourly`.
+- Silver dùng tên entity đã chuẩn hóa, ví dụ `wards`, `ward_centroids`,
+  `rainfall_forecast_hourly`.
+- Gold dùng `dim_`, `fct_` hoặc tên aggregate nghiệp vụ.
+- Metadata kỹ thuật dùng tên rõ nghĩa như `source_file_path`, `run_id`,
+  `loaded_at_utc`; không dùng tên layer trong tên entity.
+
+## Incremental contract
+
+1. Collector tạo một run bất biến trong `bronze/files`.
+2. `_SUCCESS` được ghi cuối cùng; loader bỏ qua run thiếu marker này.
+3. Loader discover file theo path và đối chiếu `ops.ingestion_files`.
+4. Parser ghi staging, sau đó `MERGE` theo deterministic row id và commit Bronze.
+5. Chỉ sau Bronze commit mới cập nhật file ledger thành `COMMITTED`.
+6. Crash giữa hai commit sẽ retry; deterministic id ngăn duplicate. Payload luôn
+   được giữ để replay, không dựa vào distributed transaction giữa hai catalog.
+
+Open-Meteo chưa được triển khai ở phiên bản cấu trúc này. Các package
+`collectors/` và `loaders/` mới chỉ định nghĩa ranh giới để bước tiếp theo không
+trộn HTTP, object storage, parsing và checkpoint vào cùng một module.

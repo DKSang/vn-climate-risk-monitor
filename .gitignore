@@ -31,9 +31,8 @@ transform/logs/
 transform/.user.yml
 transform/dev.duckdb
 
-# dlt state
-ingest/.dlt/
-ingest/dlt_pipelines/.state/
+# dlt local state (future source loaders)
+.dlt/pipelines/
 
 # Notebook / OS
 .ipynb_checkpoints/

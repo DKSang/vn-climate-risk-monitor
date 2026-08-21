@@ -1,7 +1,7 @@
 version: 2
 
 models:
-  - name: wards_cleaned
+  - name: wards
     description: >
       SILVER — danh mục phường/xã GSO đã làm sạch. Grain nguồn: 3.321 phường/xã
       toàn quốc, chưa lọc tỉnh.
@@ -15,7 +15,7 @@ models:
         description: "Mã tỉnh 2 ký tự đã zero-pad ('01' = Hà Nội)"
         tests: [not_null]
 
-  - name: ward_coordinates_cleaned
+  - name: ward_centroids
     description: >
       SILVER — toạ độ centroid phường/xã đã làm sạch và ép kiểu.
       Grain nguồn: 3.321 phường/xã toàn quốc.
