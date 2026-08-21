@@ -87,6 +87,11 @@ ingestion.ingestion_runs
 ingestion.ingestion_files
 ```
 
+Hai bảng chỉ giữ state chung và immutable source context. Các cột lifecycle,
+retry, lease, checksum và metrics là typed relational columns; `run_parameters`
+và `file_parameters` là JSONB nhỏ được source adapter deserialize thành typed
+contract. Không lưu manifest hoặc danh sách file trong JSONB.
+
 Collector đăng ký từng response object vào PostgreSQL. Loader chỉ claim file
 `PENDING` thuộc attempt `SUCCEEDED`, xác minh checksum rồi `MERGE` vào Bronze
 bằng deterministic row id. PostgreSQL control plane và DuckLake catalog không
@@ -101,6 +106,13 @@ Pattern này học theo các thuộc tính cốt lõi của Databricks Auto Load
 - claim bằng `FOR UPDATE SKIP LOCKED` và lease recovery;
 - rescued data cho schema drift;
 - available-now micro-batch cho workload không cần streaming 24/7.
+
+Parser và Bronze schema không generic: mỗi source giữ contract/table riêng.
+Silver là nơi conform forecast, archive và observation về semantic dùng chung.
+Archive source files dùng source-time layout `backfill/year=YYYY/month=MM`;
+year plan là planning group, monthly window là logical recovery checkpoint, còn
+month × location batch là file checkpoint. Bronze table partition vật lý theo
+`year(observed_time_utc)`.
 
 ## Materialization
 
@@ -136,6 +148,9 @@ prefix `__dbt_tmp` rồi chỉ rename metadata.
 - Phase 4 explicit Arrow parser và idempotent Bronze DuckLake loader.
 - Phase 5 deterministic schedule slot, collect→load orchestration, quota guardrail,
   timeout/lease recovery và PostgreSQL health metrics.
+- Open-Meteo Archive monthly incremental pipeline, strict parser, idempotent
+  Bronze `MERGE`, year partition, effective-call pacing, backfill admission và
+  daily tail cron.
 
 Chưa có:
 

@@ -80,7 +80,8 @@ class OpenMeteoSettings:
     concurrency: int
     request_timeout_seconds: int
     max_attempts: int
-    max_effective_calls_per_day: int
+    max_effective_calls_per_minute: int
+    max_effective_calls_per_hour: int
     schedule_minute_utc: int
     collector_stale_after_seconds: int
     loader_batch_size: int
@@ -132,7 +133,7 @@ def load_settings() -> Settings:
                 "https://archive-api.open-meteo.com/v1/archive",
             ),
             forecast_model=os.getenv("OPEN_METEO_FORECAST_MODEL", "best_match"),
-            archive_model=os.getenv("OPEN_METEO_ARCHIVE_MODEL", "era5_land"),
+            archive_model=os.getenv("OPEN_METEO_ARCHIVE_MODEL", "era5"),
             forecast_hours=_as_int(
                 "OPEN_METEO_FORECAST_HOURS",
                 os.getenv("OPEN_METEO_FORECAST_HOURS", "72"),
@@ -153,9 +154,13 @@ def load_settings() -> Settings:
                 "OPEN_METEO_MAX_ATTEMPTS",
                 os.getenv("OPEN_METEO_MAX_ATTEMPTS", "5"),
             ),
-            max_effective_calls_per_day=_as_int(
-                "OPEN_METEO_MAX_EFFECTIVE_CALLS_PER_DAY",
-                os.getenv("OPEN_METEO_MAX_EFFECTIVE_CALLS_PER_DAY", "1000"),
+            max_effective_calls_per_minute=_as_int(
+                "OPEN_METEO_MAX_EFFECTIVE_CALLS_PER_MINUTE",
+                os.getenv("OPEN_METEO_MAX_EFFECTIVE_CALLS_PER_MINUTE", "500"),
+            ),
+            max_effective_calls_per_hour=_as_int(
+                "OPEN_METEO_MAX_EFFECTIVE_CALLS_PER_HOUR",
+                os.getenv("OPEN_METEO_MAX_EFFECTIVE_CALLS_PER_HOUR", "4500"),
             ),
             schedule_minute_utc=_as_int(
                 "OPEN_METEO_SCHEDULE_MINUTE_UTC",

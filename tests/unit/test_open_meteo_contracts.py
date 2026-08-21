@@ -5,7 +5,9 @@ import pytest
 
 from vn_climate_risk_monitor.ingestion.open_meteo import (
     FORECAST_HOURLY_VARIABLES,
+    ForecastFileParameters,
     ForecastRequestContract,
+    ForecastRunParameters,
     RequestedLocation,
     split_location_batches,
 )
@@ -26,6 +28,19 @@ def test_location_batches_are_sorted_unique_and_bounded() -> None:
     batches = split_location_batches(locations, batch_size=2)
 
     assert [[item.ward_key for item in batch] for batch in batches] == [[1, 2], [3]]
+
+
+def test_forecast_control_parameters_round_trip_from_generic_mappings() -> None:
+    run = ForecastRunParameters(
+        model="best_match",
+        forecast_hours=72,
+        hourly_variables=FORECAST_HOURLY_VARIABLES,
+        location_count=126,
+    )
+    file = ForecastFileParameters(ward_keys=(1, 2, 3))
+
+    assert ForecastRunParameters.from_mapping(run.to_mapping()) == run
+    assert ForecastFileParameters.from_mapping(file.to_mapping()) == file
 
 
 def test_location_batches_reject_duplicate_business_keys() -> None:

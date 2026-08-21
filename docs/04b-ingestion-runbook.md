@@ -1,6 +1,20 @@
 # Runbook ingestion Open-Meteo
 
-**Phạm vi:** hourly forecast · single-node · cron + Python · 2026-08-21
+**Phạm vi:** hourly forecast + historical Archive · single-node · cron + Python
+· 2026-08-21
+
+Historical Archive đã có monthly checkpoint, Bronze year partition và cron
+template riêng. Tài liệu chi tiết:
+[04c-open-meteo-archive.md](04c-open-meteo-archive.md).
+
+```bash
+make run-historical-backfill
+make run-historical-tail
+```
+
+Mỗi backfill invocation mặc định chỉ admit một period mới. Không chạy collector
+cấp thấp cho cả năm; pipeline tự chia năm thành monthly logical run để lỗi
+`429` không replay các tháng đã xong.
 
 ## Chạy thủ công
 
@@ -42,6 +56,8 @@ chối invocation chạy chồng.
 ```bash
 make weather-status
 uv run observe-open-meteo-ingestion --scope production --json
+uv run observe-ingestion --pipeline-name open_meteo_forecast \
+  --dataset forecast --scope production --json
 make weather-healthcheck
 ```
 
@@ -90,6 +106,13 @@ Lấy mẫu `_rescued_data` theo parser version, phân loại source field mới
 nhật explicit Arrow schema. Replay từ immutable response JSON; không sửa JSON
 nguồn. Chỉ coi run usable khi rescued fields đã được review.
 
+### Archive trả HTTP 429
+
+Đọc error body đã lưu thay vì mặc định coi là hết quota ngày. HTTP layer ưu tiên
+`Retry-After`; nếu server chỉ trả `Minutely API request limit exceeded` mà không
+có header, client chờ mặc định 60 giây. Archive collector còn giãn request theo
+500 effective calls/phút và 4.500/giờ. Không tăng concurrency để xử lý backfill.
+
 ## Truy vấn điều tra
 
 ```sql
@@ -109,3 +132,14 @@ ORDER BY updated_at_utc;
 
 Không xóa source object chỉ vì một run thất bại. Orphan cleanup phải resolve exact
 attempt/prefix và đối chiếu PostgreSQL trước khi xóa.
+
+## Migration control schema
+
+```bash
+make migrate-general-control-dry-run
+make migrate-general-control
+```
+
+Migration v4 từ chối chạy khi còn run `RUNNING` hoặc file `PROCESSING`, khóa đúng
+hai control tables, backfill source context, kiểm tra cardinality và row count
+trước khi commit. Lệnh idempotent trên schema đã migrate.

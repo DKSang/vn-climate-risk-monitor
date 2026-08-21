@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
+from typing import Any
 from uuid import UUID, uuid5
 
 LOGICAL_RUN_NAMESPACE = UUID("cb6040e9-4fba-4f57-a8f2-b0bf99c78238")
@@ -64,13 +65,16 @@ class RunAttempt:
 
 
 @dataclass(frozen=True)
-class ClaimedFile:
+class ClaimedObject:
     file_id: UUID
     attempt_id: UUID
     logical_run_id: UUID
+    pipeline_name: str
+    source_name: str
+    dataset: str
+    scope: str
     object_key: str
     batch_index: int
-    ward_keys: tuple[int, ...]
     size_bytes: int
     sha256: str
     content_type: str
@@ -78,14 +82,13 @@ class ClaimedFile:
     scheduled_at_utc: datetime
     collection_started_at_utc: datetime
     collection_completed_at_utc: datetime
-    source_endpoint: str
-    model_requested: str
-    forecast_hours: int
-    hourly_variables: tuple[str, ...]
+    source_uri: str
     collector_version: str
-    request_contract_version: int
-    expected_location_count: int
-    received_location_count: int
+    contract_version: str
+    run_parameters: dict[str, Any]
+    file_parameters: dict[str, Any]
+    expected_item_count: int | None
+    received_item_count: int | None
 
 
 @dataclass(frozen=True)

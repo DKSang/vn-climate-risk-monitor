@@ -1,4 +1,4 @@
-"""Report Open-Meteo ingestion health from the PostgreSQL control plane."""
+"""Report pipeline health from the generic PostgreSQL ingestion control plane."""
 
 from __future__ import annotations
 
@@ -33,9 +33,23 @@ def _json_default(value: object) -> str:
     raise TypeError(f"Cannot serialize {type(value).__name__}")
 
 
+def _positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("value must be positive")
+    return parsed
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--pipeline-name", default=PIPELINE_NAME)
+    parser.add_argument("--dataset", default=DATASET)
     parser.add_argument("--scope", default="production")
+    parser.add_argument(
+        "--stale-after-minutes",
+        type=_positive_int,
+        help="Override the forecast-oriented default for slower pipelines.",
+    )
     parser.add_argument("--json", action="store_true")
     parser.add_argument(
         "--check",
@@ -48,16 +62,17 @@ def main() -> None:
     try:
         ensure_ingestion_state(connection)
         metrics = PostgresIngestionRepository(connection).pipeline_metrics(
-            pipeline_name=PIPELINE_NAME,
-            dataset=DATASET,
+            pipeline_name=args.pipeline_name,
+            dataset=args.dataset,
             scope=args.scope,
             max_retries=settings.open_meteo.loader_max_retries,
         )
     finally:
         connection.close()
-    health = metrics.health(
-        stale_after=timedelta(minutes=settings.open_meteo.stale_after_minutes)
+    stale_after_minutes = (
+        args.stale_after_minutes or settings.open_meteo.stale_after_minutes
     )
+    health = metrics.health(stale_after=timedelta(minutes=stale_after_minutes))
 
     if args.json:
         print(
@@ -69,7 +84,8 @@ def main() -> None:
         )
     else:
         print(
-            f"Open-Meteo ingestion: health={health}, scope={metrics.scope}, "
+            f"Ingestion: pipeline={metrics.pipeline_name}, "
+            f"dataset={metrics.dataset}, health={health}, scope={metrics.scope}, "
             f"latest_run={metrics.latest_run_status}, "
             f"latest_schedule={metrics.latest_scheduled_at_utc}, "
             f"files[pending={metrics.pending_files}, "

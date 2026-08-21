@@ -18,7 +18,6 @@ from vn_climate_risk_monitor.ingestion.collectors.open_meteo_forecast import (
     PIPELINE_NAME,
     ForecastCollectionResult,
     ForecastCollector,
-    load_hanoi_locations,
     parse_utc,
     positive_int,
 )
@@ -31,6 +30,9 @@ from vn_climate_risk_monitor.ingestion.loaders.open_meteo_forecast_hourly import
 from vn_climate_risk_monitor.ingestion.open_meteo import (
     RequestedLocation,
     split_location_batches,
+)
+from vn_climate_risk_monitor.ingestion.open_meteo.locations import (
+    load_hanoi_locations,
 )
 from vn_climate_risk_monitor.ingestion.scheduling import latest_hourly_schedule_slot
 from vn_climate_risk_monitor.ingestion.state import (

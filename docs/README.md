@@ -10,9 +10,10 @@ Theo dõi rủi ro **ngập úng / lũ / hạn hán** cho Hà Nội, chi tiết 
 | 2 | Xác định & đánh giá nguồn dữ liệu | [02-data-sources.md](02-data-sources.md) | ✅ Xong |
 | 3 | Thiết kế kiến trúc | [03-architecture.md](03-architecture.md) | ✅ **Đã triển khai & kiểm chứng** |
 | 3a | Cấu trúc repository | [03a-repo-structure.md](03a-repo-structure.md) | ✅ Xong |
-| 4 | Ingest dữ liệu | [04-ingestion.md](04-ingestion.md) | ✅ Phase 1–5 · production 126 wards · 9.072 rows |
+| 4 | Ingest dữ liệu | [04-ingestion.md](04-ingestion.md) | ✅ Forecast + Archive code/canary xong · backfill đang vận hành theo quota |
 | 4a | Setup Lakehouse (DuckLake+MinIO+Postgres) | [04a-lakehouse-setup.md](04a-lakehouse-setup.md) | ✅ Xong |
 | 4b | Ingestion runbook | [04b-ingestion-runbook.md](04b-ingestion-runbook.md) | ✅ Cron, health, recovery |
+| 4c | Open-Meteo Archive | [04c-open-meteo-archive.md](04c-open-meteo-archive.md) | ✅ Monthly incremental + year partition + tail |
 | 5 | Clean, Transform & KPI | [05-kpi-methodology.md](05-kpi-methodology.md) | 🟡 Phương pháp KPI xong · model thời tiết chưa làm |
 | 6 | Lưu trữ — single source of truth | `06-storage-modeling.md` | ⬜ |
 | 7 | Data Quality & Observability | `07-data-quality.md` | 🟡 ingestion health có · model observability chưa làm |
@@ -23,7 +24,7 @@ Theo dõi rủi ro **ngập úng / lũ / hạn hán** cho Hà Nội, chi tiết 
 
 ```
 dbt build  → PASS=51  ERROR=0
-MinIO      → 34 object / 4.0 MiB
+MinIO      → 257 object / 153.9 MiB
 PostgreSQL → ingestion_runs + ingestion_files
 ```
 
@@ -34,6 +35,7 @@ PostgreSQL → ingestion_runs + ingestion_files
 | silver | `wards` · `ward_centroids` · `ward_locations` | 3.321 mỗi bảng (view) |
 | gold | `dim_hanoi_ward` | **126** |
 | bronze weather | `open_meteo_forecast_hourly` | **9.144 rows** *(9.072 production + 72 canary)* |
+| bronze archive | `open_meteo_archive_hourly` | **1.106.784 rows** *(126 wards × 8.784 giờ năm 2000)* |
 
 ## Lệnh thường dùng
 
@@ -43,6 +45,9 @@ make transform     # dbt build (run + test + tự dọn file cũ)
 make clean-lake    # squash lakehouse, bỏ lịch sử snapshot
 make dbt-docs      # sinh và mở dbt docs
 make run-weather   # collect + load forecast production
+make plan-historical # dry-run yearly backfill 2000..ERA5 available date
+make run-historical-backfill # one new monthly checkpoint within free quota
+make run-historical-tail # candidate day UTC today - 5 days
 make weather-status # health/metrics ingestion
 ```
 

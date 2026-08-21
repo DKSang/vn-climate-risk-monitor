@@ -1,26 +1,25 @@
 import hashlib
-from collections.abc import Iterator
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from uuid import UUID
 
-import duckdb
 import pytest
 import responses
 
 from vn_climate_risk_monitor.config import OpenMeteoSettings
-from vn_climate_risk_monitor.ingestion.collectors.open_meteo_forecast import (
-    ForecastCollector,
-    load_hanoi_locations,
+from vn_climate_risk_monitor.ingestion.collectors.open_meteo_archive import (
+    ArchiveCollector,
+    effective_call_units,
 )
 from vn_climate_risk_monitor.ingestion.http import build_http_session
 from vn_climate_risk_monitor.ingestion.open_meteo import (
     RequestedLocation,
     SourceObjectMetadata,
+    plan_archive_backfill,
 )
 from vn_climate_risk_monitor.ingestion.state import RunAttempt, RunStatus
 
-ATTEMPT_ID = UUID("00000000-0000-0000-0000-000000000001")
-LOGICAL_RUN_ID = UUID("00000000-0000-0000-0000-000000000002")
+ATTEMPT_ID = UUID("00000000-0000-0000-0000-000000000101")
+LOGICAL_RUN_ID = UUID("00000000-0000-0000-0000-000000000102")
 
 
 class MemoryObjectWriter:
@@ -48,12 +47,21 @@ class MemoryObjectWriter:
         )
 
 
+class MemoryPacer:
+    def __init__(self) -> None:
+        self.call_units: list[int] = []
+
+    def wait(self, call_units: int) -> float:
+        self.call_units.append(call_units)
+        return 0
+
+
 class MemoryIngestionState:
     def __init__(self) -> None:
         self.run_values: dict[str, object] = {}
         self.run_status = RunStatus.RUNNING
         self.files: dict[UUID, dict[str, object]] = {}
-        self.effective_calls = 0
+        self.recorded_attempts = 0
 
     def start_run(self, **values: object) -> RunAttempt:
         self.run_values = values
@@ -71,9 +79,9 @@ class MemoryIngestionState:
         pipeline_name: str,
         since_utc: datetime,
     ) -> int:
-        assert pipeline_name == "open_meteo_forecast"
+        assert pipeline_name == "open_meteo_archive"
         assert since_utc.tzinfo is not None
-        return self.effective_calls
+        return self.recorded_attempts
 
     def register_file(
         self,
@@ -85,7 +93,7 @@ class MemoryIngestionState:
         file_parameters: dict[str, object],
     ) -> UUID:
         assert attempt_id == ATTEMPT_ID
-        file_id = UUID(int=batch_index + 10)
+        file_id = UUID(int=batch_index + 200)
         self.files[file_id] = {
             "status": "PENDING",
             "object_key": object_key,
@@ -132,19 +140,19 @@ class MemoryIngestionState:
         self.run_values["error"] = error
 
 
-def _settings(*, batch_size: int = 2) -> OpenMeteoSettings:
+def _settings() -> OpenMeteoSettings:
     return OpenMeteoSettings(
         forecast_url="https://api.open-meteo.test/v1/forecast",
         archive_url="https://archive.open-meteo.test/v1/archive",
         forecast_model="best_match",
-        archive_model="era5_land",
+        archive_model="era5",
         forecast_hours=72,
-        location_batch_size=batch_size,
+        location_batch_size=2,
         concurrency=1,
         request_timeout_seconds=10,
         max_attempts=1,
-        max_effective_calls_per_minute=500,
-        max_effective_calls_per_hour=4500,
+        max_effective_calls_per_minute=1_000_000_000,
+        max_effective_calls_per_hour=1_000_000_000,
         schedule_minute_utc=15,
         collector_stale_after_seconds=1800,
         loader_batch_size=10,
@@ -167,151 +175,137 @@ def _locations(count: int) -> tuple[RequestedLocation, ...]:
     )
 
 
-def _clock(start: datetime, count: int = 20):
-    values: Iterator[datetime] = iter(
-        start + timedelta(seconds=i) for i in range(count)
-    )
-    return lambda: next(values)
+def _year_plan(
+    *,
+    location_count: int = 3,
+    end_date: date = date(2000, 1, 31),
+    hourly_variables: tuple[str, ...] | None = None,
+):
+    values: dict[str, object] = {}
+    if hourly_variables is not None:
+        values["hourly_variables"] = hourly_variables
+    return plan_archive_backfill(
+        _locations(location_count),
+        start_year=2000,
+        end_date=end_date,
+        model="era5",
+        location_batch_size=2,
+        **values,
+    ).years[0]
+
+
+def _clock(start: datetime):
+    current = start
+
+    def tick() -> datetime:
+        nonlocal current
+        value = current
+        current += timedelta(seconds=1)
+        return value
+
+    return tick
 
 
 @responses.activate
-def test_forecast_collector_commits_only_response_objects_and_postgres_state() -> None:
-    first_response = b'[{"latitude":21.1},{"latitude":21.2}]'
-    second_response = b'{"latitude":21.3}'
-    responses.add(
-        responses.GET,
-        "https://api.open-meteo.test/v1/forecast",
-        body=first_response,
-        status=200,
-        content_type="application/json",
-    )
-    responses.add(
-        responses.GET,
-        "https://api.open-meteo.test/v1/forecast",
-        body=second_response,
-        status=200,
-        content_type="application/json",
-    )
+def test_archive_collector_writes_exact_monthly_responses_and_generic_state() -> None:
+    bodies = (b'[{"latitude":21.1},{"latitude":21.2}]', b'{"latitude":21.3}')
+    for body in bodies:
+        responses.add(
+            responses.GET,
+            "https://archive.open-meteo.test/v1/archive",
+            body=body,
+            status=200,
+            content_type="application/json",
+        )
     writer = MemoryObjectWriter()
     state = MemoryIngestionState()
-    scheduled_at = datetime(2026, 8, 21, 8, 15, tzinfo=UTC)
+    pacer = MemoryPacer()
+    scheduled_at = datetime(2026, 8, 21, 12, tzinfo=UTC)
 
     with build_http_session(max_attempts=1) as session:
-        result = ForecastCollector(
+        result = ArchiveCollector(
             settings=_settings(),
             session=session,
             writer=writer,
             state=state,
+            pacer=pacer,
             clock=_clock(scheduled_at + timedelta(seconds=1)),
-        ).collect(_locations(3), scheduled_at_utc=scheduled_at)
+        ).collect_year(_year_plan(), scheduled_at_utc=scheduled_at)
 
-    basenames = [key.rsplit("/", 1)[-1] for key in writer.write_order]
-    assert basenames == ["response_000.json", "response_001.json"]
-    assert writer.objects[writer.write_order[0]] == first_response
-    assert writer.objects[writer.write_order[1]] == second_response
     assert state.run_status == RunStatus.SUCCEEDED
-    assert state.run_values["scope"] == "production"
-    assert [file["file_parameters"]["ward_keys"] for file in state.files.values()] == [
-        [1, 2],
-        [3],
-    ]
-    assert [file["received_item_count"] for file in state.files.values()] == [2, 1]
-    assert state.run_values["source_name"] == "open_meteo"
-    assert state.run_values["run_parameters"]["forecast_hours"] == 72
-    assert result.attempt.attempt_id == ATTEMPT_ID
-    assert result.attempt.status == RunStatus.SUCCEEDED
+    assert state.run_values["pipeline_name"] == "open_meteo_archive"
+    assert state.run_values["dataset"] == "historical_weather_hourly"
+    assert state.run_values["logical_key"] == (
+        "model=era5/year=2000/through=2000-01-31"
+    )
+    assert state.run_values["run_parameters"]["model"] == "era5"
+    assert result.year_prefix.endswith("backfill/year=2000")
     assert len(result.response_objects) == 2
-    assert responses.calls[0].request.params["latitude"] == "21.001,21.002"
-    assert state.run_values["stale_after_seconds"] == 1800
+    assert writer.objects[writer.write_order[0]] == bodies[0]
+    assert writer.objects[writer.write_order[1]] == bodies[1]
+    assert all("year=2000/month=01" in key for key in writer.write_order)
+    assert [
+        file["file_parameters"]["ward_keys"] for file in state.files.values()
+    ] == [[1, 2], [3]]
+    assert [
+        file["received_item_count"] for file in state.files.values()
+    ] == [2, 1]
+    assert responses.calls[0].request.params["models"] == "era5"
+    assert responses.calls[0].request.params["start_date"] == "2000-01-01"
+    assert responses.calls[0].request.params["end_date"] == "2000-01-31"
+    assert pacer.call_units == [5, 3]
 
 
 @responses.activate
-def test_forecast_collector_marks_partial_response_failed_but_keeps_raw_body() -> None:
-    body = b'[{"latitude":21.1}]'
+def test_archive_collector_keeps_error_body_and_fails_file_and_run() -> None:
+    body = b'{"error":true,"reason":"invalid archive request"}'
     responses.add(
         responses.GET,
-        "https://api.open-meteo.test/v1/forecast",
+        "https://archive.open-meteo.test/v1/archive",
         body=body,
-        status=200,
+        status=400,
         content_type="application/json",
     )
     writer = MemoryObjectWriter()
     state = MemoryIngestionState()
-    scheduled_at = datetime(2026, 8, 21, 8, 15, tzinfo=UTC)
+    scheduled_at = datetime(2026, 8, 21, 12, tzinfo=UTC)
 
     with build_http_session(max_attempts=1) as session:
-        collector = ForecastCollector(
+        collector = ArchiveCollector(
             settings=_settings(),
             session=session,
             writer=writer,
             state=state,
             clock=_clock(scheduled_at + timedelta(seconds=1)),
         )
-        with pytest.raises(ValueError, match="Expected 2 response locations"):
-            collector.collect(_locations(2), scheduled_at_utc=scheduled_at)
+        with pytest.raises(Exception, match="400"):
+            collector.collect_year(
+                _year_plan(location_count=1),
+                scheduled_at_utc=scheduled_at,
+            )
 
-    assert [key.rsplit("/", 1)[-1] for key in writer.write_order] == [
-        "response_000.json"
-    ]
     assert writer.objects[writer.write_order[0]] == body
     assert state.run_status == RunStatus.FAILED
-    assert next(iter(state.files.values()))["status"] == "FAILED"
+    file = next(iter(state.files.values()))
+    assert file["http_status"] == 400
+    assert file["status"] == "FAILED"
 
 
-@responses.activate
-def test_forecast_collector_records_http_error_body_and_failed_state() -> None:
-    body = b'{"error":true,"reason":"rate limited"}'
-    responses.add(
-        responses.GET,
-        "https://api.open-meteo.test/v1/forecast",
-        body=body,
-        status=429,
-        content_type="application/json",
-    )
-    writer = MemoryObjectWriter()
-    state = MemoryIngestionState()
-    scheduled_at = datetime(2026, 8, 21, 8, 15, tzinfo=UTC)
+def test_effective_call_estimate_matches_documented_time_and_variable_factors() -> None:
+    variables = tuple(f"variable_{index}" for index in range(15))
+    task = _year_plan(
+        location_count=1,
+        end_date=date(2000, 1, 28),
+        hourly_variables=variables,
+    ).tasks[0]
 
-    with build_http_session(max_attempts=1) as session:
-        collector = ForecastCollector(
-            settings=_settings(batch_size=1),
-            session=session,
-            writer=writer,
-            state=state,
-            clock=_clock(scheduled_at + timedelta(seconds=1)),
-        )
-        with pytest.raises(Exception, match="429"):
-            collector.collect(_locations(1), scheduled_at_utc=scheduled_at)
-
-    file_state = next(iter(state.files.values()))
-    assert writer.objects[writer.write_order[0]] == body
-    assert file_state["http_status"] == 429
-    assert file_state["status"] == "FAILED"
-    assert state.run_status == RunStatus.FAILED
+    assert effective_call_units((task,)) == 3
 
 
-def test_load_hanoi_locations_reads_approved_gold_grain() -> None:
-    connection = duckdb.connect()
-    connection.execute("CREATE SCHEMA gold")
-    connection.execute(
-        """
-        CREATE TABLE gold.dim_hanoi_ward (
-            ward_key INTEGER,
-            ward_code VARCHAR,
-            latitude DOUBLE,
-            longitude DOUBLE
-        )
-        """
-    )
-    connection.execute(
-        """
-        INSERT INTO gold.dim_hanoi_ward VALUES
-            (2, '00002', 21.02, 105.82),
-            (1, '00001', 21.01, 105.81)
-        """
-    )
+def test_effective_call_estimate_multiplies_multi_location_requests() -> None:
+    tasks = _year_plan(
+        location_count=3,
+        end_date=date(2000, 1, 14),
+    ).tasks
 
-    locations = load_hanoi_locations(connection, expected_count=2)
-
-    assert [location.ward_key for location in locations] == [1, 2]
-    assert [location.ward_code for location in locations] == ["00001", "00002"]
+    assert effective_call_units(tasks, request_attempts=5) == 15

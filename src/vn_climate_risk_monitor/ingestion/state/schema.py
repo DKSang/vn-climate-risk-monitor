@@ -22,20 +22,19 @@ SCHEMA_STATEMENTS = (
         logical_key TEXT NOT NULL,
         attempt_number INTEGER NOT NULL CHECK (attempt_number > 0),
         pipeline_name TEXT NOT NULL,
+        source_name TEXT NOT NULL,
         dataset TEXT NOT NULL,
         scope TEXT NOT NULL,
         scheduled_at_utc TIMESTAMPTZ NOT NULL,
         started_at_utc TIMESTAMPTZ NOT NULL,
         completed_at_utc TIMESTAMPTZ,
         status TEXT NOT NULL CHECK (status IN ('RUNNING', 'SUCCEEDED', 'FAILED')),
-        batch_count INTEGER NOT NULL CHECK (batch_count > 0),
-        location_count INTEGER NOT NULL CHECK (location_count > 0),
-        source_endpoint TEXT NOT NULL,
-        model_requested TEXT NOT NULL,
-        forecast_hours INTEGER NOT NULL CHECK (forecast_hours > 0),
-        hourly_variables TEXT[] NOT NULL,
+        expected_file_count INTEGER NOT NULL CHECK (expected_file_count > 0),
+        source_uri TEXT NOT NULL,
         collector_version TEXT NOT NULL,
-        request_contract_version INTEGER NOT NULL,
+        contract_version TEXT NOT NULL,
+        run_parameters JSONB NOT NULL DEFAULT '{}'::jsonb
+            CHECK (jsonb_typeof(run_parameters) = 'object'),
         error_type TEXT,
         error_message TEXT,
         created_at_utc TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -70,16 +69,16 @@ SCHEMA_STATEMENTS = (
             REFERENCES ingestion.ingestion_runs (attempt_id),
         batch_index INTEGER NOT NULL CHECK (batch_index >= 0),
         object_key TEXT NOT NULL UNIQUE,
-        ward_keys BIGINT[] NOT NULL,
+        file_parameters JSONB NOT NULL DEFAULT '{}'::jsonb
+            CHECK (jsonb_typeof(file_parameters) = 'object'),
         size_bytes BIGINT CHECK (size_bytes >= 0),
         sha256 CHAR(64),
         etag TEXT,
         content_type TEXT,
         http_status INTEGER,
         request_attempt_count INTEGER CHECK (request_attempt_count > 0),
-        expected_location_count INTEGER NOT NULL
-            CHECK (expected_location_count > 0),
-        received_location_count INTEGER CHECK (received_location_count > 0),
+        expected_item_count INTEGER CHECK (expected_item_count > 0),
+        received_item_count INTEGER CHECK (received_item_count > 0),
         status TEXT NOT NULL
             CHECK (status IN ('PENDING', 'PROCESSING', 'COMMITTED', 'FAILED')),
         retry_count INTEGER NOT NULL DEFAULT 0 CHECK (retry_count >= 0),
@@ -96,7 +95,11 @@ SCHEMA_STATEMENTS = (
         created_at_utc TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at_utc TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
         UNIQUE (attempt_id, batch_index),
-        CHECK (cardinality(ward_keys) = expected_location_count)
+        CHECK (
+            received_item_count IS NULL
+            OR expected_item_count IS NULL
+            OR received_item_count = expected_item_count
+        )
     )
     """,
     """
