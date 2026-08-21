@@ -1,6 +1,6 @@
 # Bước 1 — Bắt đầu từ bài toán nghiệp vụ
 
-**Hanoi Flood & Climate Risk Monitor** · v0.2 · 2026-08-20 · *Trạng thái: CHỜ DUYỆT*
+**Hanoi Flood & Climate Risk Monitor** · v0.4 · 2026-08-21 · *Trạng thái: ĐÃ CHỐT PHẠM VI MVP*
 
 Khung câu hỏi theo ảnh quy trình: *What decision are we enabling? Who is the stakeholder?
 How fresh should the data be?* → Output: problem statement + success metric.
@@ -9,14 +9,14 @@ How fresh should the data be?* → Output: problem statement + success metric.
 
 ## 1. Phát biểu bài toán
 
-> Mỗi mùa mưa, Hà Nội ngập cục bộ ở hàng chục đến hàng trăm điểm. Thành phố **đã biết trước**
-> điểm nào sẽ ngập ở mức mưa nào — thông tin đó nằm trong Quyết định 2280/QĐ-UBND (29/4/2026) —
-> nhưng nó ở dạng văn bản tĩnh, không gắn với dự báo mưa thời gian thực, và người dân không
-> tra cứu được theo phường-xã hay tuyến đường mình sắp đi qua.
+> Mỗi mùa mưa, Hà Nội ngập cục bộ ở hàng chục đến hàng trăm điểm. Quyết định
+> 2280/QĐ-UBND ngày 29/4/2026 công bố các **kịch bản úng ngập toàn thành phố theo dải mưa**
+> và danh mục điểm cần ứng phó, nhưng thông tin nằm trong văn bản tĩnh, chưa gắn với các
+> forecast vintage và ô lưới mưa đang cập nhật.
 >
-> Dự án biến tri thức tĩnh đó thành **hệ thống cảnh báo động**: ghép ngưỡng mưa gây ngập đã
-> được thành phố công bố với dự báo mưa theo giờ, để trả lời câu hỏi *"trong 6 giờ tới, tuyến
-> đường/phường nào có nguy cơ ngập?"*
+> Dự án biến tri thức đó thành **hệ thống theo dõi áp lực mưa động**: ghép kịch bản vận hành
+> với dự báo mưa theo giờ, để trả lời câu hỏi *"trong 6–24 giờ tới, ô lưới nào chịu áp lực mưa
+> lớn và những phường/điểm úng ngập chính thức nào nằm trong vùng đó?"*
 
 ## 2. Chúng ta đang hỗ trợ quyết định gì?
 
@@ -29,7 +29,10 @@ How fresh should the data be?* → Output: problem statement + success metric.
 | Vùng ngoại thành nào cần điều tiết nước tưới | Xí nghiệp thủy lợi, HTX nông nghiệp | Theo tuần/tháng |
 
 **Quyết định lõi của giai đoạn 1** (chỉ chọn 1 để không dàn trải):
-→ *"Trong 6–24 giờ tới, phường-xã nào và tuyến đường nào có nguy cơ ngập, ở cấp độ nào?"*
+→ *"Trong 6–24 giờ tới, khu vực nào cần tăng mức theo dõi và chuẩn bị ứng phó do forecast
+mưa vượt kịch bản vận hành nào?"*
+
+Kết quả giai đoạn 1 là `rainfall hazard/pressure`, không phải xác suất ngập hoặc dự báo độ sâu.
 
 ## 3. Stakeholder
 
@@ -68,18 +71,21 @@ How fresh should the data be?* → Output: problem statement + success metric.
 | Ô lưới mưa | **Đã đo thực tế** — xem **R1** | **49 ô** |
 | Lưu vực thoát nước | Tô Lịch, Nhuệ, Cầu Bây/Long Biên, Đông Mỹ… | ~5–8 |
 
-**Fact chính:** `(điểm_ngập, giờ)` — mỗi điểm ngập, mỗi giờ, một điểm rủi ro.
-**Fact tổng hợp:** `(phường_xã, giờ)` và `(phường_xã, ngày)`.
+**Fact thời tiết chính:** `(ô_lưới, forecast_vintage, valid_hour)`.
+**Fact projection:** `(phường_xã, forecast_vintage, valid_hour)` và
+`(điểm_úng_ngập, forecast_vintage, valid_hour)`; nhiều phường/điểm có thể dùng chung forcing
+của một ô lưới.
 
 ## 6. Câu hỏi phân tích (đầu vào cho Bước 6 — mô hình dữ liệu)
 
-- **Q1** — 6 giờ tới, những điểm ngập nào chuyển sang mức "cảnh báo"? Thuộc phường-xã nào, đường nào?
-- **Q2** — Phường-xã X hiện ở cấp độ rủi ro ngập nào (1–4)?
+- **Q1** — 6 giờ tới, những điểm úng ngập chính thức nào nằm trong ô lưới có mưa vượt ngưỡng?
+- **Q2** — Phường-xã X hiện thuộc kịch bản mưa vận hành nào của Hà Nội?
 - **Q3** — Tuyến đường Y có nằm trong bán kính ảnh hưởng của điểm ngập đang cảnh báo không?
-- **Q4** — Xếp hạng 20 phường-xã rủi ro cao nhất hôm nay.
+- **Q4** — Xếp hạng các ô lưới/phường theo áp lực mưa dự báo hôm nay, không nhân bản trọng số
+  khi nhiều phường cùng grid.
 - **Q5** — Lượng mưa dự báo 1h/3h/6h/24h lớn nhất cho từng phường-xã.
 - **Q6** — Điểm ngập nào bị kích hoạt nhiều lần nhất trong 12 tháng qua? (đầu vào cho quy hoạch)
-- **Q7** — Số ngày vượt ngưỡng 50/70/100 mm/h tại phường-xã X, so với trung bình nhiều năm.
+- **Q7** — Số giờ/ngày có peak một giờ vượt 50/70/100 mm tại grid của phường-xã X.
 - **Q8** — *(ngoại thành)* Lượng mưa tích lũy 30/60/90 ngày của xã X lệch bao nhiêu % so với chuẩn 1991–2020?
 - **Q9** — Mực nước/lưu lượng sông Hồng, sông Nhuệ, sông Đáy đang ở mức nào so với báo động?
 
@@ -87,13 +93,14 @@ How fresh should the data be?* → Output: problem statement + success metric.
 
 | Nhóm | Chỉ số | Ngưỡng giai đoạn 1 |
 |---|---|---|
-| **Nghiệp vụ** | Tỷ lệ bắt đúng (recall) các trận ngập đã biết trong §9 | ≥ 80% |
-| **Nghiệp vụ** | Tỷ lệ báo động giả (false positive) | ≤ 30% |
-| **Nghiệp vụ** | Thời gian cảnh báo trước (lead time) | ≥ 3 giờ |
-| **Kỹ thuật** | Độ trễ từ lúc nguồn có dữ liệu tới lúc lên dashboard | ≤ 20 phút |
-| **Kỹ thuật** | Uptime pipeline theo giờ trong mùa mưa | ≥ 99% |
+| **Nghiệp vụ MVP** | Tỷ lệ forecast vượt ngưỡng được giải thích đúng nguồn/version | 100% |
+| **Nghiệp vụ MVP** | Không công bố xác suất/độ sâu ngập khi chưa hiệu chỉnh | 100% |
+| **Kiểm định tương lai** | POD/recall, FAR và CSI theo trận mưa | Chưa đặt ngưỡng trước khi có nhãn |
+| **Kiểm định tương lai** | Lead time hữu ích | Đánh giá riêng 0–6h, 6–24h, 24–48h |
+| **Kỹ thuật** | Độ trễ từ lúc nguồn có dữ liệu tới lúc lên dashboard | ≤ 20 phút khi upstream sẵn sàng |
+| **Kỹ thuật** | Tỷ lệ scheduled run thành công, loại trừ upstream outage | ≥ 99% |
 | **Kỹ thuật** | Test chất lượng dữ liệu pass | 100%, fail thì chặn publish |
-| **Chi phí** | Hạ tầng/tháng | *(chờ chốt — xem §10)* |
+| **Chi phí** | Chi phí bắt buộc cho phần mềm/API/hạ tầng | **0 đồng/tháng** |
 
 ## 8. Phạm vi
 
@@ -101,11 +108,13 @@ How fresh should the data be?* → Output: problem statement + success metric.
 - Địa bàn: toàn TP Hà Nội, 126 phường-xã, chấm điểm theo **ô lưới Open-Meteo** (49 ô)
 - Nguồn dữ liệu: **chỉ Open-Meteo Forecast + Archive API**, không dùng GloFAS/radar/camera/DEM
 - Hiểm họa, đều suy trực tiếp từ mưa:
-  - **Ngập úng đô thị** — mưa giờ lớn nhất so ngưỡng QĐ 2280 (50/70/100 mm/h)
-  - **Lũ** — mưa tích lũy nhiều ngày theo lưu vực (proxy bằng mưa, KHÔNG dùng lưu lượng sông thực)
+  - **Ngập úng đô thị** — feature áp lực mưa và kịch bản vận hành QĐ 2280 (50/70/100 mm/h),
+    không phải xác suất ngập
+  - **Lũ** — mưa tích lũy nhiều ngày theo lưu vực, chỉ là proxy khí tượng, KHÔNG dùng lưu
+    lượng/mực nước sông thực
   - **Hạn hán** — mưa tích lũy 30/60/90 ngày so với chuẩn khí hậu 1991–2020 (xã ngoại thành)
 - Dự báo mưa theo giờ tới 48h + lịch sử 1981–nay
-- Ranh giới + mã 126 phường-xã (S13), ngưỡng mưa chính thức (QĐ 2280)
+- Ranh giới + mã 126 phường-xã (S13), kịch bản mưa chính thức (QĐ 2280)
 
 **Ngoài phạm vi**
 - Mô hình thủy lực (SWMM/MIKE URBAN) — không có dữ liệu mạng cống
@@ -119,39 +128,47 @@ How fresh should the data be?* → Output: problem statement + success metric.
 
 | Sự kiện | Thời gian | Ghi nhận | Kỳ vọng |
 |---|---|---|---|
-| Mưa lớn cuối T8/2025 | 08/2025 | Hai Bà Trưng 315mm, Yên Sở 310mm, Tây Mỗ 271mm, Hoàng Liệt 235mm | Rủi ro "rất cao" toàn thành phố |
-| Ngập diện rộng | 08/10/2025 | Có danh sách điểm ngập công bố | Bắt được ≥80% điểm trong danh sách |
-| Lũ sau bão Yagi | 09/2024 | Mưa lớn nhiều ngày, ngập Long Biên/Gia Lâm | Điểm lũ (mưa tích lũy) "rất cao" — *chấp nhận đây là proxy, không đo lưu lượng sông thực* |
-| Mưa lịch sử | 30/10/2008 | Ngập lụt lịch sử Hà Nội, ~600mm/3 ngày | Vượt mọi ngưỡng |
-| **Ngày khô ráo** (test âm) | chọn ngẫu nhiên mùa khô | Không ngập | **Không** phát cảnh báo |
+| Mưa lớn cuối T8/2025 | 08/2025 | Hai Bà Trưng 315mm, Yên Sở 310mm, Tây Mỗ 271mm, Hoàng Liệt 235mm | Rolling/peak phản ánh đúng lượng mưa theo dữ liệu nguồn |
+| Ngập diện rộng | 08/10/2025 | Có danh sách điểm ngập công bố | Replay scenario và ghi nhận hit/miss; chưa đặt ngưỡng POD khi nhãn chưa đầy đủ |
+| Lũ sau bão Yagi | 09/2024 | Mưa lớn nhiều ngày, ngập Long Biên/Gia Lâm | Mưa tích lũy nhiều ngày tăng cao; vẫn ghi rõ đây không phải dự báo lũ sông |
+| Mưa lịch sử | 30/10/2008 | Ngập lụt lịch sử Hà Nội, ~600mm/3 ngày | Rolling 24/48/72h vượt các feature magnitude tương ứng |
+| **Ngày khô ráo** (test âm) | chọn ngẫu nhiên mùa khô | Không ngập | Không vượt ngưỡng mưa và không tạo scenario sai |
 
 > Test âm quan trọng ngang test dương. Hệ thống báo động liên tục thì cũng vô dụng như không báo.
 
-## 10. Giả định & câu hỏi mở
+## 10. Giả định & quyết định sản phẩm
 
 **Giả định**
-- **A2** — Ngưỡng mưa gây ngập lấy theo chính thành phố công bố: <50 mm/h cơ bản không ngập;
+- **A2** — Kịch bản mưa vận hành lấy theo chính thành phố công bố: <50 mm/h cơ bản không ngập;
   50–70 mm/h → ~11 điểm; 70–100 mm/h → ~71 điểm; >100 mm/h kéo dài → ~220 điểm tại 54 phường-xã.
-  *(Chỉ cần 4 mức này, không cần toàn văn phụ lục 220 điểm cho GĐ1.)*
-- **A3** — Cấp độ rủi ro bám QĐ 18/2021/QĐ-TTg để dùng chung ngôn ngữ với cơ quan nhà nước.
+  Đây là scenario toàn thành phố, không phải quan hệ nhân quả chắc chắn cho từng phường.
+- **A3** — QĐ 18/2021/QĐ-TTg chỉ được dùng để tạo feature dải mưa 12/24 giờ. Không suy ra
+  cấp độ rủi ro thiên tai khi chưa mô hình hóa đủ phạm vi, địa hình và thời gian kéo dài.
 - **A4** — Chuẩn khí hậu dùng thời kỳ 1991–2020 (WMO).
-- **A5** — Chấp nhận rủi ro hiển thị theo **ô lưới (49 ô)**, không theo từng phường riêng lẻ.
-  Phường cùng ô lưới hiển thị cùng mức rủi ro dự báo.
+- **A5** — Chấp nhận áp lực mưa hiển thị theo **ô lưới (49 ô)**, không theo từng phường riêng lẻ.
+  Phường cùng ô lưới hiển thị cùng forcing/scenario mưa.
 
-**Câu hỏi mở — cần chốt trước khi sang Bước 3**
-1. **Mục đích thật:** portfolio hay sản phẩm có người dùng? Ảnh hưởng tới đầu tư vào SLA theo giờ.
-2. **Ngân sách hạ tầng:** 0đ hay chấp nhận chi phí? Pipeline theo giờ tốn hơn batch ngày đáng kể.
+**Đã chốt ngày 21/08/2026**
+
+- **B1 — Mục đích:** đây là dự án portfolio nhưng phải vận hành end-to-end như một hệ thống
+  production nhỏ: có lịch chạy, idempotency, recovery, quality gate, monitoring và tài liệu
+  vận hành. Không dùng dữ liệu giả để thay thế đường chạy thực.
+- **B2 — Ngân sách:** chi phí bắt buộc là 0 đồng/tháng. Ưu tiên phần mềm open-source, Free API
+  cho non-commercial use và máy sở hữu sẵn hoặc compute free-tier.
+- **B3 — Mức dịch vụ:** best-effort single-node. Không tuyên bố high availability hoặc SLA
+  nguồn dữ liệu vì Free API không bảo đảm uptime. Upstream outage phải tạo trạng thái
+  `DEGRADED`, không bị tính nhầm thành lỗi transformation.
 
 ## 11. Rủi ro
 
 | # | Rủi ro | Mức | Xử lý |
 |---|---|---|---|
-| **R1** | **Dữ liệu mưa KHÔNG phân biệt được giữa các phường nội thành.** Đã **đo chính xác** ngày 20/08/2026 bằng centroid thật của cả 126 phường-xã: **126 phường → chỉ 49 ô lưới mưa phân biệt được**. Một ô gom **15 phường** (Đống Đa, Thanh Xuân, Khương Đình, Hoàng Liệt, Hà Đông, Tây Mỗ…) dùng chung **một chuỗi mưa duy nhất** — đúng những nơi hay ngập nhất. | **Rất cao** | Chấp nhận và thiết kế đúng bản chất: **mưa là biến động theo ô lưới (49 ô), tính dễ tổn thương là biến tĩnh theo điểm/đường**. Rủi ro điểm = f(mưa của ô lưới chứa điểm, độ tổn thương của điểm). Tuyệt đối không giả vờ có mưa phân giải mét. **Không khắc phục được bằng tọa độ phường chính xác hơn.** |
-| **R2** | Chưa có nguồn quan trắc ngập thực tế theo thời gian thực → không đo được độ chính xác liên tục. | Cao | Giai đoạn 1 kiểm chứng thủ công theo §9. Khảo sát nguồn ở Bước 2. |
+| **R1** | **Dữ liệu mưa KHÔNG phân biệt được giữa các phường nội thành.** Đã **đo chính xác** ngày 20/08/2026 bằng centroid thật của cả 126 phường-xã: **126 phường → chỉ 49 ô lưới mưa phân biệt được**. Một ô gom **15 phường** (Đống Đa, Thanh Xuân, Khương Đình, Hoàng Liệt, Hà Đông, Tây Mỗ…) dùng chung **một chuỗi mưa duy nhất** — đúng những nơi hay ngập nhất. | **Rất cao** | Chấp nhận và thiết kế đúng bản chất: **mưa là biến động theo ô lưới (49 ô), tính dễ tổn thương là biến tĩnh theo điểm/đường**. MVP projection forcing của grid sang điểm/phường, chưa gọi kết quả là xác suất rủi ro. Tuyệt đối không giả vờ có mưa phân giải mét. **Không khắc phục được bằng tọa độ phường chính xác hơn.** |
+| **R2** | Chưa có nguồn quan trắc ngập thực tế theo thời gian thực → không thể hiệu chỉnh xác suất ngập hoặc đo POD/FAR liên tục. | Cao | Giai đoạn 1 chỉ công bố pressure feature/kịch bản mưa; §9 là bộ case replay, không phải ground-truth đầy đủ. |
 | **R3** | Phụ lục QĐ 2280 có thể chỉ có bản PDF/giấy, phải nhập tay ~220 điểm và geocode. | Cao | Coi là công việc thật, có kế hoạch riêng: nhập tay + geocode qua Nominatim + review. |
 | **R4** | DEM miễn phí trả độ cao **số nguyên mét** (đã kiểm chứng: 10, 9, 14 m). Chênh lệch dưới 1m không thấy được, trong khi ngập cục bộ nhạy ở mức decimet. | Cao | Không dùng DEM để tự phát hiện điểm trũng. Dùng DEM làm biến phụ; điểm ngập lấy từ registry chính thức. |
 | ~~R5~~ | ~~Ranh giới 126 phường-xã có thể sai/thiếu.~~ **ĐÃ ĐÓNG 20/08/2026** | — | Đã có polygon + **mã hành chính chính thức** đủ 126 đơn vị, tổng diện tích 3.360 km² khớp số liệu chính thức. Xem S13 ở Bước 2. |
-| **R6** | Pipeline theo giờ chạy 24/7 → chi phí và độ phức tạp vận hành cao hơn hẳn batch ngày. | Trung bình | Cân nhắc chỉ chạy nhịp giờ trong mùa mưa (T5–T10), ngoài mùa hạ nhịp. |
+| **R6** | Single-node/free-tier có thể sleep, restart, hết disk hoặc bị thu hồi; Free API không có uptime guarantee. | Cao | Container restart policy, checkpoint/idempotency, health check, disk budget, backup metadata và cảnh báo freshness; công bố trạng thái `DEGRADED` khi nguồn hoặc host gián đoạn. |
 
 ---
 

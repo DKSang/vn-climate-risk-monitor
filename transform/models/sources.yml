@@ -1,6 +1,14 @@
 version: 2
 
 sources:
+  - name: bronze_weather
+    database: bronze_store
+    schema: tables
+    description: "Bronze hourly được loader parse từ immutable Open-Meteo JSON"
+    tables:
+      - name: open_meteo_forecast_hourly
+        description: "Mọi forecast retrieval vintage ở grain location × valid hour"
+
   # ── Nguồn 1: Postgres (danh mục hành chính GSO) ─────────────────────────────
   # DuckDB ATTACH thẳng Postgres (read_only) trong profiles.yml -> dbt đọc trực
   # tiếp. Không cần dlt land parquet trung gian cho dữ liệu tĩnh dạng bảng này.

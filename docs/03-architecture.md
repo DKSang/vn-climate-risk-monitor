@@ -8,10 +8,13 @@
 Sources
   ├── PostgreSQL administrative reference
   ├── versioned CSV/GeoJSON reference
-  └── Open-Meteo (chưa triển khai)
+  └── Open-Meteo
             │
             ▼
-MinIO + DuckLake
+Collector: PostgreSQL control plane + MinIO source objects
+            │
+            ▼
+DuckLake
   ├── Bronze: source-faithful, append/replayable
   ├── Silver: validated and conformed
   └── Gold: business-ready dimensions, facts and aggregates
@@ -20,17 +23,35 @@ MinIO + DuckLake
 dbt quality gate → serving
 ```
 
-Postgres lưu metadata DuckLake; MinIO lưu source objects và Parquet; DuckDB là
-compute engine; dbt quản lý transformation.
+PostgreSQL lưu cả ingestion control state và metadata DuckLake trong các schema
+tách biệt. MinIO lưu source objects và Parquet; DuckDB là compute engine; dbt
+quản lý transformation.
+
+## Hồ sơ vận hành
+
+MVP là **portfolio production-like, zero-cost**:
+
+- chạy single-node bằng Docker Compose trên máy sở hữu sẵn hoặc VM free-tier;
+- toàn bộ runtime là phần mềm open-source; không phụ thuộc managed service trả phí;
+- pipeline phải có schedule, restart/retry, checkpoint, idempotency, quality gate,
+  health check, metrics và runbook recovery;
+- persistent volume và backup metadata phải tách khỏi vòng đời container;
+- không triển khai Kubernetes, multi-region, active-active hoặc high availability;
+- nguồn Free API không có uptime guarantee, vì vậy hệ thống chỉ cam kết best-effort
+  và phải biểu diễn `DEGRADED`/stale data rõ ràng.
+
+Chi phí mục tiêu 0 đồng/tháng không có nghĩa là tài nguyên vô hạn. Storage,
+request budget, CPU/RAM và retention phải có guardrail; khi chuyển sang mục đích
+thương mại phải review lại giấy phép và deployment profile.
 
 ## Layer contract
 
 | Layer | Contract | Ví dụ |
 |---|---|---|
-| Bronze files | Payload nguồn nguyên bản, immutable, có manifest/checksum | `bronze/files/open_meteo/...` |
+| Bronze files | Response nguồn nguyên bản, immutable; checksum ở PostgreSQL | `bronze/files/open_meteo/...` |
 | Bronze tables | Parse cấu trúc, giữ mọi record/vintage, chưa validate | `bronze_store.tables.open_meteo_forecast_hourly` |
 | Silver | Type, validate, dedup, late data, mapping và join | `silver.rainfall_forecast_hourly` |
-| Gold | Dimensional model, KPI và aggregate nghiệp vụ | `gold.fct_flood_risk_hourly` |
+| Gold | Dimensional model, KPI và aggregate nghiệp vụ | `gold.fct_rainfall_pressure_hourly` |
 
 Bronze có thể explode array nguồn thành grain nguyên tử vì payload nguyên bản đã
 được giữ trong `bronze/files`. Không được lọc, dedup hay áp business rule tại
@@ -59,23 +80,25 @@ Gold tiếp tục dùng `dim_`/`fct_` theo dimensional modeling.
 
 ## Incremental ingestion
 
-`ops` là schema control-plane, không phải data layer:
+`ingestion` là native PostgreSQL control-plane schema, không phải data layer:
 
 ```text
-ops.pipeline_runs
-ops.ingestion_files
+ingestion.ingestion_runs
+ingestion.ingestion_files
 ```
 
-File discovery dựa trên immutable path và file ledger. Loader chỉ xử lý run có
-`_SUCCESS`, ghi staging rồi `MERGE` vào Bronze bằng deterministic row id. Hai
-catalog không được giả định có distributed transaction: commit Bronze trước, rồi
-đánh dấu file `COMMITTED`; nếu crash ở giữa thì retry cùng deterministic id.
+Collector đăng ký từng response object vào PostgreSQL. Loader chỉ claim file
+`PENDING` thuộc attempt `SUCCEEDED`, xác minh checksum rồi `MERGE` vào Bronze
+bằng deterministic row id. PostgreSQL control plane và DuckLake catalog không
+được giả định có distributed transaction: commit Bronze trước, rồi đánh dấu file
+`COMMITTED`; nếu crash ở giữa thì retry cùng deterministic id.
 
 Pattern này học theo các thuộc tính cốt lõi của Databricks Auto Loader:
 
-- incremental file discovery;
+- incremental discovery qua PostgreSQL file ledger;
 - checkpoint riêng cho mỗi pipeline;
 - immutable files và không overwrite;
+- claim bằng `FOR UPDATE SKIP LOCKED` và lease recovery;
 - rescued data cho schema drift;
 - available-now micro-batch cho workload không cần streaming 24/7.
 
@@ -105,18 +128,23 @@ prefix `__dbt_tmp` rồi chỉ rename metadata.
 
 - MinIO + Postgres + DuckLake + DuckDB/dbt;
 - ba schema medallion;
-- `ops` ingestion ledger;
+- native PostgreSQL ingestion control plane;
 - geography Bronze/Silver/Gold;
-- package boundary cho collectors/loaders/state.
+- package boundary cho collectors/loaders/state;
+- Open-Meteo forecast collector chỉ ghi immutable response JSON;
+- Phase 3 run/file state, logical attempt identity, claim/lease và checksum reader;
+- Phase 4 explicit Arrow parser và idempotent Bronze DuckLake loader.
+- Phase 5 deterministic schedule slot, collect→load orchestration, quota guardrail,
+  timeout/lease recovery và PostgreSQL health metrics.
 
 Chưa có:
 
-- collector hoặc loader Open-Meteo;
-- các bảng rainfall/flood-risk;
-- orchestration và serving.
+- các bảng rainfall/scenario/pressure;
+- serving.
 
 Chi tiết cây code: [03a-repo-structure.md](03a-repo-structure.md). Contract
-ingestion: [04-ingestion.md](04-ingestion.md).
+ingestion: [04-ingestion.md](04-ingestion.md). Phương pháp KPI:
+[05-kpi-methodology.md](05-kpi-methodology.md).
 
 ## Tham khảo
 

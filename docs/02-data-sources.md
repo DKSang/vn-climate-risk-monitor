@@ -1,11 +1,11 @@
 # Bước 2 — Xác định & Đánh giá nguồn dữ liệu
 
-**Hanoi Flood & Climate Risk Monitor** · v0.3 (đơn giản hóa) · 2026-08-20 · *Trạng thái: CHỜ DUYỆT*
+**Hanoi Flood & Climate Risk Monitor** · v0.4 (đơn giản hóa) · 2026-08-21 · *Trạng thái: CHỜ DUYỆT*
 
 > **Thay đổi so với v0.2:** đã thử mở rộng sang radar, camera HSDC, GloFAS, elevation, METAR —
 > quá phức tạp cho quy mô dự án này. **Chốt lại: chỉ dùng Open-Meteo (Archive + Forecast) làm
-> nguồn thời tiết duy nhất**, cộng với dữ liệu tham chiếu tĩnh (ranh giới hành chính, ngưỡng
-> ngập chính thức). Toàn bộ kết quả khảo sát mở rộng lưu ở cuối file để không mất công nếu
+> nguồn thời tiết duy nhất**, cộng với dữ liệu tham chiếu tĩnh (ranh giới hành chính, kịch bản
+> mưa/úng ngập chính thức). Toàn bộ kết quả khảo sát mở rộng lưu ở cuối file để không mất công nếu
 > cần dùng lại sau.
 
 ---
@@ -14,25 +14,34 @@
 
 | # | Nguồn | Vai trò | Update | Access |
 |---|---|---|---|---|
-| **S1** | **Open-Meteo Forecast API** | Mưa dự báo theo giờ, 1–16 ngày tới | Giờ | API mở, no key |
-| **S2** | **Open-Meteo Archive API (ERA5)** | Mưa lịch sử 1981–nay, dùng làm chuẩn khí hậu | Ngày (trễ ~5 ngày) | API mở, no key |
-| **S5** | **QĐ 2280/QĐ-UBND** — ngưỡng mưa gây ngập | Chuyển mm/h → cấp độ rủi ro | Năm, tĩnh | Nhập tay từ văn bản |
+| **S1** | **Open-Meteo Forecast API** | Mưa dự báo theo giờ, 1–16 ngày tới | Giờ | Free API, no key, non-commercial |
+| **S2** | **Open-Meteo Historical Weather API** | Reanalysis lịch sử, dùng xây baseline khí hậu | Ngày (trễ khoảng 5 ngày) | Free API, no key, non-commercial |
+| **S5** | **QĐ 2280/QĐ-UBND** — kịch bản mưa/úng ngập | Chuyển mưa một giờ → scenario vận hành | Năm, tĩnh | Văn bản chính thức |
 | **S13** | **vietnamese-provinces-database** — polygon 126 phường-xã | Ranh giới + mã hành chính, gán điểm lưới → phường | Theo nghị quyết, tĩnh | GitHub raw, mở |
 
-**Bốn nguồn này là đủ để trả lời toàn bộ câu hỏi phân tích ở Bước 1 §6** — vì bản chất bài toán
-chỉ là: *lấy mưa (Open-Meteo) → so ngưỡng (QĐ 2280) → gắn vào địa bàn (S13)*.
+Bốn nguồn này đủ cho **rainfall hazard/pressure MVP**: *lấy mưa → tính rolling/peak → so
+kịch bản vận hành → projection sang địa bàn*. Chúng không đủ để dự báo xác suất, độ sâu hoặc
+thời gian rút nước khi ngập.
+
+Open-Meteo Free API không có uptime guarantee và yêu cầu attribution theo CC BY
+4.0. Đây là ràng buộc nguồn, không chỉ là chi tiết triển khai; xem cost/request
+guardrail tại [04-ingestion.md](04-ingestion.md).
 
 ## 2. Cách dùng cụ thể
 
 ### S1 — Open-Meteo Forecast
 - `https://api.open-meteo.com/v1/forecast?latitude=...&longitude=...&hourly=precipitation&models=best_match`
 - Gọi **multi-point 1 request** cho toàn bộ điểm lưới cần thiết (đã xác minh hoạt động).
-- Dùng `models=best_match` — đã đo, cho độ phân giải hiệu dụng cao nhất trong các model sẵn có.
+- MVP hiện đề xuất `models=best_match`, nhưng đây là chuỗi ghép model và có thể thay đổi theo
+  thời gian. Phải lưu retrieval vintage, model request và tọa độ grid thực nhận. Việc pin một
+  model cụ thể để tăng khả năng tái lập còn là quyết định K6 ở Bước 5.
 
 ### S2 — Open-Meteo Archive
-- `https://archive-api.open-meteo.com/v1/archive?start_date=1981-01-01...&daily=precipitation_sum`
-- Dùng để tính **chuẩn khí hậu 1991–2020**: trung bình, phân vị theo ngày-trong-năm cho mỗi điểm lưới.
-- So sánh mưa hiện tại với chuẩn này → ra được "bất thường bao nhiêu %" (trả lời Q2, Q8 ở Bước 1).
+- `https://archive-api.open-meteo.com/v1/archive?start_date=...&end_date=...&hourly=precipitation`
+- Pin một historical product sau khi chốt ERA5 hay ERA5-Land; không dùng Best Match trôi nổi
+  cho baseline dài hạn.
+- Dùng giai đoạn 1991–2020 để tính phân vị theo grid và mùa/tháng. Không so trực tiếp phân phối
+  reanalysis với forecast model khác nếu chưa đánh giá bias.
 
 ### Độ phân giải — chấp nhận là ràng buộc, không cố giải quyết
 Đã đo thực tế (xem phụ lục): **126 phường-xã Hà Nội → 49 ô lưới mưa phân biệt được** với
@@ -42,20 +51,21 @@ chỉ là: *lấy mưa (Open-Meteo) → so ngưỡng (QĐ 2280) → gắn vào �
 độ phân giải ô lưới, thiết kế đúng theo nó:
 - Tính mưa theo **ô lưới** (không theo từng phường riêng).
 - Gán mỗi phường-xã vào ô lưới chứa centroid của nó (dùng S13).
-- Rủi ro phường = rủi ro của ô lưới nó thuộc về. Phường cùng ô thì cùng mức rủi ro — **đúng bản
+- Áp lực mưa của phường = forcing của ô lưới nó thuộc về. Phường cùng ô thì cùng scenario — **đúng bản
   chất dữ liệu, không giả vờ chính xác hơn thực tế.**
 
-### S5 — Ngưỡng mưa → rủi ro ngập (từ QĐ 2280/QĐ-UBND)
+### S5 — Mưa một giờ → kịch bản vận hành (từ QĐ 2280/QĐ-UBND)
 
-| Mưa (mm/h) | Số điểm ngập toàn TP | Cấp rủi ro đề xuất |
+| Mưa một giờ | Số điểm úng ngập trong kịch bản toàn TP | Scenario code |
 |---|---|---|
-| < 50 | ~0 (vài vị trí cục bộ) | 1 — Thấp |
-| 50–70 | 11 | 2 — Trung bình |
-| 70–100 | 71 | 3 — Cao |
-| > 100 (kéo dài) | 220 | 4 — Rất cao |
+| `< 50 mm` | Cơ bản không ngập; vẫn có thể ứ đọng cục bộ | `below_50` |
+| `50–<70 mm` | 11 | `from_50_to_under_70` |
+| `70–100 mm` | 71 | `from_70_to_100` |
+| `>100 mm`; văn bản yêu cầu kéo dài nhiều giờ | 220 | `over_100` |
 
-Đây là bộ quy tắc **if/else đơn giản** trên giá trị `precipitation` giờ lớn nhất trong cửa sổ
-đang xét — không cần mô hình, không cần ML.
+Đây là bộ quy tắc **if/else minh bạch** trên tổng mưa một giờ/peak một giờ. Không gọi các
+scenario này là cấp rủi ro pháp lý hoặc xác suất ngập. Điều kiện “kéo dài nhiều giờ” phải được
+định nghĩa riêng trước khi coi kịch bản cuối đã thỏa đầy đủ.
 
 ### S13 — Ranh giới + mã 126 phường-xã
 - `https://raw.githubusercontent.com/ThangLeQuoc/vietnamese-provinces-database/master/json/geojson/01_ha_noi/wards/*.geojson`
@@ -66,8 +76,8 @@ chỉ là: *lấy mưa (Open-Meteo) → so ngưỡng (QĐ 2280) → gắn vào �
 
 ## 3. Việc thủ công cần làm
 
-1. Lấy nội dung ngưỡng mưa từ QĐ 2280 (đã có đủ 4 mức ở bảng trên từ báo chí — đủ dùng cho GĐ1,
-   không bắt buộc phải có toàn văn phụ lục 220 điểm ngay).
+1. Ghim bản chính thức QĐ 2280 và checksum/version của văn bản; bốn dải mưa đã được đối chiếu
+   trực tiếp trong quyết định. Phụ lục điểm úng ngập cần pipeline nhập và review riêng nếu dùng.
 2. Tải 126 file GeoJSON từ S13, tính centroid, ghim version.
 3. Viết hàm gán phường-xã → ô lưới Open-Meteo gần nhất (point trùng ô nào thì nhận ô đó).
 
@@ -85,9 +95,10 @@ chỉ là: *lấy mưa (Open-Meteo) → so ngưỡng (QĐ 2280) → gắn vào �
 
 ## 5. Giới hạn đã biết (nói rõ cho người dùng, không giấu)
 
-- Rủi ro tính theo **ô lưới ~11km**, không phải theo từng phường. Phường trong cùng ô lưới sẽ
-  hiển thị cùng một mức rủi ro dự báo.
-- "Ngập" ở đây là **rủi ro dựa trên ngưỡng mưa của thành phố**, không phải mô phỏng thủy lực.
+- Áp lực mưa tính theo **ô lưới model**, không phải theo từng phường. Phường trong cùng ô lưới
+  hiển thị cùng forcing/scenario dự báo.
+- "Ngập" ở đây chỉ là **áp lực thời tiết và scenario vận hành dựa trên mưa**, không phải mô
+  phỏng thủy lực hay xác suất ngập đã hiệu chỉnh.
   Không tính đến tình trạng cống rãnh thực tế tại thời điểm dự báo.
 - Không có cách nào trong nguồn hiện tại để **xác nhận** dự báo có đúng hay không (không có
   quan trắc ngập thực tế) — chấp nhận là giới hạn giai đoạn 1.

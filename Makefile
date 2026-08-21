@@ -1,4 +1,4 @@
-.PHONY: bootstrap bootstrap-env up down logs ingest-provinces migrate-legacy-dry-run migrate-legacy migrate-bronze-layout-dry-run migrate-bronze-layout seed dbt dbt-test transform dbt-docs clean-lake lint
+.PHONY: bootstrap bootstrap-env up down logs ingest-provinces ingest-weather-plan ingest-weather-canary ingest-weather load-weather-canary load-weather run-weather-plan run-weather-canary run-weather weather-status weather-healthcheck migrate-legacy-dry-run migrate-legacy migrate-bronze-layout-dry-run migrate-bronze-layout migrate-ingestion-control-dry-run migrate-ingestion-control seed dbt dbt-test transform dbt-docs clean-lake lint
 
 # ==== Setup ====
 bootstrap-env:
@@ -7,7 +7,7 @@ bootstrap-env:
 bootstrap: bootstrap-env
 	uv run python scripts/bootstrap.py
 
-# ==== Infrastructure (Docker Compose: MinIO + Postgres + Airflow + API + Dashboard) ====
+# ==== Infrastructure (Docker Compose: MinIO + Postgres + pgAdmin) ====
 up:
 	docker compose up -d
 
@@ -17,10 +17,43 @@ down:
 logs:
 	docker compose logs -f
 
-# ==== Ingest (collect immutable Bronze source files) ====
-# Open-Meteo chưa được triển khai. Target này chỉ tải reference hành chính tĩnh.
+# ==== Ingest (PostgreSQL control plane + immutable Bronze response files) ====
+# Collector reference hành chính tĩnh, độc lập với Open-Meteo forecast.
 ingest-provinces:
 	uv run python -m vn_climate_risk_monitor.ingestion.collectors.administrative_reference
+
+# Forecast collector: plan là read-only; canary/full ghi PostgreSQL + MinIO.
+ingest-weather-plan:
+	uv run collect-open-meteo-forecast
+
+ingest-weather-canary:
+	uv run collect-open-meteo-forecast --execute --limit 1
+
+ingest-weather:
+	uv run collect-open-meteo-forecast --execute
+
+# Available-now Bronze loader. Canary và production dùng checkpoint scope riêng.
+load-weather-canary:
+	uv run load-open-meteo-forecast --scope canary_1
+
+load-weather:
+	uv run load-open-meteo-forecast --scope production
+
+# Phase 5 operational entrypoint: deterministic hourly slot, collect then drain.
+run-weather-plan:
+	uv run run-open-meteo-pipeline
+
+run-weather-canary:
+	uv run run-open-meteo-pipeline --execute --limit 1
+
+run-weather:
+	uv run run-open-meteo-pipeline --execute
+
+weather-status:
+	uv run observe-open-meteo-ingestion --scope production
+
+weather-healthcheck:
+	uv run observe-open-meteo-ingestion --scope production --check
 
 # Migration v2: exact allowlist; DuckLake cleanup managed files, MinIO chỉ xóa
 # prefix unmanaged raw/geography/... đã khai báo trong migration.
@@ -37,6 +70,13 @@ migrate-bronze-layout-dry-run:
 
 migrate-bronze-layout:
 	uv run python scripts/migrations/002_split_bronze_files_tables.py --execute
+
+# Migration control plane: chỉ drop đúng hai DuckLake relation ops legacy khi rỗng.
+migrate-ingestion-control-dry-run:
+	uv run python scripts/migrations/003_move_ingestion_control_to_postgres.py
+
+migrate-ingestion-control:
+	uv run python scripts/migrations/003_move_ingestion_control_to_postgres.py --execute
 
 # ==== Transform (dbt + DuckDB + DuckLake) ====
 # dbt project ở transform/, không phải transform/dbt/

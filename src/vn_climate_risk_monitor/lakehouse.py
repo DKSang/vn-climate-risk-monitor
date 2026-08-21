@@ -3,7 +3,7 @@ DuckLake lakehouse connection module.
 
 Provides a reusable DuckDB connection pre-configured with:
   - MinIO secret (S3-compatible storage)
-  - Primary DuckLake catalog for Silver, Gold and Ops
+  - Primary DuckLake catalog for Silver and Gold
   - Bronze DuckLake catalog rooted at ``bronze/`` with schema ``tables``
 
 Usage:

@@ -1,5 +1,5 @@
 # vn-climate-risk-monitor — Infrastructure
-# Postgres: DuckLake catalog metadata (schema ducklake) + future Airflow metadata
+# Postgres: ingestion control plane + DuckLake catalog metadata
 # MinIO:    S3-compatible object storage (Bronze/Silver/Gold Parquet)
 
 services:

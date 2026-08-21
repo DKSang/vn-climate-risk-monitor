@@ -10,19 +10,21 @@ Theo dõi rủi ro **ngập úng / lũ / hạn hán** cho Hà Nội, chi tiết 
 | 2 | Xác định & đánh giá nguồn dữ liệu | [02-data-sources.md](02-data-sources.md) | ✅ Xong |
 | 3 | Thiết kế kiến trúc | [03-architecture.md](03-architecture.md) | ✅ **Đã triển khai & kiểm chứng** |
 | 3a | Cấu trúc repository | [03a-repo-structure.md](03a-repo-structure.md) | ✅ Xong |
-| 4 | Ingest dữ liệu | [04-ingestion.md](04-ingestion.md) | 🟡 Contract/code structure xong · **Open-Meteo chưa làm** |
+| 4 | Ingest dữ liệu | [04-ingestion.md](04-ingestion.md) | ✅ Phase 1–5 · production 126 wards · 9.072 rows |
 | 4a | Setup Lakehouse (DuckLake+MinIO+Postgres) | [04a-lakehouse-setup.md](04a-lakehouse-setup.md) | ✅ Xong |
-| 5 | Clean & Transform | `05-transformation.md` | 🟡 Silver/Gold địa lý xong · fact chưa có |
+| 4b | Ingestion runbook | [04b-ingestion-runbook.md](04b-ingestion-runbook.md) | ✅ Cron, health, recovery |
+| 5 | Clean, Transform & KPI | [05-kpi-methodology.md](05-kpi-methodology.md) | 🟡 Phương pháp KPI xong · model thời tiết chưa làm |
 | 6 | Lưu trữ — single source of truth | `06-storage-modeling.md` | ⬜ |
-| 7 | Data Quality & Observability | `07-data-quality.md` | 🟡 `dbt test` 29 test · chưa có observability |
+| 7 | Data Quality & Observability | `07-data-quality.md` | 🟡 ingestion health có · model observability chưa làm |
 | 8 | Make it accessible | `08-serving-bi.md` | ⬜ |
 | 9 | Governance & Continuous Improvement | `09-governance.md` | ⬜ |
 
 ## Trạng thái hệ thống (2026-08-21)
 
 ```
-dbt build → PASS=51  ERROR=0
-MinIO     → 10 object / 2.2 MiB
+dbt build  → PASS=51  ERROR=0
+MinIO      → 34 object / 4.0 MiB
+PostgreSQL → ingestion_runs + ingestion_files
 ```
 
 | Layer | Bảng | Dòng |
@@ -31,6 +33,7 @@ MinIO     → 10 object / 2.2 MiB
 | bronze | `gso_provinces` · `gso_wards` · `gso_administrative_units` · `gso_administrative_regions` · `ward_coordinates` | 34 · 3.321 · 5 · 8 · 3.321 |
 | silver | `wards` · `ward_centroids` · `ward_locations` | 3.321 mỗi bảng (view) |
 | gold | `dim_hanoi_ward` | **126** |
+| bronze weather | `open_meteo_forecast_hourly` | **9.144 rows** *(9.072 production + 72 canary)* |
 
 ## Lệnh thường dùng
 
@@ -39,6 +42,8 @@ make up            # bật Postgres + MinIO + pgAdmin
 make transform     # dbt build (run + test + tự dọn file cũ)
 make clean-lake    # squash lakehouse, bỏ lịch sử snapshot
 make dbt-docs      # sinh và mở dbt docs
+make run-weather   # collect + load forecast production
+make weather-status # health/metrics ingestion
 ```
 
 ## Nguyên tắc làm việc

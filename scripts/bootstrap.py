@@ -7,7 +7,7 @@ Idempotent — safe to re-run:
   2. Installs/loads DuckLake extension in DuckDB
   3. Attaches primary and Bronze DuckLake catalogs
   4. Creates ``bronze_store.tables``, ``catalog1.silver`` and ``catalog1.gold``
-  5. Creates the technical ingestion ledger in schema ops
+  5. Creates the native PostgreSQL ingestion control plane
 
 Usage:
     uv run python scripts/bootstrap.py
@@ -21,7 +21,10 @@ import sys
 import time
 
 from vn_climate_risk_monitor.config import load_settings
-from vn_climate_risk_monitor.ingestion.state import ensure_ingestion_state
+from vn_climate_risk_monitor.ingestion.state import (
+    connect_control_plane,
+    ensure_ingestion_state,
+)
 from vn_climate_risk_monitor.lakehouse import (
     BRONZE_CATALOG,
     BRONZE_METADATA_SCHEMA,
@@ -46,7 +49,9 @@ def _wait_for_service(host: str, port: int, name: str, timeout: int = 30) -> Non
                 return
         except OSError:
             time.sleep(1)
-    print(f"  ✗ {name} not reachable at {host}:{port} after {timeout}s", file=sys.stderr)
+    print(
+        f"  ✗ {name} not reachable at {host}:{port} after {timeout}s", file=sys.stderr
+    )
     sys.exit(1)
 
 
@@ -122,129 +127,46 @@ def step_2_setup_ducklake_catalog() -> None:
     con.execute(f"CREATE SCHEMA IF NOT EXISTS {BRONZE_CATALOG}.{BRONZE_TABLE_SCHEMA};")
     print(f"    ✓ Schema '{BRONZE_CATALOG}.{BRONZE_TABLE_SCHEMA}' ready")
 
-    print("  → Creating operational ingestion state...")
-    ensure_ingestion_state(con)
-    print("    ✓ Schema 'ops' and ingestion ledger ready")
-
     con.close()
 
 
-def step_3_verify() -> None:
-    """Quick verification that catalog tables exist in Postgres."""
-    print("\n── Step 3: Quick verification ──")
-
+def step_3_setup_control_plane() -> None:
+    """Create ingestion state as native PostgreSQL tables."""
+    print("\n── Step 3: Setup ingestion control plane ──")
+    connection = connect_control_plane(SETTINGS.postgres)
     try:
-        import psycopg2
-    except ImportError:
-        # Try psycopg (v3)
-        try:
-            import psycopg
+        ensure_ingestion_state(connection)
+    finally:
+        connection.close()
+    print("  ✓ ingestion.ingestion_runs and ingestion.ingestion_files ready")
 
-            conn = psycopg.connect(
-                host=SETTINGS.postgres.host,
-                port=SETTINGS.postgres.port,
-                dbname=SETTINGS.postgres.database,
-                user=SETTINGS.postgres.user,
-                password=SETTINGS.postgres.password,
+
+def step_4_verify() -> None:
+    """Verify DuckLake metadata and ingestion tables in PostgreSQL."""
+    print("\n── Step 4: Quick verification ──")
+    connection = connect_control_plane(SETTINGS.postgres)
+    try:
+        rows = connection.execute(
+            """
+            SELECT table_schema, table_name
+            FROM information_schema.tables
+            WHERE (
+                table_schema IN ('ducklake', 'ducklake_bronze')
+                AND table_name LIKE 'ducklake_%'
+            ) OR (
+                table_schema = 'ingestion'
+                AND table_name IN ('ingestion_runs', 'ingestion_files')
             )
-            cur = conn.cursor()
-            cur.execute("""
-                SELECT table_name FROM information_schema.tables
-                WHERE table_schema IN ('ducklake', 'ducklake_bronze')
-                  AND table_name LIKE 'ducklake_%'
-                ORDER BY table_name;
-            """)
-            tables = [row[0] for row in cur.fetchall()]
-            conn.close()
-        except ImportError:
-            # Fallback: verify through DuckDB
-            print("  ⚠ No psycopg2/psycopg installed — verifying via DuckDB...")
-            _verify_via_duckdb()
-            return
-    else:
-        conn = psycopg2.connect(
-            host=SETTINGS.postgres.host,
-            port=SETTINGS.postgres.port,
-            dbname=SETTINGS.postgres.database,
-            user=SETTINGS.postgres.user,
-            password=SETTINGS.postgres.password,
-        )
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT table_name FROM information_schema.tables
-            WHERE table_schema IN ('ducklake', 'ducklake_bronze')
-              AND table_name LIKE 'ducklake_%'
-            ORDER BY table_name;
-        """)
-        tables = [row[0] for row in cur.fetchall()]
-        conn.close()
-
-    if tables:
-        print(f"  ✓ Found {len(tables)} ducklake_* tables in Postgres:")
-        for t in tables:
-            print(f"    • {t}")
-    else:
-        print("  ✗ No ducklake_* tables found — something went wrong!", file=sys.stderr)
-        sys.exit(1)
-
-
-def _verify_via_duckdb() -> None:
-    """Verify catalog by reconnecting through DuckDB."""
-    import duckdb
-
-    con = duckdb.connect()
-    con.execute(f"""
-        CREATE SECRET minio_secret (
-            TYPE s3,
-            KEY_ID '{SETTINGS.minio.access_key}',
-            SECRET '{SETTINGS.minio.secret_key}',
-            ENDPOINT '{SETTINGS.minio.endpoint}',
-            USE_SSL {str(SETTINGS.minio.secure).lower()},
-            URL_STYLE 'path'
-        );
-    """)
-    pg_conn = SETTINGS.postgres.ducklake_connection_string
-    con.execute(
-        f"ATTACH 'ducklake:postgres:{pg_conn}' "
-        f"AS {PRIMARY_CATALOG} (DATA_PATH 's3://{SETTINGS.minio.bucket}', "
-        f"METADATA_SCHEMA '{PRIMARY_METADATA_SCHEMA}');"
-    )
-    con.execute(
-        f"ATTACH 'ducklake:postgres:{pg_conn}' "
-        f"AS {BRONZE_CATALOG} "
-        f"(DATA_PATH 's3://{SETTINGS.minio.bucket}/bronze', "
-        f"METADATA_SCHEMA '{BRONZE_METADATA_SCHEMA}');"
-    )
-    con.execute(f"USE {PRIMARY_CATALOG};")
-
-    # Check schemas exist
-    schemas = con.sql(
-        f"SELECT schema_name FROM information_schema.schemata "
-        f"WHERE catalog_name = '{PRIMARY_CATALOG}';"
-    ).fetchall()
-    schema_names = [s[0] for s in schemas]
-    for expected in ("silver", "gold", "ops"):
-        if expected in schema_names:
-            print(f"  ✓ Schema '{expected}' exists")
-        else:
-            print(f"  ✗ Schema '{expected}' missing!", file=sys.stderr)
-
-    bronze_schemas = {
-        row[0]
-        for row in con.sql(
-            "SELECT schema_name FROM information_schema.schemata "
-            f"WHERE catalog_name = '{BRONZE_CATALOG}'"
+            ORDER BY table_schema, table_name
+            """
         ).fetchall()
-    }
-    if BRONZE_TABLE_SCHEMA in bronze_schemas:
-        print(f"  ✓ Schema '{BRONZE_CATALOG}.{BRONZE_TABLE_SCHEMA}' exists")
-    else:
-        print(
-            f"  ✗ Schema '{BRONZE_CATALOG}.{BRONZE_TABLE_SCHEMA}' missing!",
-            file=sys.stderr,
-        )
-
-    con.close()
+    finally:
+        connection.close()
+    ingestion_tables = {table for schema, table in rows if schema == "ingestion"}
+    if ingestion_tables != {"ingestion_runs", "ingestion_files"}:
+        print("  ✗ Ingestion control-plane tables missing", file=sys.stderr)
+        sys.exit(1)
+    print(f"  ✓ Found {len(rows)} PostgreSQL metadata/control tables")
 
 
 def main() -> None:
@@ -261,7 +183,8 @@ def main() -> None:
 
     step_1_create_minio_bucket()
     step_2_setup_ducklake_catalog()
-    step_3_verify()
+    step_3_setup_control_plane()
+    step_4_verify()
 
     print("\n" + "=" * 60)
     print("  ✅ Lakehouse bootstrap complete!")
