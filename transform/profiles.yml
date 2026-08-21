@@ -12,22 +12,29 @@ transform:
       secrets:
         - type: s3
           name: minio_secret
-          key_id: minioadmin
-          secret: minioadmin
-          endpoint: 127.0.0.1:9000
-          use_ssl: false
+          key_id: "{{ env_var('MINIO_ACCESS_KEY', 'minioadmin') }}"
+          secret: "{{ env_var('MINIO_SECRET_KEY', 'minioadmin') }}"
+          endpoint: "{{ env_var('MINIO_ENDPOINT', '127.0.0.1:9000') }}"
+          use_ssl: "{{ env_var('MINIO_SECURE', 'false') | as_native }}"
           url_style: path
 
       attach:
-        # 1) Lakehouse đích: metadata trong Postgres, dữ liệu Parquet trên MinIO
-        - path: "ducklake:postgres:dbname=vnclimate host=127.0.0.1 port=5432 user=vnclimate password=vnclimate"
+        # 1) Silver/Gold/Ops: metadata trong Postgres, dữ liệu trên MinIO root
+        - path: "ducklake:postgres:dbname={{ env_var('POSTGRES_DB', 'vnclimate') }} host={{ env_var('POSTGRES_HOST', '127.0.0.1') }} port={{ env_var('POSTGRES_PORT', '5432') }} user={{ env_var('POSTGRES_USER', 'vnclimate') }} password={{ env_var('POSTGRES_PASSWORD', 'vnclimate') }}"
           alias: catalog1
           options:
-            data_path: "s3://vn-climate"
+            data_path: "s3://{{ env_var('MINIO_BUCKET', 'vn-climate') }}"
             metadata_schema: "ducklake"
 
-        # 2) Postgres NGUỒN (chỉ đọc) — dbt đọc trực tiếp, bỏ hẳn hop dlt cho dữ liệu địa lý
-        - path: "dbname=vnclimate host=127.0.0.1 port=5432 user=vnclimate password=vnclimate"
+        # 2) Bronze tables: root riêng để path luôn là bronze/tables/<table>/
+        - path: "ducklake:postgres:dbname={{ env_var('POSTGRES_DB', 'vnclimate') }} host={{ env_var('POSTGRES_HOST', '127.0.0.1') }} port={{ env_var('POSTGRES_PORT', '5432') }} user={{ env_var('POSTGRES_USER', 'vnclimate') }} password={{ env_var('POSTGRES_PASSWORD', 'vnclimate') }}"
+          alias: bronze_store
+          options:
+            data_path: "s3://{{ env_var('MINIO_BUCKET', 'vn-climate') }}/bronze"
+            metadata_schema: "ducklake_bronze"
+
+        # 3) Postgres NGUỒN (chỉ đọc) — dbt đọc trực tiếp dữ liệu địa lý
+        - path: "dbname={{ env_var('POSTGRES_DB', 'vnclimate') }} host={{ env_var('POSTGRES_HOST', '127.0.0.1') }} port={{ env_var('POSTGRES_PORT', '5432') }} user={{ env_var('POSTGRES_USER', 'vnclimate') }} password={{ env_var('POSTGRES_PASSWORD', 'vnclimate') }}"
           alias: pg_source
           type: postgres
           options:

@@ -5,8 +5,9 @@ Bootstrap the DuckLake lakehouse.
 Idempotent — safe to re-run:
   1. Creates MinIO bucket (skip if exists)
   2. Installs/loads DuckLake extension in DuckDB
-  3. Attaches DuckLake catalog (Postgres metadata + MinIO storage)
-  4. Creates medallion schemas: bronze, silver, gold
+  3. Attaches primary and Bronze DuckLake catalogs
+  4. Creates ``bronze_store.tables``, ``catalog1.silver`` and ``catalog1.gold``
+  5. Creates the technical ingestion ledger in schema ops
 
 Usage:
     uv run python scripts/bootstrap.py
@@ -16,33 +17,21 @@ Usage:
 
 from __future__ import annotations
 
-import os
 import sys
 import time
 
-# ---------------------------------------------------------------------------
-# Load .env if available
-# ---------------------------------------------------------------------------
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except ImportError:
-    pass
+from vn_climate_risk_monitor.config import load_settings
+from vn_climate_risk_monitor.ingestion.state import ensure_ingestion_state
+from vn_climate_risk_monitor.lakehouse import (
+    BRONZE_CATALOG,
+    BRONZE_METADATA_SCHEMA,
+    BRONZE_TABLE_SCHEMA,
+    PRIMARY_CATALOG,
+    PRIMARY_METADATA_SCHEMA,
+)
+from vn_climate_risk_monitor.storage import ensure_bucket, get_minio_client
 
-# ---------------------------------------------------------------------------
-# Config from environment
-# ---------------------------------------------------------------------------
-MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", "localhost:9000")
-MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY", "minioadmin")
-MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY", "minioadmin")
-MINIO_SECURE = os.getenv("MINIO_SECURE", "false").lower() == "true"
-MINIO_BUCKET = os.getenv("MINIO_BUCKET", "vn-climate")
-
-PG_HOST = os.getenv("POSTGRES_HOST", "localhost")
-PG_PORT = os.getenv("POSTGRES_PORT", "5432")
-PG_DB = os.getenv("POSTGRES_DB", "vnclimate")
-PG_USER = os.getenv("POSTGRES_USER", "vnclimate")
-PG_PASSWORD = os.getenv("POSTGRES_PASSWORD", "vnclimate")
+SETTINGS = load_settings()
 
 
 def _wait_for_service(host: str, port: int, name: str, timeout: int = 30) -> None:
@@ -65,45 +54,12 @@ def step_1_create_minio_bucket() -> None:
     """Create the MinIO bucket if it doesn't exist."""
     print("\n── Step 1: Create MinIO bucket ──")
 
-    try:
-        from minio import Minio
-    except ImportError:
-        print("  ⚠ minio package not installed, using boto3 fallback...")
-        _create_bucket_boto3()
-        return
-
-    client = Minio(
-        MINIO_ENDPOINT,
-        access_key=MINIO_ACCESS_KEY,
-        secret_key=MINIO_SECRET_KEY,
-        secure=MINIO_SECURE,
-    )
-
-    if client.bucket_exists(MINIO_BUCKET):
-        print(f"  ✓ Bucket '{MINIO_BUCKET}' already exists — skipping")
+    client = get_minio_client(SETTINGS.minio)
+    if client.bucket_exists(SETTINGS.minio.bucket):
+        print(f"  ✓ Bucket '{SETTINGS.minio.bucket}' already exists — skipping")
     else:
-        client.make_bucket(MINIO_BUCKET)
-        print(f"  ✓ Bucket '{MINIO_BUCKET}' created")
-
-
-def _create_bucket_boto3() -> None:
-    """Fallback: create bucket using boto3."""
-    import boto3
-    from botocore.exceptions import ClientError
-
-    protocol = "https" if MINIO_SECURE else "http"
-    s3 = boto3.client(
-        "s3",
-        endpoint_url=f"{protocol}://{MINIO_ENDPOINT}",
-        aws_access_key_id=MINIO_ACCESS_KEY,
-        aws_secret_access_key=MINIO_SECRET_KEY,
-    )
-    try:
-        s3.head_bucket(Bucket=MINIO_BUCKET)
-        print(f"  ✓ Bucket '{MINIO_BUCKET}' already exists — skipping")
-    except ClientError:
-        s3.create_bucket(Bucket=MINIO_BUCKET)
-        print(f"  ✓ Bucket '{MINIO_BUCKET}' created")
+        ensure_bucket(client, SETTINGS.minio.bucket)
+        print(f"  ✓ Bucket '{SETTINGS.minio.bucket}' created")
 
 
 def step_2_setup_ducklake_catalog() -> None:
@@ -125,39 +81,50 @@ def step_2_setup_ducklake_catalog() -> None:
     con.execute(f"""
         CREATE SECRET minio_secret (
             TYPE s3,
-            KEY_ID '{MINIO_ACCESS_KEY}',
-            SECRET '{MINIO_SECRET_KEY}',
-            ENDPOINT '{MINIO_ENDPOINT}',
-            USE_SSL {str(MINIO_SECURE).lower()},
+            KEY_ID '{SETTINGS.minio.access_key}',
+            SECRET '{SETTINGS.minio.secret_key}',
+            ENDPOINT '{SETTINGS.minio.endpoint}',
+            USE_SSL {str(SETTINGS.minio.secure).lower()},
             URL_STYLE 'path'
         );
     """)
     print("  ✓ MinIO secret created")
 
-    # Attach DuckLake catalog
-    print("  → Attaching DuckLake catalog (Postgres + MinIO)...")
-    pg_conn = (
-        f"dbname={PG_DB} host={PG_HOST} port={PG_PORT} "
-        f"user={PG_USER} password={PG_PASSWORD}"
+    # Attach primary and Bronze DuckLake catalogs. The separate Bronze root is
+    # required because DuckLake derives paths as data_path/schema/table.
+    print("  → Attaching DuckLake catalogs (Postgres + MinIO)...")
+    pg_conn = SETTINGS.postgres.ducklake_connection_string
+    con.execute(
+        f"ATTACH 'ducklake:postgres:{pg_conn}' "
+        f"AS {PRIMARY_CATALOG} (DATA_PATH 's3://{SETTINGS.minio.bucket}', "
+        f"METADATA_SCHEMA '{PRIMARY_METADATA_SCHEMA}');"
     )
     con.execute(
         f"ATTACH 'ducklake:postgres:{pg_conn}' "
-        f"AS catalog1 (DATA_PATH 's3://{MINIO_BUCKET}', METADATA_SCHEMA 'ducklake');"
+        f"AS {BRONZE_CATALOG} "
+        f"(DATA_PATH 's3://{SETTINGS.minio.bucket}/bronze', "
+        f"METADATA_SCHEMA '{BRONZE_METADATA_SCHEMA}');"
     )
-    print("  ✓ DuckLake catalog 'catalog1' attached")
+    print(f"  ✓ DuckLake catalogs '{PRIMARY_CATALOG}' and '{BRONZE_CATALOG}' attached")
 
-    # Use catalog
-    con.execute("USE catalog1;")
+    con.execute(f"USE {PRIMARY_CATALOG};")
 
-    # Create medallion schemas (idempotent)
+    # Create medallion schemas (idempotent). Bronze's logical `tables` schema
+    # maps to the physical prefix bronze/tables/.
     print("  → Creating medallion schemas...")
-    for schema in ("bronze", "silver", "gold"):
+    for schema in ("silver", "gold"):
         try:
             con.execute(f"CREATE SCHEMA IF NOT EXISTS {schema};")
             print(f"    ✓ Schema '{schema}' ready")
         except duckdb.CatalogException:
             # Schema already exists
             print(f"    ✓ Schema '{schema}' already exists")
+    con.execute(f"CREATE SCHEMA IF NOT EXISTS {BRONZE_CATALOG}.{BRONZE_TABLE_SCHEMA};")
+    print(f"    ✓ Schema '{BRONZE_CATALOG}.{BRONZE_TABLE_SCHEMA}' ready")
+
+    print("  → Creating operational ingestion state...")
+    ensure_ingestion_state(con)
+    print("    ✓ Schema 'ops' and ingestion ledger ready")
 
     con.close()
 
@@ -174,13 +141,16 @@ def step_3_verify() -> None:
             import psycopg
 
             conn = psycopg.connect(
-                host=PG_HOST, port=int(PG_PORT),
-                dbname=PG_DB, user=PG_USER, password=PG_PASSWORD,
+                host=SETTINGS.postgres.host,
+                port=SETTINGS.postgres.port,
+                dbname=SETTINGS.postgres.database,
+                user=SETTINGS.postgres.user,
+                password=SETTINGS.postgres.password,
             )
             cur = conn.cursor()
             cur.execute("""
                 SELECT table_name FROM information_schema.tables
-                WHERE table_schema = 'ducklake'
+                WHERE table_schema IN ('ducklake', 'ducklake_bronze')
                   AND table_name LIKE 'ducklake_%'
                 ORDER BY table_name;
             """)
@@ -193,13 +163,16 @@ def step_3_verify() -> None:
             return
     else:
         conn = psycopg2.connect(
-            host=PG_HOST, port=int(PG_PORT),
-            dbname=PG_DB, user=PG_USER, password=PG_PASSWORD,
+            host=SETTINGS.postgres.host,
+            port=SETTINGS.postgres.port,
+            dbname=SETTINGS.postgres.database,
+            user=SETTINGS.postgres.user,
+            password=SETTINGS.postgres.password,
         )
         cur = conn.cursor()
         cur.execute("""
             SELECT table_name FROM information_schema.tables
-            WHERE table_schema = 'ducklake'
+            WHERE table_schema IN ('ducklake', 'ducklake_bronze')
               AND table_name LIKE 'ducklake_%'
             ORDER BY table_name;
         """)
@@ -223,31 +196,53 @@ def _verify_via_duckdb() -> None:
     con.execute(f"""
         CREATE SECRET minio_secret (
             TYPE s3,
-            KEY_ID '{MINIO_ACCESS_KEY}',
-            SECRET '{MINIO_SECRET_KEY}',
-            ENDPOINT '{MINIO_ENDPOINT}',
-            USE_SSL {str(MINIO_SECURE).lower()},
+            KEY_ID '{SETTINGS.minio.access_key}',
+            SECRET '{SETTINGS.minio.secret_key}',
+            ENDPOINT '{SETTINGS.minio.endpoint}',
+            USE_SSL {str(SETTINGS.minio.secure).lower()},
             URL_STYLE 'path'
         );
     """)
-    pg_conn = (
-        f"dbname={PG_DB} host={PG_HOST} port={PG_PORT} "
-        f"user={PG_USER} password={PG_PASSWORD}"
+    pg_conn = SETTINGS.postgres.ducklake_connection_string
+    con.execute(
+        f"ATTACH 'ducklake:postgres:{pg_conn}' "
+        f"AS {PRIMARY_CATALOG} (DATA_PATH 's3://{SETTINGS.minio.bucket}', "
+        f"METADATA_SCHEMA '{PRIMARY_METADATA_SCHEMA}');"
     )
     con.execute(
         f"ATTACH 'ducklake:postgres:{pg_conn}' "
-        f"AS catalog1 (DATA_PATH 's3://{MINIO_BUCKET}', METADATA_SCHEMA 'ducklake');"
+        f"AS {BRONZE_CATALOG} "
+        f"(DATA_PATH 's3://{SETTINGS.minio.bucket}/bronze', "
+        f"METADATA_SCHEMA '{BRONZE_METADATA_SCHEMA}');"
     )
-    con.execute("USE catalog1;")
+    con.execute(f"USE {PRIMARY_CATALOG};")
 
     # Check schemas exist
-    schemas = con.sql("SELECT schema_name FROM information_schema.schemata;").fetchall()
+    schemas = con.sql(
+        f"SELECT schema_name FROM information_schema.schemata "
+        f"WHERE catalog_name = '{PRIMARY_CATALOG}';"
+    ).fetchall()
     schema_names = [s[0] for s in schemas]
-    for expected in ("bronze", "silver", "gold"):
+    for expected in ("silver", "gold", "ops"):
         if expected in schema_names:
             print(f"  ✓ Schema '{expected}' exists")
         else:
             print(f"  ✗ Schema '{expected}' missing!", file=sys.stderr)
+
+    bronze_schemas = {
+        row[0]
+        for row in con.sql(
+            "SELECT schema_name FROM information_schema.schemata "
+            f"WHERE catalog_name = '{BRONZE_CATALOG}'"
+        ).fetchall()
+    }
+    if BRONZE_TABLE_SCHEMA in bronze_schemas:
+        print(f"  ✓ Schema '{BRONZE_CATALOG}.{BRONZE_TABLE_SCHEMA}' exists")
+    else:
+        print(
+            f"  ✗ Schema '{BRONZE_CATALOG}.{BRONZE_TABLE_SCHEMA}' missing!",
+            file=sys.stderr,
+        )
 
     con.close()
 
@@ -260,8 +255,8 @@ def main() -> None:
 
     # Wait for services
     print("\n── Step 0: Waiting for services ──")
-    minio_host, minio_port = MINIO_ENDPOINT.split(":")
-    _wait_for_service(PG_HOST, int(PG_PORT), "PostgreSQL")
+    minio_host, minio_port = SETTINGS.minio.endpoint.split(":")
+    _wait_for_service(SETTINGS.postgres.host, SETTINGS.postgres.port, "PostgreSQL")
     _wait_for_service(minio_host, int(minio_port), "MinIO")
 
     step_1_create_minio_bucket()
@@ -273,7 +268,7 @@ def main() -> None:
     print()
     print("  Next steps:")
     print("    uv run python scripts/verify_lakehouse.py  # full POC check")
-    print("    make ingest                                 # run dlt pipelines")
+    print("    make transform                              # build dbt models")
     print("=" * 60)
 
 

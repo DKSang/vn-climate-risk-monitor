@@ -9,7 +9,7 @@ authors = [
 requires-python = ">=3.13"
 dependencies = [
     # ── Ingest (dlt + HTTP client) ──
-    "dlt[duckdb,filesystem]>=1.30.0",
+    "dlt[duckdb,filesystem,sql-database,postgres]>=1.30.0",
     "httpx>=0.28.0",
     "pyarrow>=19.0.0",
     "s3fs>=2025.3.0",
@@ -41,6 +41,7 @@ dev = [
 
 [project.scripts]
 vn-climate-risk-monitor = "vn_climate_risk_monitor:main"
+collect-administrative-reference = "vn_climate_risk_monitor.ingestion.collectors.administrative_reference:main"
 
 [build-system]
 requires = ["uv_build>=0.12.3,<0.13.0"]

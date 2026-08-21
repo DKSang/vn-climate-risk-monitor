@@ -1,244 +1,126 @@
-# Bước 3 — Thiết kế kiến trúc
+# Kiến trúc hệ thống
 
-**Hanoi Flood & Climate Risk Monitor** · v1.0 · 2026-08-20 · *Trạng thái: ĐÃ TRIỂN KHAI & KIỂM CHỨNG*
+**Hanoi Flood & Climate Risk Monitor** · v2.0 · 2026-08-21
 
-> v1.0 viết lại toàn bộ theo **kiến trúc đã chạy thật**, thay cho v0.3 vốn còn để mở lựa chọn
-> stack. Mọi con số trong tài liệu này đều lấy từ hệ thống đang chạy, không phải ước lượng.
+## Kiến trúc tổng thể
 
----
+```text
+Sources
+  ├── PostgreSQL administrative reference
+  ├── versioned CSV/GeoJSON reference
+  └── Open-Meteo (chưa triển khai)
+            │
+            ▼
+MinIO + DuckLake
+  ├── Bronze: source-faithful, append/replayable
+  ├── Silver: validated and conformed
+  └── Gold: business-ready dimensions, facts and aggregates
+            │
+            ▼
+dbt quality gate → serving
+```
 
-## 1. Ràng buộc đầu vào (từ Bước 1, 2)
+Postgres lưu metadata DuckLake; MinIO lưu source objects và Parquet; DuckDB là
+compute engine; dbt quản lý transformation.
 
-| Ràng buộc | Giá trị | Hệ quả thiết kế |
+## Layer contract
+
+| Layer | Contract | Ví dụ |
 |---|---|---|
-| Nguồn | Open-Meteo Forecast + Archive, QĐ 2280, danh mục hành chính | 2 API ngoài + 2 nguồn tĩnh |
-| Độ phân giải mưa | **49 ô lưới cho 126 phường/xã** (R1) | Mưa theo ô, phường gán vào ô |
-| Nhịp | Hourly (forecast) + Daily (archive) | 2 pipeline riêng |
-| Chi phí | 0đ, chạy local | 100% open-source, Docker Compose |
-| DQ | Fail → chặn publish | `dbt test` là cổng chặn |
+| Bronze files | Payload nguồn nguyên bản, immutable, có manifest/checksum | `bronze/files/open_meteo/...` |
+| Bronze tables | Parse cấu trúc, giữ mọi record/vintage, chưa validate | `bronze_store.tables.open_meteo_forecast_hourly` |
+| Silver | Type, validate, dedup, late data, mapping và join | `silver.rainfall_forecast_hourly` |
+| Gold | Dimensional model, KPI và aggregate nghiệp vụ | `gold.fct_flood_risk_hourly` |
 
-## 2. Stack đã chốt
+Bronze có thể explode array nguồn thành grain nguyên tử vì payload nguyên bản đã
+được giữ trong `bronze/files`. Không được lọc, dedup hay áp business rule tại
+Bronze.
 
-```
-Docker Compose (local, 0đ)
-├── Postgres 17.5   → DuckLake catalog metadata (schema `ducklake`)
-│                     + nguồn danh mục hành chính (schema `public`)
-├── MinIO           → object storage, Parquet cho bronze/silver/gold
-├── pgAdmin         → xem catalog
-└── DuckDB 1.5.5    → compute engine (embedded, không phải service)
-    └── dbt 1.12.2 + dbt-duckdb 1.11.0 → toàn bộ transform
-```
+## Naming
 
-**Chưa có:** orchestration (Bước 8), serving/API/dashboard (Bước 8), ingest Open-Meteo (Bước 4).
+Schema đã thể hiện layer, do đó không dùng hậu tố `_raw` hoặc `_cleaned`:
 
-## 3. Sơ đồ luồng dữ liệu
+```text
+bronze_store.tables.gso_provinces
+bronze_store.tables.gso_wards
+bronze_store.tables.gso_administrative_units
+bronze_store.tables.gso_administrative_regions
+bronze_store.tables.ward_coordinates
 
-```
-┌─ NGUỒN ────────────────────────────────────────────────────────┐
-│  Postgres public.*        seeds/*.csv           Open-Meteo      │
-│  (danh mục hành chính)    (toạ độ centroid,     (CHƯA LÀM)      │
-│                            version-control)                     │
-└──────────┬──────────────────────┬──────────────────────────────┘
-           │  ATTACH postgres      │  dbt seed
-           │  (read_only)          │  -> seed.ward_coordinates_seed
-           └──────────┬────────────┘
-                      │   dbt + DuckDB
-        ┌─────────────▼───────────────────────────────────────┐
-        │  DuckLake  (catalog: Postgres · data: MinIO Parquet) │
-        │                                                       │
-        │  seed.*            input artifact, ngoài medallion    │
-        │        ↓                                              │
-        │  bronze.*_raw      as-is, cấm mọi biến đổi           │
-        │        ↓                                              │
-        │  silver.*_cleaned  làm sạch, ép kiểu, dedup, JOIN     │
-        │        ↓           (view — không tốn dung lượng)      │
-        │  gold.dim_* fct_*  dimensional model, lọc phạm vi     │
-        └──────────────┬───────────────────────────────────────┘
-                       │ dbt test = cổng chặn publish
-                       ▼
-              Serving / Dashboard  (Bước 8, chưa làm)
+silver.wards
+silver.ward_centroids
+silver.ward_locations
+
+gold.dim_hanoi_ward
 ```
 
-**Lưu ý về schema `seed`:** dbt seed là *input artifact*, cùng vai trò với Postgres nguồn —
-không phải một lớp của medallion. Đặt ở schema riêng để `bronze` chỉ chứa đúng 5 bảng `*_raw`.
+Source qualifier ở Bronze giúp tránh xung đột tên model dbt và ghi rõ lineage.
+Gold tiếp tục dùng `dim_`/`fct_` theo dimensional modeling.
 
-## 4. Chuẩn medallion — bám tài liệu Microsoft
+## Incremental ingestion
 
-Nguồn: [Implement Medallion Lakehouse Architecture in Fabric](https://learn.microsoft.com/en-us/fabric/onelake/onelake-medallion-lakehouse-architecture)
-· [What is the medallion lakehouse architecture? (Azure Databricks)](https://learn.microsoft.com/en-us/azure/databricks/lakehouse/medallion)
+`ops` là schema control-plane, không phải data layer:
 
-### 4.1 Nhiệm vụ từng lớp
+```text
+ops.pipeline_runs
+ops.ingestion_files
+```
 
-| | **Bronze** | **Silver** | **Gold** |
-|---|---|---|---|
-| Microsoft gọi là | Raw data ingestion | Data cleaning and validation | Dimensional modeling and aggregation |
-| Được làm | Không sửa gì. Thêm cột provenance | Schema enforcement · null handling · **dedup** · type casting · **JOIN** · schema evolution | Dim/fact · aggregate · lọc theo vùng hoặc thời gian |
-| Cấm | Ép kiểu, đổi tên, lọc, JOIN | — | Chạm `source()` trực tiếp |
-| Người dùng | Data engineer, audit | Data engineer, analyst, data scientist | Business analyst, BI, lãnh đạo |
-| Materialization | `table` | `view` | `table` |
+File discovery dựa trên immutable path và file ledger. Loader chỉ xử lý run có
+`_SUCCESS`, ghi staging rồi `MERGE` vào Bronze bằng deterministic row id. Hai
+catalog không được giả định có distributed transaction: commit Bronze trước, rồi
+đánh dấu file `COMMITTED`; nếu crash ở giữa thì retry cùng deterministic id.
 
-> **Đính chính so với tài liệu nội bộ trước đây:** từng có quy tắc *"silver cấm JOIN"*.
-> Đó là convention **staging của dbt**, không phải chuẩn Microsoft. Microsoft liệt kê `Joins`
-> là thao tác hợp lệ của silver và lấy `customer_transactions` (một bảng join) làm ví dụ.
-> Yêu cầu thật của silver là: phải có ít nhất một bản **đã validate, CHƯA aggregate** cho mỗi record.
+Pattern này học theo các thuộc tính cốt lõi của Databricks Auto Loader:
 
-### 4.2 Quy ước đặt tên
+- incremental file discovery;
+- checkpoint riêng cho mỗi pipeline;
+- immutable files và không overwrite;
+- rescued data cho schema drift;
+- available-now micro-batch cho workload không cần streaming 24/7.
 
-| Layer | Mẫu | Ví dụ của Microsoft | Bảng trong dự án |
-|---|---|---|---|
-| bronze | `<entity>_raw` — **hậu tố** | `leads_raw` | `wards_raw`, `provinces_raw` |
-| silver | `<entity>_cleaned` | `leads_cleaned` | `wards_cleaned` |
-| silver | tên thực thể đã join | `customer_transactions` | `ward_locations` |
-| gold | `dim_<entity>` / `fct_<process>` | *(MS dùng tên nghiệp vụ)* | `dim_hanoi_ward` |
-| gold | `<business>_summary` | `business_summary` | *(chưa có)* |
+## Materialization
 
-Schema đặt đúng theo mẫu `ops.bronze` / `ops.silver` / `ops.gold` của Microsoft →
-`catalog1.bronze` / `catalog1.silver` / `catalog1.gold`.
-
-**Lệch có chủ ý:** giữ tiền tố `dim_`/`fct_` ở gold. Ví dụ gold của Microsoft toàn bảng tổng hợp
-nên không có tiền tố, nhưng chính họ định nghĩa gold là *"dimensional model"* — `dim_`/`fct_`
-là chuẩn Kimball, bổ sung chứ không mâu thuẫn.
-
-## 5. Các bảng hiện có
-
-| Bảng | Dòng | Vai trò |
+| Layer | Mặc định hiện tại | Lý do |
 |---|---|---|
-| `seed.ward_coordinates_seed` | 3.321 | Input artifact — CSV toạ độ, version-control trong git |
-| `bronze.provinces_raw` | 34 | 34 tỉnh/thành sau sáp nhập 2025 |
-| `bronze.wards_raw` | 3.321 | Danh mục phường/xã GSO toàn quốc |
-| `bronze.administrative_units_raw` | 5 | Loại đơn vị hành chính |
-| `bronze.administrative_regions_raw` | 8 | Vùng địa lý |
-| `bronze.ward_coordinates_raw` | 3.321 | Toạ độ centroid phường/xã |
-| `silver.wards_cleaned` | 3.321 | Làm sạch danh mục GSO |
-| `silver.ward_coordinates_cleaned` | 3.321 | Làm sạch + ép kiểu toạ độ |
-| `silver.ward_locations` | 3.321 | **Ward master toàn quốc** — đã JOIN, chưa aggregate |
-| `gold.dim_hanoi_ward` | **126** | Chiều phường/xã Hà Nội (NQ 1656/NQ-UBTVQH15) |
+| Bronze | DuckLake table | Persist source-faithful records và lineage |
+| Silver | View | Transform địa lý hiện nhẹ và không cần copy dữ liệu |
+| Gold | DuckLake table | Stable serving contract và snapshot |
 
-`dbt build` hiện: **49 PASS / 0 ERROR** (1 seed, 6 table model, 3 view model, 37 test, 2 hook).
+Custom dbt `table` materialization dùng `CREATE OR REPLACE TABLE` trực tiếp vào
+tên đích và giữ đầy đủ hooks/commit. Điều này tránh file DuckLake bị ghi vào
+prefix `__dbt_tmp` rồi chỉ rename metadata.
 
-## 6. Quyết định kiến trúc (ADR)
+## Data quality
 
-### ADR-1 — Bỏ dlt khỏi luồng dữ liệu địa lý
+- Silver là nơi schema enforcement, dedup và validation.
+- `dbt build` là quality gate trước Gold.
+- Test `assert_gold_is_readable` buộc đọc cột VARCHAR từ Parquet, tránh green giả
+  khi chỉ `COUNT(*)` từ catalog metadata.
+- JSON trong `bronze/files` và Bronze history cho phép replay khi parser/schema thay đổi.
 
-**Bối cảnh:** luồng ban đầu là `Postgres/CSV → dlt → Parquet trên MinIO → Python CREATE TABLE → DuckLake`.
-Bước cuối là **transform viết bằng Python**, trái nguyên tắc "transform thuộc về dbt".
+## Trạng thái triển khai
 
-**Quyết định:** dbt đọc thẳng nguồn.
-- Postgres: `ATTACH ... (TYPE postgres, READ_ONLY)` trong `profiles.yml`
-- CSV: `read_csv_auto('s3://...')` qua `meta.external_location` của source
+Đã có:
 
-**Lý do:** với bảng quan hệ tĩnh, dlt không mang lại gì — không cần incremental state, không có
-JSON lồng nhau, và DuckLake đã có snapshot/time-travel riêng. Bỏ được 2 hop.
+- MinIO + Postgres + DuckLake + DuckDB/dbt;
+- ba schema medallion;
+- `ops` ingestion ledger;
+- geography Bronze/Silver/Gold;
+- package boundary cho collectors/loaders/state.
 
-**Hệ quả:** 4 hop → 1 hop. dlt **vẫn giữ trong dự án** cho Open-Meteo (Bước 4), nơi cần HTTP
-retry, state để không fetch lại 1981–2020 mỗi lần chạy, và unnest mảng `hourly` lồng nhau.
+Chưa có:
 
-### ADR-2 — Materialization `table` tuỳ biến cho DuckLake
+- collector hoặc loader Open-Meteo;
+- các bảng rainfall/flood-risk;
+- orchestration và serving.
 
-**Vấn đề:** materialization mặc định của dbt-duckdb dùng create-then-swap:
+Chi tiết cây code: [03a-repo-structure.md](03a-repo-structure.md). Contract
+ingestion: [04-ingestion.md](04-ingestion.md).
 
-```
-1. CREATE TABLE <model>__dbt_tmp AS (...)
-2. RENAME <model>        -> <model>__dbt_backup
-3. RENAME <model>__dbt_tmp -> <model>
-4. DROP <model>__dbt_backup
-```
+## Tham khảo
 
-Với DuckLake, đường dẫn Parquet được quyết định ở **bước 1** theo tên lúc tạo. Bước 3 chỉ đổi tên
-trong catalog Postgres, **không di dời file**. Kết quả: dữ liệu bảng `wards_raw` nằm vĩnh viễn ở
-`s3://vn-climate/bronze/wards_raw__dbt_tmp/`.
-
-**Đã thử và loại:**
-- `ducklake_rewrite_data_files()` — chạy OK nhưng không đổi đường dẫn
-- `ducklake_merge_adjacent_files()` — tương tự
-- `adapter.use_ducklake_table_workarounds()` của dbt-duckdb — chỉ xử lý `persist_docs` cho
-  DuckLake < 1.5.3, không liên quan đường dẫn
-
-**Quyết định:** override materialization `table`, dùng `CREATE OR REPLACE TABLE` thẳng vào tên đích.
-
-**Cảnh báo quan trọng — bài học đã trả giá:** một bản override trước đây làm đúng ý tưởng này
-nhưng **bỏ `adapter.commit()`** và toàn bộ hooks. Hậu quả đo được: DuckLake ghi metadata vào
-Postgres nhưng Parquet không finalize → **bảng ma** (`COUNT(*)` trả 126 từ metadata, `SELECT *`
-lỗi HTTP 404), và `dbt test` cho **green giả** vì `not_null` cũng đọc từ thống kê.
-
-Bản hiện tại giữ đầy đủ vòng đời: pre/post hooks, grants, `persist_docs`, và `adapter.commit()`.
-Chỉ hỗ trợ SQL — model Python sẽ báo lỗi rõ ràng thay vì hỏng ngầm.
-Xem `transform/macros/materializations.sql`.
-
-### ADR-3 — Silver materialize thành `view`
-
-Silver chỉ làm sạch cơ học và join, không aggregate. Dùng `view` → **0 byte trên MinIO**, không
-tốn thời gian build, luôn đồng bộ với bronze. Kiểm chứng: prefix `silver/` trên MinIO rỗng.
-
-Khi nào đổi sang `table`: nếu silver có phép tính nặng bị lặp lại nhiều lần bởi gold.
-
-### ADR-4 — Bảo trì lakehouse tự động
-
-dbt materialize theo kiểu ghi bản mới, nên mỗi lần build để lại Parquet phiên bản cũ.
-`on-run-end` trong `dbt_project.yml`:
-
-```sql
-CALL ducklake_expire_snapshots('catalog1', older_than => now() - INTERVAL 7 DAY);
-CALL ducklake_cleanup_old_files('catalog1', cleanup_all => true);
-```
-
-Giữ 7 ngày để **vẫn time-travel được** — file của các build trong 7 ngày còn nằm đó là **chủ ý**,
-không phải rác. Khi cần squash sạch: `make clean-lake` (mất time-travel, giữ bản hiện tại).
-
-### ADR-5 — Bảng nhỏ được DuckLake inline
-
-`administrative_units_raw` (5 dòng) và `administrative_regions_raw` (8 dòng) **không có file
-Parquet nào** trên MinIO nhưng đọc bình thường — DuckLake inline dữ liệu nhỏ thẳng vào catalog.
-Không phải lỗi. Cần biết điều này khi đối chiếu danh sách file với danh sách bảng.
-
-### ADR-6 — CSV toạ độ chuyển từ MinIO sang dbt seed
-
-**Trước:** `read_csv_auto('s3://vn-climate/raw/.../dim_location.csv')` qua `meta.external_location`.
-**Sau:** `transform/seeds/ward_coordinates_seed.csv` + `{{ ref('ward_coordinates_seed') }}`.
-
-**Lý do:** file tĩnh 3.321 dòng / 393 KiB, chỉ đổi khi có nghị quyết sắp xếp hành chính mới —
-đúng loại dữ liệu mà dbt khuyến nghị dùng seed. Bỏ được phụ thuộc MinIO cho một file cấu hình,
-và có version control trong git (biết ai đổi gì, khi nào).
-
-**Lợi ích ngoài dự kiến — sửa được một lỗi âm thầm:**
-
-CSV gốc lưu mã hành chính **đã zero-pad**: `province_code = '01'`, `commune_code = '00004'`.
-Nhưng `read_csv_auto()` suy kiểu chúng thành **BIGINT** → `1`, `4` — **mất số 0 đầu**. Đó chính là
-lý do `silver.ward_coordinates_cleaned` phải `LPAD(CAST(commune_code AS VARCHAR), 5, '0')` để
-join được với danh mục GSO (vốn lưu VARCHAR đã pad).
-
-Seed cho phép khai báo `column_types` trong `dbt_project.yml`, ép VARCHAR → bronze giữ **đúng
-nguyên bản nguồn**, đúng tinh thần "as-is" của lớp bronze. Hack `LPAD` ở silver đã gỡ bỏ.
-
-**Bảo vệ hồi quy:** test `assert_seed_codes_zero_padded` fail nếu `province_code` khác 2 ký tự
-hoặc `commune_code` khác 5 ký tự — chặn trường hợp ai đó bỏ `column_types` và pipeline âm thầm
-sinh join hỏng.
-
-**Đánh đổi đã chấp nhận:** seed materialize thành bảng riêng (111 KiB), rồi
-`bronze.ward_coordinates_raw` copy lại lần nữa (111 KiB) chỉ để thêm 2 cột provenance.
-Trùng lặp ~111 KiB. Chấp nhận vì giữ được `bronze` nhất quán 5 bảng `*_raw` cùng dạng, và dung
-lượng không đáng kể. Nếu sau này khó chịu: đổi `bronze.ward_coordinates_raw` sang `view`.
-
-**Giới hạn:** seed chỉ hợp với file nhỏ, tĩnh. **Không dùng cho dữ liệu Open-Meteo** — đó là dữ
-liệu lớn, thay đổi liên tục, phải đi qua ingest thật (ADR-1).
-
-## 7. Data quality — cổng chặn
-
-`dbt test` chạy trong `dbt build`, fail thì model downstream bị SKIP.
-
-**Test đặc biệt `assert_gold_is_readable`:** dùng `COUNT(DISTINCT <cột VARCHAR>)` để **buộc engine
-đọc Parquet thật**. Sinh ra sau sự cố bảng ma — khi đó `COUNT(*)` và `not_null` đều PASS vì trả lời
-từ thống kê metadata mà không chạm file. Bài học: **test dựa trên metadata không chứng minh được
-dữ liệu tồn tại.**
-
-## 8. Còn thiếu
-
-| Hạng mục | Bước |
-|---|---|
-| Ingest Open-Meteo (S1 Forecast, S2 Archive) bằng dlt | 4 |
-| Bảng fact: `fct_rainfall_hourly`, `fct_flood_risk_hourly` | 5–6 |
-| Chiều `dim_grid_cell` (49 ô) + ánh xạ phường → ô lưới | 5–6 |
-| Seed ngưỡng QĐ 2280 (50/70/100 mm/h) | 5 |
-| Orchestration | 8 |
-| API + dashboard | 8 |
-| Governance, CI/CD | 9 |
+- [Databricks medallion architecture](https://docs.databricks.com/aws/en/lakehouse/medallion)
+- [Databricks Auto Loader](https://docs.databricks.com/aws/en/ingestion/cloud-object-storage/auto-loader/)
+- [DuckLake transactions](https://ducklake.select/docs/stable/duckdb/advanced_features/transactions)
+- [DuckLake constraints](https://ducklake.select/docs/stable/duckdb/advanced_features/constraints)

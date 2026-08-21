@@ -3,8 +3,8 @@ DuckLake lakehouse connection module.
 
 Provides a reusable DuckDB connection pre-configured with:
   - MinIO secret (S3-compatible storage)
-  - DuckLake catalog backed by PostgreSQL
-  - Medallion schemas: bronze, silver, gold
+  - Primary DuckLake catalog for Silver, Gold and Ops
+  - Bronze DuckLake catalog rooted at ``bronze/`` with schema ``tables``
 
 Usage:
     from vn_climate_risk_monitor.lakehouse import get_connection
@@ -15,30 +15,22 @@ Usage:
 
 from __future__ import annotations
 
-import os
-from functools import lru_cache
-
 import duckdb
 
+from vn_climate_risk_monitor.config import load_settings
 
-def _env(key: str, default: str = "") -> str:
-    """Read an environment variable with fallback."""
-    return os.environ.get(key, default)
-
-
-@lru_cache(maxsize=1)
-def _load_dotenv_once() -> None:
-    """Load .env file if python-dotenv is available. No-op otherwise."""
-    try:
-        from dotenv import load_dotenv
-        load_dotenv()
-    except ImportError:
-        pass
+PRIMARY_CATALOG = "catalog1"
+BRONZE_CATALOG = "bronze_store"
+PRIMARY_METADATA_SCHEMA = "ducklake"
+BRONZE_METADATA_SCHEMA = "ducklake_bronze"
+BRONZE_TABLE_SCHEMA = "tables"
 
 
 def get_connection(
     *,
-    catalog_name: str = "catalog1",
+    catalog_name: str = PRIMARY_CATALOG,
+    bronze_catalog_name: str = BRONZE_CATALOG,
+    attach_bronze: bool = True,
     read_only: bool = False,
 ) -> duckdb.DuckDBPyConnection:
     """
@@ -47,7 +39,12 @@ def get_connection(
     Parameters
     ----------
     catalog_name : str
-        Name for the attached DuckLake catalog (default: "catalog1").
+        Name for the primary DuckLake catalog.
+    bronze_catalog_name : str
+        Name for the Bronze DuckLake catalog.
+    attach_bronze : bool
+        Attach the Bronze catalog. Migration dry-runs can disable this to avoid
+        initializing new metadata before execution.
     read_only : bool
         If True, attach catalog in read-only mode (for serving layer).
 
@@ -56,52 +53,39 @@ def get_connection(
     duckdb.DuckDBPyConnection
         Connection with MinIO secret + DuckLake catalog ready to query.
     """
-    _load_dotenv_once()
-
-    # MinIO / S3-compatible config
-    minio_endpoint = _env("MINIO_ENDPOINT", "localhost:9000")
-    minio_access_key = _env("MINIO_ACCESS_KEY", "minioadmin")
-    minio_secret_key = _env("MINIO_SECRET_KEY", "minioadmin")
-    minio_secure = _env("MINIO_SECURE", "false").lower() == "true"
-    minio_bucket = _env("MINIO_BUCKET", "vn-climate")
-
-    # Postgres catalog config
-    pg_host = _env("POSTGRES_HOST", "localhost")
-    pg_port = _env("POSTGRES_PORT", "5432")
-    pg_db = _env("POSTGRES_DB", "vnclimate")
-    pg_user = _env("POSTGRES_USER", "vnclimate")
-    pg_password = _env("POSTGRES_PASSWORD", "vnclimate")
-
+    settings = load_settings()
+    minio = settings.minio
+    postgres = settings.postgres
     con = duckdb.connect()
 
     # 1) S3 secret for MinIO
     con.execute(f"""
         CREATE SECRET minio_secret (
             TYPE s3,
-            KEY_ID '{minio_access_key}',
-            SECRET '{minio_secret_key}',
-            ENDPOINT '{minio_endpoint}',
-            USE_SSL {str(minio_secure).lower()},
+            KEY_ID '{minio.access_key}',
+            SECRET '{minio.secret_key}',
+            ENDPOINT '{minio.endpoint}',
+            USE_SSL {str(minio.secure).lower()},
             URL_STYLE 'path'
         );
     """)
 
-    # 2) Attach DuckLake catalog (Postgres metadata + MinIO data)
-    attach_opts = (
-        f"DATA_PATH 's3://{minio_bucket}', "
-        f"METADATA_SCHEMA 'ducklake'"
-    )
-    if read_only:
-        attach_opts += ", READ_ONLY"
-
-    pg_conn_str = (
-        f"dbname={pg_db} host={pg_host} port={pg_port} "
-        f"user={pg_user} password={pg_password}"
-    )
+    # 2) Attach two catalogs. DuckLake derives physical paths as
+    #    <data_path>/<schema>/<table>. Rooting the Bronze catalog at bronze/
+    #    therefore gives the explicit contract bronze/tables/<table>/.
+    read_only_option = ", READ_ONLY" if read_only else ""
+    pg_conn_str = postgres.ducklake_connection_string
     con.execute(
         f"ATTACH 'ducklake:postgres:{pg_conn_str}' "
-        f"AS {catalog_name} ({attach_opts});"
+        f"AS {catalog_name} (DATA_PATH 's3://{minio.bucket}', "
+        f"METADATA_SCHEMA '{PRIMARY_METADATA_SCHEMA}'{read_only_option});"
     )
+    if attach_bronze:
+        con.execute(
+            f"ATTACH 'ducklake:postgres:{pg_conn_str}' "
+            f"AS {bronze_catalog_name} (DATA_PATH 's3://{minio.bucket}/bronze', "
+            f"METADATA_SCHEMA '{BRONZE_METADATA_SCHEMA}'{read_only_option});"
+        )
 
     # 3) Use catalog by default
     con.execute(f"USE {catalog_name};")

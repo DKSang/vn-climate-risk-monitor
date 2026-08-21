@@ -1,4 +1,4 @@
-.PHONY: bootstrap bootstrap-env up down logs ingest-provinces seed dbt dbt-test transform dbt-docs lint
+.PHONY: bootstrap bootstrap-env up down logs ingest-provinces migrate-legacy-dry-run migrate-legacy migrate-bronze-layout-dry-run migrate-bronze-layout seed dbt dbt-test transform dbt-docs clean-lake lint
 
 # ==== Setup ====
 bootstrap-env:
@@ -17,11 +17,26 @@ down:
 logs:
 	docker compose logs -f
 
-# ==== Ingest (land file thô lên MinIO) ====
-# Dữ liệu địa lý KHÔNG cần ingest qua dlt nữa: dbt đọc thẳng Postgres + CSV.
-# dlt sẽ dùng lại khi làm Open-Meteo (cần HTTP retry + state + backfill theo lô).
+# ==== Ingest (collect immutable Bronze source files) ====
+# Open-Meteo chưa được triển khai. Target này chỉ tải reference hành chính tĩnh.
 ingest-provinces:
-	uv run python ingest/raw_ingest_provinces.py
+	uv run python -m vn_climate_risk_monitor.ingestion.collectors.administrative_reference
+
+# Migration v2: exact allowlist; DuckLake cleanup managed files, MinIO chỉ xóa
+# prefix unmanaged raw/geography/... đã khai báo trong migration.
+migrate-legacy-dry-run:
+	uv run python scripts/migrations/001_remove_legacy_relations.py
+
+migrate-legacy:
+	uv run python scripts/migrations/001_remove_legacy_relations.py --execute
+
+# Migration storage layout: bronze/source -> bronze/files và catalog1.bronze ->
+# bronze_store.tables. Mặc định chỉ in plan; target execute không chạy dbt build.
+migrate-bronze-layout-dry-run:
+	uv run python scripts/migrations/002_split_bronze_files_tables.py
+
+migrate-bronze-layout:
+	uv run python scripts/migrations/002_split_bronze_files_tables.py --execute
 
 # ==== Transform (dbt + DuckDB + DuckLake) ====
 # dbt project ở transform/, không phải transform/dbt/
@@ -49,14 +64,7 @@ dbt-docs:
 # 7 ngày snapshot để còn time-travel -> file của các build trong 7 ngày vẫn nằm đó.
 # Target này squash sạch: bỏ toàn bộ lịch sử snapshot, chỉ giữ phiên bản hiện tại.
 clean-lake:
-	uv run python -c "import duckdb; \
-c = duckdb.connect(); \
-c.execute(\"INSTALL httpfs; LOAD httpfs; INSTALL ducklake; LOAD ducklake;\"); \
-c.execute(\"CREATE OR REPLACE SECRET s (TYPE s3, KEY_ID 'minioadmin', SECRET 'minioadmin', ENDPOINT '127.0.0.1:9000', USE_SSL false, URL_STYLE 'path')\"); \
-c.execute(\"ATTACH 'ducklake:postgres:dbname=vnclimate host=127.0.0.1 port=5432 user=vnclimate password=vnclimate' AS cat (DATA_PATH 's3://vn-climate', METADATA_SCHEMA 'ducklake')\"); \
-c.execute(\"CALL ducklake_expire_snapshots('cat', older_than => now())\"); \
-c.execute(\"CALL ducklake_cleanup_old_files('cat', cleanup_all => true)\"); \
-print('lakehouse da duoc squash - mat time-travel, giu ban hien tai')"
+	uv run python scripts/clean_lake.py
 
 # ==== Quality ====
 lint:
