@@ -21,12 +21,13 @@ Theo dõi rủi ro **ngập úng / lũ / hạn hán** cho Hà Nội, chi tiết 
 ## Trạng thái hệ thống (2026-08-20)
 
 ```
-dbt build → PASS=40  ERROR=0
-MinIO     → 9 object / 2.5 MiB
+dbt build → PASS=49  ERROR=0
+MinIO     → 10 object / 2.6 MiB
 ```
 
 | Layer | Bảng | Dòng |
 |---|---|---|
+| seed | `ward_coordinates_seed` *(input artifact, ngoài medallion)* | 3.321 |
 | bronze | `provinces_raw` · `wards_raw` · `administrative_units_raw` · `administrative_regions_raw` · `ward_coordinates_raw` | 34 · 3.321 · 5 · 8 · 3.321 |
 | silver | `wards_cleaned` · `ward_coordinates_cleaned` · `ward_locations` | 3.321 mỗi bảng (view) |
 | gold | `dim_hanoi_ward` | **126** |

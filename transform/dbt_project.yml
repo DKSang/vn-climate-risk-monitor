@@ -40,6 +40,32 @@ on-run-end:
   - "CALL ducklake_expire_snapshots('catalog1', older_than => now() - INTERVAL 7 DAY)"
   - "CALL ducklake_cleanup_old_files('catalog1', cleanup_all => true)"
 
+# Seed: file CSV tĩnh, version-control cùng code.
+#
+# column_types là BẮT BUỘC ở đây, không phải tuỳ chọn: CSV gốc lưu mã hành chính
+# đã zero-pad ('01', '00004'). Nếu để dbt tự suy kiểu, chúng thành BIGINT (1, 4)
+# và MẤT số 0 đầu — đúng vấn đề mà read_csv_auto trên MinIO đã gây ra trước đây,
+# khiến silver phải LPAD lại. Ép VARCHAR để bronze giữ đúng nguyên bản nguồn.
+#
+# Seed nằm ở schema `seed`, KHÔNG phải `bronze`: nó là input artifact — cùng vai
+# trò với Postgres nguồn (pg_source), không phải một lớp của medallion. Nhờ vậy
+# schema bronze chỉ chứa đúng 5 bảng *_raw.
+seeds:
+  transform:
+    +database: catalog1
+    +schema: seed
+    ward_coordinates_seed:
+      +column_types:
+        location_key: INTEGER
+        province_code: VARCHAR
+        province_name: VARCHAR
+        commune_code: VARCHAR
+        commune_name: VARCHAR
+        latitude: DOUBLE
+        longitude: DOUBLE
+        region: VARCHAR
+        climate_zone: VARCHAR
+
 models:
   transform:
     # Mọi model đều nằm trong DuckLake catalog (Postgres metadata + MinIO Parquet)
