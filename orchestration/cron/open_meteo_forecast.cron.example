@@ -1,0 +1,3 @@
+# Install with `crontab -e` after replacing /path/to/vn-climate-risk-monitor.
+# The script uses flock, so overlapping hourly invocations are rejected.
+15 * * * * /path/to/vn-climate-risk-monitor/scripts/run_weather_pipeline.sh >> /path/to/vn-climate-risk-monitor/logs/open_meteo_forecast.log 2>&1

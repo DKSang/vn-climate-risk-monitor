@@ -8,40 +8,37 @@ authors = [
 ]
 requires-python = ">=3.13"
 dependencies = [
-    # ── Ingest (dlt + HTTP client) ──
-    "dlt[duckdb,filesystem,sql-database,postgres]>=1.30.0",
-    "httpx>=0.28.0",
+    # ── Ingest (small explicit Python stack) ──
+    "requests>=2.32.0",
+    "urllib3>=2.2.0",
     "pyarrow>=19.0.0",
-    "s3fs>=2025.3.0",
 
     # ── Lakehouse (DuckDB compute + MinIO storage) ──
     "duckdb>=1.5.5",
     "minio>=7.2.0",
+    "psycopg[binary]>=3.2.0",
 
     # ── Transform (dbt + DuckDB) ──
     "dbt-duckdb>=1.11.0",
 
-    # ── Serve (FastAPI + Streamlit) ──
-    "fastapi>=0.115.0",
-    "uvicorn[standard]>=0.34.0",
-    "streamlit>=1.45.0",
-
-    # ── Utilities ──
-    "pandas>=2.2.0",
-    "pendulum>=3.0.0",
+    # ── Runtime configuration ──
     "python-dotenv>=1.1.0",
 ]
 
 [dependency-groups]
 dev = [
     "pytest>=8.3.0",
-    "pytest-asyncio>=1.0.0",
+    "responses>=0.25.0",
     "ruff>=0.11.0",
 ]
 
 [project.scripts]
 vn-climate-risk-monitor = "vn_climate_risk_monitor:main"
 collect-administrative-reference = "vn_climate_risk_monitor.ingestion.collectors.administrative_reference:main"
+collect-open-meteo-forecast = "vn_climate_risk_monitor.ingestion.collectors.open_meteo_forecast:main"
+load-open-meteo-forecast = "vn_climate_risk_monitor.ingestion.loaders.open_meteo_forecast_hourly:main"
+run-open-meteo-pipeline = "vn_climate_risk_monitor.ingestion.pipelines.open_meteo_forecast:main"
+observe-open-meteo-ingestion = "vn_climate_risk_monitor.ingestion.observability:main"
 
 [build-system]
 requires = ["uv_build>=0.12.3,<0.13.0"]

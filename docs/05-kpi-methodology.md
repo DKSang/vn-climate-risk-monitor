@@ -1,0 +1,606 @@
+# Phương pháp KPI mưa lớn và áp lực ngập đô thị
+
+**Hanoi Flood & Climate Risk Monitor** · Draft v1.0 · 2026-08-21
+
+**Trạng thái:** phương pháp đã nghiên cứu, chờ kiểm định bằng dữ liệu lịch sử và
+nhãn ngập thực tế trước khi công bố như một sản phẩm cảnh báo.
+
+## 1. Mục tiêu
+
+Tài liệu này định nghĩa logic, công thức, đơn vị và giới hạn diễn giải cho các
+KPI được sinh từ Open-Meteo. Nó là contract giữa:
+
+- Bronze: dữ liệu nguồn theo giờ, giữ nguyên forecast vintage;
+- Silver: dữ liệu đã chuẩn hóa semantics, thời gian, model và grid;
+- Gold: KPI mưa, kịch bản vận hành và feature phục vụ nghiên cứu nguy cơ ngập.
+
+Mục tiêu giai đoạn 1 là trả lời:
+
+> Trong 6–24 giờ tới, ô lưới nào tại Hà Nội chịu áp lực mưa lớn; các phường và
+> điểm úng ngập chính thức nào nằm trong vùng đó; forecast đang thuộc kịch bản
+> mưa vận hành nào của Thành phố?
+
+Hệ thống hiện đo **meteorological forcing** — tác động đầu vào từ thời tiết. Khi
+chưa có DEM đủ chi tiết, mạng cống, hồ điều hòa, trạng thái trạm bơm, mực nước và
+nhãn ngập thực tế, kết quả không được gọi là xác suất ngập hoặc dự báo độ sâu
+ngập.
+
+## 2. Ngôn ngữ sản phẩm
+
+### 2.1 Được phép công bố
+
+```text
+rainfall_hazard_features
+hanoi_rain_scenario_band
+pluvial_weather_pressure_features
+threshold_exceedance_probability  # chỉ khi tính từ ensemble members
+```
+
+### 2.2 Chưa được phép công bố
+
+```text
+flood_probability
+flood_depth
+flooded_area
+expected_flooded_points
+official_disaster_risk_level
+```
+
+Ngập do mưa đô thị (*pluvial flooding*) khác với lũ sông (*fluvial flooding*).
+Nhánh hiện tại chỉ nghiên cứu áp lực gây ngập do mưa. Mưa tích lũy nhiều ngày
+không thay thế cho lưu lượng hay mực nước sông.
+
+## 3. Semantics dữ liệu đầu vào
+
+### 3.1 Lượng mưa theo giờ
+
+Gọi \(P_t\) là `precipitation` tại timestamp \(t\), đơn vị mm. Theo Open-Meteo,
+đây là tổng giáng thủy của **giờ liền trước**, gồm rain, showers và snow water
+equivalent. Vì vậy:
+
+```text
+interval_start_utc = valid_time_utc - interval '1 hour'
+interval_end_utc   = valid_time_utc
+precipitation_mm   = precipitation
+```
+
+Không tính:
+
+```text
+precipitation + rain + showers
+```
+
+`rain` và `showers` chỉ được giữ để phân tích thành phần và kiểm tra chất lượng.
+Semantics của `rain` có thể khác giữa Forecast API và Historical Weather API;
+mọi phép so sánh phải giữ `source_endpoint`, model và contract version.
+
+Giá trị số của \(P_t\) cũng bằng cường độ trung bình tương đương trong một giờ:
+
+\[
+I_{1h}(t)=\frac{P_t}{1\ \text{hour}}
+\]
+
+Đây không phải cường độ tức thời. Mưa dồn trong 10 phút vẫn bị làm trơn trong
+ô dữ liệu hourly.
+
+### 3.2 Xác suất mưa
+
+`precipitation_probability` là xác suất tổng mưa của giờ trước vượt 0,1 mm. Nó
+không phải:
+
+- xác suất ngập;
+- xác suất vượt một ngưỡng tích lũy 3/6/24 giờ;
+- hệ số dùng để nhân với lượng mưa deterministic.
+
+Không cộng xác suất giữa các giờ và không dùng
+\(1-\prod_t(1-p_t)\), vì các giờ và ensemble members không độc lập.
+
+### 3.3 Độ ẩm đất
+
+Forecast và Historical Weather có thể dùng các lớp đất khác nhau. Silver phải
+giữ rõ `layer_top_cm`, `layer_bottom_cm`, `api_variable_name`, model và endpoint;
+không gộp mơ hồ thành một cột `soil_moisture_surface`.
+
+Ví dụ profile Forecast tổng quát:
+
+```text
+0–1 cm, 1–3 cm, 3–9 cm, 9–27 cm, 27–81 cm
+```
+
+Ví dụ profile ERA5/ERA5-Land:
+
+```text
+0–7 cm, 7–28 cm, 28–100 cm, 100–255 cm
+```
+
+### 3.4 Spatial support và forecast vintage
+
+- `requested_latitude/longitude` là tọa độ yêu cầu.
+- `grid_latitude/longitude` là tâm ô lưới thực sự được API sử dụng.
+- Nhiều phường có thể dùng chung một grid; đó không phải các forecast độc lập.
+- `retrieved_at_utc` là thời điểm lấy snapshot, không phải model run time.
+- Rolling KPI forecast không được trộn record từ các retrieval vintage khác nhau.
+- Live Best Match không bảo đảm một model cố định qua thời gian; KPI cần lưu model
+  request, endpoint và contract version để truy vết.
+
+## 4. Bộ KPI MVP
+
+### 4.1 Mưa tích lũy theo cửa sổ
+
+Với \(H\in\{1,3,6,12,24,48,72\}\):
+
+\[
+R_H(t)=\sum_{i=0}^{H-1}P_{t-i}
+\]
+
+\[
+\bar I_H(t)=\frac{R_H(t)}{H}
+\]
+
+| KPI | Đơn vị | Vai trò |
+|---|---:|---|
+| `rain_1h_mm` | mm | Áp lực mưa một giờ |
+| `rain_3h_mm` | mm | Mưa đối lưu/ngập đô thị rất ngắn hạn |
+| `rain_6h_mm` | mm | Mưa ngắn hạn |
+| `rain_12h_mm` | mm | Cửa sổ cảnh báo quốc gia |
+| `rain_24h_mm` | mm | Mưa ngày/cửa sổ cảnh báo quốc gia |
+| `rain_48h_mm` | mm | Tham chiếu thiết kế thoát nước Hà Nội |
+| `rain_72h_mm` | mm | Điều kiện mưa kéo dài/tiền kỳ |
+| `mean_intensity_Hh_mmph` | mm/h | Cường độ trung bình trong cửa sổ |
+
+Quy ước cửa sổ là `(t-H, t]`. KPI chỉ hợp lệ khi có đủ đúng \(H\) khoảng giờ
+liên tục. Khi thiếu dữ liệu:
+
+```text
+rain_Hh_mm       = NULL
+coverage_ratio   = available_intervals / expected_intervals
+is_complete      = false
+```
+
+Không thay `NULL` bằng 0.
+
+### 4.2 Tổng mưa trong forecast horizon
+
+Tại thời điểm ra quyết định \(t_0\), tổng mưa dự báo trong \(H\) giờ tới là:
+
+\[
+F_H(t_0)=\sum_{t_0<t\le t_0+H}P_t
+\]
+
+MVP công bố:
+
+```text
+forecast_rain_next_3h_mm
+forecast_rain_next_6h_mm
+forecast_rain_next_12h_mm
+forecast_rain_next_24h_mm
+forecast_rain_next_48h_mm
+```
+
+`as_of_utc` phải được làm tròn theo boundary giờ đã định nghĩa; không đưa một
+phần giờ chưa hoàn tất vào tổng mà không có cờ riêng.
+
+### 4.3 Peak trong forecast horizon
+
+Với horizon tương lai \(F\):
+
+\[
+Peak_{1h,F}(t_0)=\max_{t_0<t\le t_0+F}P_t
+\]
+
+\[
+Peak_{3h,F}(t_0)=\max_{t_0<t\le t_0+F}R_3(t)
+\]
+
+MVP công bố:
+
+```text
+max_rain_1h_next_6h_mm
+max_rain_1h_next_24h_mm
+max_rain_3h_next_6h_mm
+max_rain_3h_next_24h_mm
+time_of_max_rain_1h_utc
+```
+
+Mỗi phép tính phải dùng cùng `forecast_vintage` và ghi `as_of_utc`.
+
+### 4.4 Kịch bản mưa vận hành Hà Nội
+
+Quyết định 2280/QĐ-UBND ngày 29/04/2026 mô tả các kịch bản ứng với lượng mưa:
+
+| `rain_1h_mm` | `hanoi_rain_scenario_band` | Mô tả trong kế hoạch |
+|---:|---|---|
+| `< 50` | `below_50` | Cơ bản không ngập; vẫn có thể ứ đọng tại điểm trũng hoặc khi hệ thống gặp sự cố |
+| `50–<70` | `from_50_to_under_70` | 11 điểm úng ngập tại 9 phường và 1 xã |
+| `70–100` | `from_70_to_100` | 71 điểm úng ngập cục bộ tại 30 phường/xã |
+| `> 100` | `over_100` | Văn bản mô tả trên 100 mm/h kéo dài nhiều giờ, với 220 điểm tại 54 phường/xã |
+
+Quy tắc triển khai:
+
+```text
+hanoi_rain_scenario_band =
+  below_50        if R1 < 50
+  from_50_to_under_70 if 50 <= R1 < 70
+  from_70_to_100  if 70 <= R1 <= 100
+  over_100        if R1 > 100
+```
+
+Riêng band cuối phải có thêm:
+
+```text
+consecutive_hours_over_100
+prolonged_condition_met
+```
+
+`prolonged_condition_met` chưa được hard-code cho đến khi nghiệp vụ định nghĩa
+“nhiều giờ”. Band này là **tham chiếu vận hành toàn thành phố**, không phải bằng
+chứng rằng mọi phường hoặc mọi điểm trong danh mục sẽ ngập.
+
+Với bảng KPI theo từng `valid_time`, scenario lấy từ `rain_1h_mm` tại giờ đó.
+Với bảng summary 6/24 giờ, scenario lấy từ `max_rain_1h_next_Hh_mm` và phải ghi
+rõ horizon; không dùng tổng 6/24 giờ để so trực tiếp với ngưỡng một giờ.
+
+### 4.5 Tham chiếu 310 mm/2 ngày
+
+Kế hoạch Hà Nội đặt mục tiêu bảo đảm thoát nước nhanh với trận mưa 310 mm/2 ngày
+tại khu vực đã được cải tạo theo dự án thoát nước Hà Nội:
+
+\[
+design\_reference\_ratio_{48h}=\frac{R_{48}}{310}
+\]
+
+Tên KPI:
+
+```text
+hanoi_310mm_48h_reference_ratio
+hanoi_310mm_48h_exceeded
+```
+
+Không gọi đây là `drainage_capacity_utilization`: năng lực thực tế phụ thuộc lưu
+vực, mực nước đệm, cống, hồ và vận hành trạm bơm.
+
+### 4.6 Dải mưa lớn theo quy định quốc gia
+
+Điều 44 Quyết định 18/2021/QĐ-TTg sử dụng các dải mưa theo 12/24 giờ, đồng thời
+xét số ngày kéo dài, địa hình, phạm vi huyện/xã và số tỉnh bị ảnh hưởng. MVP chỉ
+được tính các feature lượng mưa:
+
+| Điều kiện lượng mưa | Feature magnitude |
+|---|---|
+| `50 <= R12 <= 100` | `qd18_rain_12h_50_to_100` |
+| `100 <= R24 <= 200` | `qd18_rain_24h_100_to_200` |
+| `200 < R24 <= 400` | `qd18_rain_24h_over_200_to_400` |
+| `R24 > 400` | `qd18_rain_24h_over_400` |
+
+```text
+vn_rain_band_12h
+vn_rain_band_24h
+vn_rain_threshold_exceeded
+```
+
+Không suy ra `official_disaster_risk_level` từ một ô lưới hoặc centroid phường.
+Cấp độ pháp lý chỉ được bổ sung khi toàn bộ điều kiện của văn bản được mô hình
+hóa và kiểm chứng.
+
+## 5. Feature tiền điều kiện
+
+Các feature trong mục này hỗ trợ nghiên cứu nhưng không tự tạo cảnh báo ngập.
+
+### 5.1 Antecedent Precipitation Index
+
+\[
+API_t=P_t+kAPI_{t-1}
+\]
+
+Biểu diễn hệ số suy giảm bằng half-life \(H\) giờ:
+
+\[
+k=2^{-1/H}
+\]
+
+Tạo song song:
+
+```text
+api_half_life_24h_mm
+api_half_life_48h_mm
+api_half_life_72h_mm
+```
+
+API cần warm-up trước khoảng phân tích. Không gọi một giá trị \(k\) là chuẩn cho
+Hà Nội trước khi hiệu chỉnh với độ ẩm đất hoặc sự kiện ngập.
+
+### 5.2 Soil-wetness proxy
+
+Trung bình theo độ dày cho profile Forecast 0–27 cm:
+
+\[
+\theta_{0:27}=\frac{
+1\theta_{0:1}+2\theta_{1:3}+6\theta_{3:9}+18\theta_{9:27}
+}{27}
+\]
+
+Chuẩn hóa theo cùng grid, model, profile và tháng:
+
+\[
+SMI_t=clip\left(\frac{\theta_t-Q_{10}}{Q_{90}-Q_{10}},0,1\right)
+\]
+
+`SMI` là độ ẩm đất của land-surface model, không đại diện cho mặt đường bê tông
+hay dung tích hệ thống thoát nước.
+
+### 5.3 Water-balance proxy tùy chọn
+
+Nếu ingest được `evapotranspiration` với cùng model/contract:
+
+\[
+WB_H=\sum_H P-\sum_H ET
+\]
+
+Tên trường phải là `weather_water_balance_proxy_Hh_mm`, không phải runoff hay độ
+sâu nước đọng. `et0_fao_evapotranspiration` chỉ mô tả nhu cầu bay hơi tham chiếu,
+không thay thế ET thực tế.
+
+## 6. Baseline khí hậu và anomaly
+
+Baseline đề xuất dùng 1991–2020, cùng grid và một historical product được pin.
+Không trộn trực tiếp phân phối ERA5/ERA5-Land với Forecast Best Match nếu chưa
+đánh giá bias.
+
+Phân vị vận hành cho rolling rainfall:
+
+\[
+Percentile_H(t)=100\frac{
+\#\{R_H^{base}\le R_H(t)\}+0.5
+}{N+1}
+\]
+
+Baseline phải cùng location/grid và cùng mùa hoặc tháng. Công bố:
+
+```text
+rolling_Hh_percentile
+rolling_Hh_exceeds_p95
+rolling_Hh_exceeds_p99
+```
+
+Mưa có nhiều giá trị 0 và phân phối lệch phải; không mặc định dùng z-score. Nếu
+cần anomaly bền vững cho nghiên cứu:
+
+\[
+Z_H^{robust}=\frac{
+\ln(1+R_H)-median[\ln(1+R_H^{base})]
+}{1.4826\,MAD[\ln(1+R_H^{base})]}
+\]
+
+Đây là heuristic của dự án, không phải chỉ số WMO.
+
+Các chỉ số ETCCDI như `Rx1day`, `Rx5day`, `R95p`, `R99p` và `SDII` là chỉ số
+khí hậu theo ngày. Chúng thuộc báo cáo lịch sử, không thay thế KPI cảnh báo theo
+giờ.
+
+## 7. Event rainfall
+
+Quy tắc khởi tạo, cần version và hiệu chỉnh:
+
+```text
+wet_hour = precipitation_mm > 0.1
+new_event = wet_hour after at least 6 consecutive dry hours
+```
+
+KPI event:
+
+```text
+event_total_mm
+event_duration_hours
+event_peak_1h_mm
+event_peak_3h_mm
+time_to_peak_hours
+convective_fraction
+event_definition_version
+```
+
+\[
+convective\_fraction=
+\frac{\sum showers}{\sum precipitation}
+\]
+
+Chỉ tính `convective_fraction` khi tổng precipitation dương và `showers` có cùng
+semantics, endpoint và model.
+
+## 8. Ensemble và bất định — phase 2
+
+Nếu ingest từng ensemble member, xác suất vượt ngưỡng tích lũy \(T\) phải được
+tính trên từng member:
+
+\[
+R_H^{(m)}=\sum_H P_t^{(m)}
+\]
+
+\[
+Pr(R_H\ge T)=\frac{
+\sum_{m=1}^{M}1[R_H^{(m)}\ge T]
+}{M_{available}}
+\]
+
+Đây là xác suất **forecast vượt ngưỡng mưa**, không phải xác suất ngập. Gold phải
+giữ `member_count_available`, spread và quantile cùng threshold version.
+
+## 9. IDF và chu kỳ lặp — phase nghiên cứu
+
+Nghiên cứu tại trạm Hà Đông đưa ra dạng phương trình IDF:
+
+\[
+q(T,d)=\frac{
+0.36\times2320(1+0.655\log_{10}T)
+}{(d+9)^{0.633}}
+\]
+
+Trong đó \(q\) là mm/h, \(T\) là chu kỳ lặp theo năm và \(d\) là duration theo
+phút. Feature nghiên cứu:
+
+\[
+idf\_ratio_{H,T}=\frac{R_H/H}{q(T,60H)}
+\]
+
+`idf_ratio >= 1` chỉ có nghĩa forecast đạt/vượt mức mưa thiết kế tương ứng tại
+trạm nghiên cứu. Nó không có nghĩa chắc chắn ngập; không đại diện đồng nhất cho
+toàn Hà Nội; chu kỳ lặp của mưa không phải chu kỳ lặp của ngập.
+
+IDF chưa thuộc MVP. Trước khi triển khai phải kiểm tra lại miền hiệu lực, version
+công thức, station coverage và sai lệch giữa grid model với trạm.
+
+## 10. Composite score
+
+Không phát hành composite score trong MVP. Một score kết hợp rolling rain, API,
+soil moisture hoặc runoff bằng trọng số thủ công sẽ che mất giả định và tạo cảm
+giác chính xác giả.
+
+Khi có nhãn ngập theo `ward/event_window`, có thể huấn luyện mô hình đã hiệu
+chỉnh và công bố xác suất. Train/test phải tách theo toàn bộ trận mưa hoặc theo
+năm, không random từng dòng giờ. Metric tối thiểu:
+
+\[
+POD=\frac{H}{H+M}
+\qquad
+FAR=\frac{F}{H+F}
+\qquad
+CSI=\frac{H}{H+M+F}
+\]
+
+Trong đó `H`, `M`, `F` lần lượt là hit, miss và false alarm. Cần đánh giá riêng
+theo lead-time `0–6h`, `6–24h`, `24–48h` và theo mùa.
+
+## 11. Data model đề xuất
+
+### 11.1 Silver forecast hourly
+
+Grain:
+
+```text
+requested_location_id
+× valid_time_utc
+× retrieved_at_utc
+× source_endpoint
+× model_requested
+```
+
+Cột bắt buộc:
+
+```text
+request_id
+requested_location_id
+requested_latitude
+requested_longitude
+grid_cell_id
+grid_latitude
+grid_longitude
+grid_elevation_m
+valid_time_utc
+interval_start_utc
+interval_end_utc
+retrieved_at_utc
+run_initialisation_utc nullable
+source_endpoint
+model_requested
+precipitation_mm
+rain_mm
+showers_mm
+precipitation_probability_pct nullable
+source_object_key
+source_checksum
+```
+
+### 11.2 Gold rainfall KPI
+
+Grain forecast KPI:
+
+```text
+grid_cell_id × forecast_vintage × as_of_utc × valid_time_utc
+```
+
+Phường là projection từ grid:
+
+```text
+ward_key → grid_cell_id → rainfall KPI
+```
+
+Không average 126 dòng phường để tạo KPI toàn Hà Nội vì grid có nhiều phường sẽ
+bị tăng trọng số. KPI toàn thành phố phải dùng unique grid cell hoặc area-weighted
+mapping khi có polygon-grid intersection.
+
+Metadata KPI tối thiểu:
+
+```text
+kpi_definition_version
+threshold_source
+threshold_version
+threshold_scope
+forecast_vintage
+source_model
+coverage_ratio
+is_complete
+is_calibrated
+```
+
+## 12. Quality rules
+
+- `precipitation_mm >= 0` hoặc `NULL`.
+- `0 <= precipitation_probability_pct <= 100` hoặc `NULL`.
+- Mọi hourly array phải khớp `hourly.time`; mismatch được rescue và cảnh báo.
+- `valid_time_utc` tăng đều theo bước một giờ trong cửa sổ hourly.
+- Rolling không được đi qua ranh giới forecast vintage.
+- Unit phải lấy từ `hourly_units`, không giả định ngầm.
+- Với vùng không tuyết, `precipitation ≈ rain + showers` chỉ là soft check có
+  tolerance, không phải công thức tái tạo tổng.
+- Mọi KPI theo phường phải công bố `weather_spatial_support = model_grid`.
+- Không publish nếu thiếu threshold version hoặc KPI definition version.
+
+## 13. Definition of Done cho KPI MVP
+
+- Có Silver hourly giữ đủ requested coordinate, returned grid và forecast vintage.
+- Tính đúng `R1/R3/R6/R12/R24/R48/R72` trên fixture có kết quả biết trước.
+- Thiếu một giờ làm rolling incomplete, không biến thành mưa 0.
+- Không cộng trùng precipitation/rain/showers.
+- `hanoi_rain_scenario_band` khớp boundary test tại 50, 70, 100 mm và ngay sau
+  100 mm; đúng 100 vẫn thuộc band `from_70_to_100`.
+- Band `over_100` không tự tuyên bố điều kiện “kéo dài nhiều giờ” đã thỏa.
+- Không sinh `official_disaster_risk_level`, `flood_probability` hoặc
+  `flood_depth`.
+- Ward cùng grid nhận cùng forcing và UI hiển thị giới hạn độ phân giải.
+- Forecast vintage cũ vẫn truy vấn được sau lần retrieval mới.
+- Gold có lineage về Silver/Bronze và source object checksum.
+
+## 14. Quyết định và điểm còn mở
+
+Đã chốt:
+
+- `precipitation` là biến tổng mưa duy nhất cho phép cộng theo thời gian;
+- rolling 1/3/6/12/24/48/72 giờ là KPI lõi;
+- tổng mưa và peak trong forecast horizon là KPI riêng với rolling kết thúc tại
+  một valid time;
+- ngưỡng 50/70/100 mm/h là kịch bản vận hành Hà Nội, không phải cấp độ pháp lý;
+- chưa có composite score hoặc xác suất ngập trong MVP;
+- KPI tính theo grid rồi mới projection sang phường;
+- mọi công thức và threshold đều có version.
+
+Cần chốt trước khi triển khai Gold:
+
+- **K1:** định nghĩa định lượng cho “trên 100 mm/h kéo dài nhiều giờ”;
+- **K2:** historical product được pin cho baseline: ERA5 hay ERA5-Land;
+- **K3:** quy tắc event dùng 6 giờ khô có phù hợp với các trận mưa Hà Nội;
+- **K4:** có ingest ET/soil moisture ngay MVP hay chỉ ingest precipitation trước;
+- **K5:** nguồn nhãn sự kiện để hiệu chỉnh POD/FAR/CSI;
+- **K6:** có pin forecast model để tăng tính tái lập hay tiếp tục Best Match và
+  quản lý thay đổi bằng vintage/metadata.
+
+## 15. Nguồn tham khảo
+
+- [Open-Meteo Weather Forecast API](https://open-meteo.com/en/docs)
+- [Open-Meteo Historical Weather API](https://open-meteo.com/en/docs/historical-weather-api)
+- [Open-Meteo Ensemble API](https://open-meteo.com/en/docs/ensemble-api)
+- [Open-Meteo Single Runs API](https://open-meteo.com/en/docs/single-runs-api)
+- [Quyết định 2280/QĐ-UBND ngày 29/04/2026 của UBND Hà Nội](https://datafiles.hanoi.gov.vn/gov-hni/6244/VanBan/2026/4/29/QD-2280-2026.pdf)
+- [Quyết định 18/2021/QĐ-TTg](https://datafiles.chinhphu.vn/cpp/files/vbpq/2021/04/18.signed.pdf)
+- [WMO Climatological Normals](https://wmo.int/wmo-climatological-normals)
+- [WMO/Climpact climate indices](https://etrp.wmo.int/pluginfile.php/47030/mod_resource/content/6/climpact_indices_table_updated18Aug2023.pdf)
+- [Nghiên cứu IDF trạm Hà Đông](https://doi.org/10.31814/stce.huce2025-19(1)-05)
+- [WMO Manual on Flood Forecasting and Warning](https://old.wmo.int/extranet/pages/prog/hwrp/publications/flood_forecasting_warning/WMO%201072_en.pdf)

@@ -8,6 +8,7 @@
 DuckDB/dbt
    ├── catalog1 metadata      → PostgreSQL schema ducklake
    ├── bronze_store metadata → PostgreSQL schema ducklake_bronze
+   ├── ingestion control     → PostgreSQL schema ingestion
    └── Files + Parquet       → s3://vn-climate trên MinIO
 ```
 
@@ -19,9 +20,9 @@ silver/
 gold/
 ```
 
-Bronze chỉ có hai prefix con: `bronze/files/` chứa object nguyên bản do collector
-quản lý; `bronze/tables/` chứa Parquet do DuckLake quản lý. Schema `ops` nằm
-trong catalog chính và chỉ lưu control state.
+Bronze chỉ có hai prefix con: `bronze/files/` chứa response object nguyên bản do
+collector quản lý; `bronze/tables/` chứa Parquet do DuckLake quản lý. Native
+PostgreSQL schema `ingestion` lưu control state và tách khỏi DuckLake catalog.
 
 ## Khởi động
 
@@ -36,7 +37,7 @@ uv run python scripts/verify_lakehouse.py
 1. Tạo bucket MinIO nếu chưa có.
 2. Attach catalog chính và catalog Bronze, cùng backed by PostgreSQL.
 3. Tạo `bronze_store.tables`, `catalog1.silver`, `catalog1.gold`.
-4. Tạo `ops.pipeline_runs` và `ops.ingestion_files`.
+4. Tạo `ingestion.ingestion_runs` và `ingestion.ingestion_files` trực tiếp trong PostgreSQL.
 
 ## Storage ownership
 
@@ -46,7 +47,12 @@ uv run python scripts/verify_lakehouse.py
 | `bronze/tables/<table>` | `bronze_store.tables` | snapshot/maintenance qua catalog |
 | `silver/<table>` | DuckLake | validated/conformed |
 | `gold/<table>` | DuckLake | business-ready |
-| `ops.*` | ingestion runtime | checkpoint và audit |
+| `ingestion.*` | ingestion runtime | checkpoint và audit |
+
+Phase 5 đã tạo và vận hành `bronze_store.tables.open_meteo_forecast_hourly` cho
+126 phường/xã; catalog của bảng
+nằm trong PostgreSQL `ducklake_bronze`, còn Parquet nằm đúng prefix
+`bronze/tables/open_meteo_forecast_hourly/`.
 
 Không dùng prefix `raw/` hoặc `landing/`.
 

@@ -2,8 +2,8 @@
 
 **Hanoi Flood & Climate Risk Monitor** · v1.0 · 2026-08-21
 
-Repository dùng ba data layer `bronze → silver → gold`. `ops` là schema kỹ thuật
-cho checkpoint và audit, không phải data layer thứ tư.
+Repository dùng ba data layer `bronze → silver → gold`. PostgreSQL schema
+`ingestion` là control plane cho checkpoint và audit, không phải data layer thứ tư.
 
 ## Cây thư mục
 
@@ -16,9 +16,12 @@ vn-climate-risk-monitor/
 │   │   └── minio.py                 # adapter object storage dùng chung
 │   └── ingestion/
 │       ├── layout.py                # contract object key bronze/files
-│       ├── collectors/              # API/file → JSON/file bất biến trên MinIO
+│       ├── collectors/              # API → response JSON bất biến trên MinIO
 │       ├── loaders/                 # bronze/files → Bronze DuckLake table
-│       └── state/                   # ops.pipeline_runs, ops.ingestion_files
+│       ├── pipelines/               # compose collect → drain loader
+│       ├── observability.py         # health/metrics từ control plane
+│       ├── scheduling.py            # deterministic hourly logical slot
+│       └── state/                   # PostgreSQL schema/repository/checkpoint
 │
 ├── transform/                       # dbt + DuckDB + DuckLake
 │   ├── models/
@@ -30,7 +33,7 @@ vn-climate-risk-monitor/
 │   └── tests/
 │
 ├── reference/                       # GeoJSON và văn bản nguồn tĩnh
-├── orchestration/                   # DAG chỉ điều phối, không chứa business logic
+├── orchestration/cron/              # schedule template; không chứa business logic
 ├── serving/                         # API/dashboard chỉ đọc Gold
 ├── scripts/                         # bootstrap, verify, maintenance
 └── tests/
@@ -63,11 +66,11 @@ không overwrite file nguồn.
 
 | Layer | Trách nhiệm |
 |---|---|
-| Bronze files | Request/response/manifest/checksum nguyên bản, append-only |
+| Bronze files | Response nguồn nguyên bản, append-only |
 | Bronze tables | Parse cấu trúc nguồn; được explode array nhưng không lọc/dedup |
 | Silver | Schema enforcement, type casting, validation, dedup, mapping, join |
-| Gold | Dimension/fact, rolling KPI, risk score, aggregate phục vụ sản phẩm |
-| Ops | File ledger, pipeline run, checkpoint, parser version và lỗi |
+| Gold | Dimension/fact, rolling/forecast KPI, scenario và pressure feature |
+| Ingestion control | PostgreSQL run/file state, checksum, lease, parser version và lỗi |
 
 ## Quy ước đặt tên
 
@@ -82,14 +85,16 @@ không overwrite file nguồn.
 
 ## Incremental contract
 
-1. Collector tạo một run bất biến trong `bronze/files`.
-2. `_SUCCESS` được ghi cuối cùng; loader bỏ qua run thiếu marker này.
-3. Loader discover file theo path và đối chiếu `ops.ingestion_files`.
-4. Parser ghi staging, sau đó `MERGE` theo deterministic row id và commit Bronze.
-5. Chỉ sau Bronze commit mới cập nhật file ledger thành `COMMITTED`.
-6. Crash giữa hai commit sẽ retry; deterministic id ngăn duplicate. Payload luôn
+1. Collector tạo attempt `RUNNING` và file `PENDING` trong PostgreSQL.
+2. Collector chỉ ghi immutable response JSON vào `bronze/files`.
+3. Khi đủ batch hợp lệ, attempt chuyển `SUCCEEDED`.
+4. Loader claim file bằng transaction, `SKIP LOCKED` và lease.
+5. Parser ghi staging, sau đó `MERGE` theo deterministic row id và commit Bronze.
+6. Chỉ sau Bronze commit mới cập nhật file ledger thành `COMMITTED`.
+7. Crash giữa hai commit sẽ retry; deterministic id ngăn duplicate. Payload luôn
    được giữ để replay, không dựa vào distributed transaction giữa hai catalog.
 
-Open-Meteo chưa được triển khai ở phiên bản cấu trúc này. Các package
-`collectors/` và `loaders/` mới chỉ định nghĩa ranh giới để bước tiếp theo không
-trộn HTTP, object storage, parsing và checkpoint vào cùng một module.
+Open-Meteo forecast collector, PostgreSQL discovery/checkpoint và Bronze hourly
+loader đã được triển khai. Collector, parser, object reader và loader vẫn tách
+module để HTTP, schema parsing, storage và checkpoint có thể test độc lập.
+Phase 5 chỉ compose các module này; cron không chứa parsing hoặc state logic.

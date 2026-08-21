@@ -11,19 +11,28 @@ import io
 import json
 from datetime import UTC, datetime
 
-import httpx
+from requests import Session
 
 from vn_climate_risk_monitor.config import load_settings
+from vn_climate_risk_monitor.ingestion.http import build_http_session
 from vn_climate_risk_monitor.ingestion.layout import BronzeFilesLayout
 from vn_climate_risk_monitor.storage import ensure_bucket, get_minio_client
 
 REPOSITORY = "https://github.com/ThangLeQuoc/vietnamese-provinces-database"
-RAW_BASE = "https://raw.githubusercontent.com/ThangLeQuoc/vietnamese-provinces-database/master"
+RAW_BASE = (
+    "https://raw.githubusercontent.com/ThangLeQuoc/vietnamese-provinces-database/master"
+)
 COMMIT_API = "https://api.github.com/repos/ThangLeQuoc/vietnamese-provinces-database/commits/master"
 
 SOURCE_FILES = (
-    ("full_json_generated_data_vn_units.json", "json/full_json_generated_data_vn_units.json"),
-    ("postgres_CreateTables_vn_units.sql", "postgresql/postgres_CreateTables_vn_units.sql"),
+    (
+        "full_json_generated_data_vn_units.json",
+        "json/full_json_generated_data_vn_units.json",
+    ),
+    (
+        "postgres_CreateTables_vn_units.sql",
+        "postgresql/postgres_CreateTables_vn_units.sql",
+    ),
     ("postgres_ImportData_vn_units.sql", "postgresql/postgres_ImportData_vn_units.sql"),
 )
 
@@ -32,8 +41,8 @@ def _sha256(content: bytes) -> str:
     return hashlib.sha256(content).hexdigest()
 
 
-def _commit_sha(client: httpx.Client) -> str:
-    response = client.get(COMMIT_API)
+def _commit_sha(client: Session) -> str:
+    response = client.get(COMMIT_API, timeout=60)
     response.raise_for_status()
     return str(response.json()["sha"])
 
@@ -51,11 +60,7 @@ def collect() -> str:
         load_type="full",
     )
 
-    with httpx.Client(
-        timeout=60,
-        follow_redirects=True,
-        headers={"User-Agent": "vn-climate-risk-monitor"},
-    ) as client:
+    with build_http_session() as client:
         commit_sha = _commit_sha(client)
         run_id = f"{ingested_at:%Y%m%dT%H%M%SZ}_{commit_sha[:8]}"
         prefix = layout.run_prefix(ingested_at, run_id)
@@ -63,7 +68,7 @@ def collect() -> str:
 
         for filename, relative_url in SOURCE_FILES:
             source_url = f"{RAW_BASE}/{relative_url}"
-            response = client.get(source_url)
+            response = client.get(source_url, timeout=60)
             response.raise_for_status()
             content = response.content
             object_key = layout.object_key(ingested_at, run_id, filename)
@@ -73,7 +78,9 @@ def collect() -> str:
                 object_key,
                 io.BytesIO(content),
                 len(content),
-                content_type=response.headers.get("content-type", "application/octet-stream"),
+                content_type=response.headers.get(
+                    "content-type", "application/octet-stream"
+                ),
             )
             manifest_files.append(
                 {
