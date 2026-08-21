@@ -2,16 +2,17 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 from uuid import UUID, uuid4
 
 import psycopg
+from psycopg.types.json import Jsonb
 
 from vn_climate_risk_monitor.config import PostgresSettings, load_settings
 from vn_climate_risk_monitor.ingestion.state.models import (
-    ClaimedFile,
+    ClaimedObject,
     PipelineMetrics,
     RunAttempt,
     RunStatus,
@@ -61,23 +62,35 @@ class PostgresIngestionRepository:
         self,
         *,
         pipeline_name: str,
+        source_name: str,
         dataset: str,
         scope: str,
         logical_key: str,
         scheduled_at_utc: datetime,
         started_at_utc: datetime,
-        batch_count: int,
-        location_count: int,
-        source_endpoint: str,
-        model_requested: str,
-        forecast_hours: int,
-        hourly_variables: Sequence[str],
+        expected_file_count: int,
+        source_uri: str,
         collector_version: str,
-        request_contract_version: int,
+        contract_version: str,
+        run_parameters: Mapping[str, object],
         stale_after_seconds: int = 1800,
     ) -> RunAttempt:
         if stale_after_seconds < 1:
             raise ValueError("stale_after_seconds must be positive")
+        identity_values = (
+            pipeline_name,
+            source_name,
+            dataset,
+            scope,
+            logical_key,
+            source_uri,
+            collector_version,
+            contract_version,
+        )
+        if any(not value.strip() for value in identity_values):
+            raise ValueError("Run identity and contract fields must not be empty")
+        if expected_file_count < 1:
+            raise ValueError("expected_file_count must be positive")
         logical_run_id = build_logical_run_id(
             pipeline_name=pipeline_name,
             dataset=dataset,
@@ -130,13 +143,13 @@ class PostgresIngestionRepository:
                 """
                 INSERT INTO ingestion.ingestion_runs (
                     attempt_id, logical_run_id, logical_key, attempt_number,
-                    pipeline_name, dataset, scope, scheduled_at_utc, started_at_utc,
-                    status, batch_count, location_count, source_endpoint,
-                    model_requested, forecast_hours, hourly_variables,
-                    collector_version, request_contract_version
+                    pipeline_name, source_name, dataset, scope,
+                    scheduled_at_utc, started_at_utc, status,
+                    expected_file_count, source_uri, collector_version,
+                    contract_version, run_parameters
                 ) VALUES (
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                    'RUNNING', %s, %s, %s, %s, %s, %s, %s, %s
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                    'RUNNING', %s, %s, %s, %s, %s
                 )
                 """,
                 (
@@ -145,18 +158,16 @@ class PostgresIngestionRepository:
                     logical_key,
                     attempt_number,
                     pipeline_name,
+                    source_name,
                     dataset,
                     scope,
                     scheduled_at_utc,
                     started_at_utc,
-                    batch_count,
-                    location_count,
-                    source_endpoint,
-                    model_requested,
-                    forecast_hours,
-                    list(hourly_variables),
+                    expected_file_count,
+                    source_uri,
                     collector_version,
-                    request_contract_version,
+                    contract_version,
+                    Jsonb(dict(run_parameters)),
                 ),
             )
         return RunAttempt(
@@ -307,15 +318,18 @@ class PostgresIngestionRepository:
         attempt_id: UUID,
         batch_index: int,
         object_key: str,
-        ward_keys: Sequence[int],
+        expected_item_count: int | None,
+        file_parameters: Mapping[str, object],
     ) -> UUID:
+        if expected_item_count is not None and expected_item_count < 1:
+            raise ValueError("expected_item_count must be positive when provided")
         file_id = uuid4()
         with self.connection.transaction():
             cursor = self.connection.execute(
                 """
                 INSERT INTO ingestion.ingestion_files (
-                    file_id, attempt_id, batch_index, object_key, ward_keys,
-                    expected_location_count, status
+                    file_id, attempt_id, batch_index, object_key,
+                    expected_item_count, file_parameters, status
                 )
                 SELECT %s, %s, %s, %s, %s, %s, 'PENDING'
                 WHERE EXISTS (
@@ -328,8 +342,8 @@ class PostgresIngestionRepository:
                     attempt_id,
                     batch_index,
                     object_key,
-                    list(ward_keys),
-                    len(ward_keys),
+                    expected_item_count,
+                    Jsonb(dict(file_parameters)),
                     attempt_id,
                 ),
             )
@@ -377,19 +391,21 @@ class PostgresIngestionRepository:
             if cursor.rowcount != 1:
                 raise StateTransitionError("Source file metadata was already recorded")
 
-    def validate_file(self, file_id: UUID, *, received_location_count: int) -> None:
+    def validate_file(self, file_id: UUID, *, received_item_count: int) -> None:
+        if received_item_count < 1:
+            raise ValueError("received_item_count must be positive")
         with self.connection.transaction():
             cursor = self.connection.execute(
                 """
                 UPDATE ingestion.ingestion_files
-                SET received_location_count = %s,
+                SET received_item_count = %s,
                     updated_at_utc = CURRENT_TIMESTAMP
                 WHERE file_id = %s
                   AND status = 'PENDING'
                   AND sha256 IS NOT NULL
-                  AND received_location_count IS NULL
+                  AND received_item_count IS NULL
                 """,
-                (received_location_count, file_id),
+                (received_item_count, file_id),
             )
             if cursor.rowcount != 1:
                 raise StateTransitionError(
@@ -406,12 +422,15 @@ class PostgresIngestionRepository:
                     updated_at_utc = CURRENT_TIMESTAMP
                 WHERE run.attempt_id = %s
                   AND run.status = 'RUNNING'
-                  AND run.batch_count = (
+                  AND run.expected_file_count = (
                       SELECT count(*) FROM ingestion.ingestion_files AS file
                       WHERE file.attempt_id = run.attempt_id
                         AND file.status = 'PENDING'
                         AND file.sha256 IS NOT NULL
-                        AND file.received_location_count = file.expected_location_count
+                        AND (
+                            file.expected_item_count IS NULL
+                            OR file.received_item_count = file.expected_item_count
+                        )
                   )
                 """,
                 (completed_at_utc, attempt_id),
@@ -490,7 +509,7 @@ class PostgresIngestionRepository:
         limit: int,
         lease_seconds: int,
         max_retries: int,
-    ) -> tuple[ClaimedFile, ...]:
+    ) -> tuple[ClaimedObject, ...]:
         """Claim an available-now micro-batch without competing worker overlap."""
         if limit < 1 or lease_seconds < 1 or max_retries < 0:
             raise ValueError("Invalid file claim limits")
@@ -519,11 +538,12 @@ class PostgresIngestionRepository:
                 """
                 WITH candidates AS (
                     SELECT file.file_id, run.logical_run_id,
+                           run.pipeline_name, run.source_name,
+                           run.dataset, run.scope,
                            run.scheduled_at_utc, run.started_at_utc,
-                           run.completed_at_utc, run.source_endpoint,
-                           run.model_requested, run.forecast_hours,
-                           run.hourly_variables, run.collector_version,
-                           run.request_contract_version
+                           run.completed_at_utc, run.source_uri,
+                           run.collector_version, run.contract_version,
+                           run.run_parameters
                     FROM ingestion.ingestion_files AS file
                     JOIN ingestion.ingestion_runs AS run
                       ON run.attempt_id = file.attempt_id
@@ -552,20 +572,20 @@ class PostgresIngestionRepository:
                 FROM candidates
                 WHERE file.file_id = candidates.file_id
                 RETURNING file.file_id, file.attempt_id, file.object_key,
-                          file.batch_index, file.ward_keys, file.size_bytes,
+                          file.batch_index, file.size_bytes,
                           file.sha256, file.content_type, file.retry_count,
-                          file.expected_location_count,
-                          file.received_location_count,
+                          file.expected_item_count, file.received_item_count,
+                          file.file_parameters,
                           candidates.logical_run_id,
+                          candidates.pipeline_name, candidates.source_name,
+                          candidates.dataset, candidates.scope,
                           candidates.scheduled_at_utc,
                           candidates.started_at_utc,
                           candidates.completed_at_utc,
-                          candidates.source_endpoint,
-                          candidates.model_requested,
-                          candidates.forecast_hours,
-                          candidates.hourly_variables,
+                          candidates.source_uri,
                           candidates.collector_version,
-                          candidates.request_contract_version
+                          candidates.contract_version,
+                          candidates.run_parameters
                 """,
                 (
                     pipeline_name,
@@ -578,13 +598,16 @@ class PostgresIngestionRepository:
                 ),
             ).fetchall()
         return tuple(
-            ClaimedFile(
+            ClaimedObject(
                 file_id=file_id,
                 attempt_id=attempt_id,
                 logical_run_id=logical_run_id,
+                pipeline_name=returned_pipeline_name,
+                source_name=source_name,
+                dataset=returned_dataset,
+                scope=returned_scope,
                 object_key=object_key,
                 batch_index=batch_index,
-                ward_keys=tuple(ward_keys),
                 size_bytes=size_bytes,
                 sha256=sha256,
                 content_type=content_type,
@@ -592,37 +615,38 @@ class PostgresIngestionRepository:
                 scheduled_at_utc=scheduled_at_utc,
                 collection_started_at_utc=collection_started_at_utc,
                 collection_completed_at_utc=collection_completed_at_utc,
-                source_endpoint=source_endpoint,
-                model_requested=model_requested,
-                forecast_hours=forecast_hours,
-                hourly_variables=tuple(hourly_variables),
+                source_uri=source_uri,
                 collector_version=collector_version,
-                request_contract_version=request_contract_version,
-                expected_location_count=expected_location_count,
-                received_location_count=received_location_count,
+                contract_version=contract_version,
+                run_parameters=dict(run_parameters),
+                file_parameters=dict(file_parameters),
+                expected_item_count=expected_item_count,
+                received_item_count=received_item_count,
             )
             for (
                 file_id,
                 attempt_id,
                 object_key,
                 batch_index,
-                ward_keys,
                 size_bytes,
                 sha256,
                 content_type,
                 retry_count,
-                expected_location_count,
-                received_location_count,
+                expected_item_count,
+                received_item_count,
+                file_parameters,
                 logical_run_id,
+                returned_pipeline_name,
+                source_name,
+                returned_dataset,
+                returned_scope,
                 scheduled_at_utc,
                 collection_started_at_utc,
                 collection_completed_at_utc,
-                source_endpoint,
-                model_requested,
-                forecast_hours,
-                hourly_variables,
+                source_uri,
                 collector_version,
-                request_contract_version,
+                contract_version,
+                run_parameters,
             ) in rows
         )
 

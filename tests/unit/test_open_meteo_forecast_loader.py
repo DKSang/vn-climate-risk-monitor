@@ -9,18 +9,21 @@ from vn_climate_risk_monitor.ingestion.loaders.open_meteo_forecast_hourly import
     merge_forecast_hourly,
 )
 from vn_climate_risk_monitor.ingestion.open_meteo import parse_forecast_hourly
-from vn_climate_risk_monitor.ingestion.state import ClaimedFile
+from vn_climate_risk_monitor.ingestion.state import ClaimedObject
 
 
-def _source() -> ClaimedFile:
+def _source() -> ClaimedObject:
     timestamp = datetime(2026, 8, 21, 10, 15, tzinfo=UTC)
-    return ClaimedFile(
+    return ClaimedObject(
         file_id=UUID("00000000-0000-0000-0000-000000000001"),
         attempt_id=UUID("00000000-0000-0000-0000-000000000002"),
         logical_run_id=UUID("00000000-0000-0000-0000-000000000003"),
+        pipeline_name="open_meteo_forecast",
+        source_name="open_meteo",
+        dataset="forecast",
+        scope="canary_1",
         object_key="bronze/files/open_meteo/forecast/response_000.json",
         batch_index=0,
-        ward_keys=(11,),
         size_bytes=1,
         sha256="a" * 64,
         content_type="application/json",
@@ -28,14 +31,18 @@ def _source() -> ClaimedFile:
         scheduled_at_utc=timestamp,
         collection_started_at_utc=timestamp,
         collection_completed_at_utc=timestamp,
-        source_endpoint="https://api.open-meteo.test/v1/forecast",
-        model_requested="best_match",
-        forecast_hours=2,
-        hourly_variables=("precipitation",),
+        source_uri="https://api.open-meteo.test/v1/forecast",
         collector_version="0.2.0",
-        request_contract_version=1,
-        expected_location_count=1,
-        received_location_count=1,
+        contract_version="1",
+        run_parameters={
+            "model": "best_match",
+            "forecast_hours": 2,
+            "hourly_variables": ["precipitation"],
+            "location_count": 1,
+        },
+        file_parameters={"ward_keys": [11]},
+        expected_item_count=1,
+        received_item_count=1,
     )
 
 
@@ -73,12 +80,12 @@ class InvalidJsonReader:
 
 
 class MemoryState:
-    def __init__(self, source: ClaimedFile) -> None:
+    def __init__(self, source: ClaimedObject) -> None:
         self.source = source
         self.committed: dict[str, object] | None = None
         self.failed = False
 
-    def claim_files(self, **values: object) -> tuple[ClaimedFile, ...]:
+    def claim_files(self, **values: object) -> tuple[ClaimedObject, ...]:
         assert values["scope"] == "canary_1"
         return (self.source,)
 

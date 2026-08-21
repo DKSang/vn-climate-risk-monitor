@@ -36,9 +36,14 @@ dev = [
 vn-climate-risk-monitor = "vn_climate_risk_monitor:main"
 collect-administrative-reference = "vn_climate_risk_monitor.ingestion.collectors.administrative_reference:main"
 collect-open-meteo-forecast = "vn_climate_risk_monitor.ingestion.collectors.open_meteo_forecast:main"
+collect-open-meteo-archive = "vn_climate_risk_monitor.ingestion.collectors.open_meteo_archive:main"
 load-open-meteo-forecast = "vn_climate_risk_monitor.ingestion.loaders.open_meteo_forecast_hourly:main"
+load-open-meteo-archive = "vn_climate_risk_monitor.ingestion.loaders.open_meteo_archive_hourly:main"
 run-open-meteo-pipeline = "vn_climate_risk_monitor.ingestion.pipelines.open_meteo_forecast:main"
+plan-open-meteo-archive = "vn_climate_risk_monitor.ingestion.pipelines.open_meteo_archive:main"
+run-open-meteo-archive = "vn_climate_risk_monitor.ingestion.pipelines.open_meteo_archive:main"
 observe-open-meteo-ingestion = "vn_climate_risk_monitor.ingestion.observability:main"
+observe-ingestion = "vn_climate_risk_monitor.ingestion.observability:main"
 
 [build-system]
 requires = ["uv_build>=0.12.3,<0.13.0"]

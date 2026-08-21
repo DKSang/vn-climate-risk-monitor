@@ -2,8 +2,10 @@
 
 **Hanoi Flood & Climate Risk Monitor** · v2.0 · 2026-08-21
 
-**Trạng thái:** Phase 1–5 hoàn thành; pipeline hourly production đã collect và
-load đủ 126 phường/xã vào Bronze DuckLake.
+**Trạng thái:** Forecast Phase 1–5 hoàn thành; pipeline hourly production đã
+collect và load đủ 126 phường/xã vào Bronze DuckLake. Historical H1–H6 đã có
+planner, collector, parser, Bronze loader, monthly backfill và tail; backfill dữ
+liệu đầy đủ được vận hành dần theo quota Free API.
 
 ## 1. Mục tiêu
 
@@ -65,6 +67,8 @@ Schema `ingestion` là native PostgreSQL, tách khỏi các schema nội bộ
 `ducklake` và `ducklake_bronze`. Không tạo `ops` như một data layer thứ tư.
 Migration `003_move_ingestion_control_to_postgres.py` loại hai relation DuckLake
 `ops` cũ, nhưng từ chối chạy nếu chúng có dữ liệu.
+Migration `004_generalize_ingestion_control.py` đã chuyển control schema sang
+source-agnostic contract, giữ nguyên toàn bộ run/file rows hiện có.
 
 ## 4. Stack
 
@@ -106,7 +110,8 @@ weather_code
 
 Location được đọc từ `gold.dim_hanoi_ward`, bắt buộc đủ 126 dòng, sắp xếp theo
 `ward_key` rồi mới chia batch. Open-Meteo trả array theo thứ tự location request;
-vì vậy `ingestion_files.ward_keys` lưu ordered mapping cho từng response file.
+vì vậy forecast adapter lưu ordered mapping trong
+`ingestion_files.file_parameters.ward_keys` cho từng response file.
 
 ## 6. Logical run và execution attempt
 
@@ -144,12 +149,24 @@ Một row đại diện cho một execution attempt. Các cột chính:
 
 ```text
 attempt_id, logical_run_id, logical_key, attempt_number
-pipeline_name, dataset, scope
+pipeline_name, source_name, dataset, scope
 scheduled_at_utc, started_at_utc, completed_at_utc
-status, batch_count, location_count
-source_endpoint, model_requested, forecast_hours, hourly_variables
-collector_version, request_contract_version
+status, expected_file_count
+source_uri, collector_version, contract_version
+run_parameters JSONB
 error_type, error_message
+```
+
+Control columns chỉ biểu diễn lifecycle chung. Forecast-specific values nằm trong
+immutable `run_parameters` và được typed adapter validate:
+
+```json
+{
+  "model": "best_match",
+  "forecast_hours": 72,
+  "hourly_variables": ["precipitation", "rain"],
+  "location_count": 126
+}
 ```
 
 Run state:
@@ -168,14 +185,18 @@ Một row đại diện cho một response object/batch:
 
 ```text
 file_id, attempt_id, batch_index, object_key
-ward_keys
 size_bytes, sha256, etag, content_type
 http_status, request_attempt_count
-expected_location_count, received_location_count
+expected_item_count, received_item_count
+file_parameters JSONB
 status, retry_count, worker_id, lease_expires_at_utc
 rows_parsed, rows_inserted, parser_version
 error_type, error_message
 ```
+
+Forecast `file_parameters` hiện là `{"ward_keys": [...]}`. Nguồn khác có thể
+lưu partition/station identity riêng mà không thêm cột vào state schema. Status,
+retry, lease, checksum và row metrics không nằm trong JSONB.
 
 File state tối thiểu:
 
@@ -196,12 +217,17 @@ Trình tự một run:
 validate và deterministic batch locations
   → INSERT ingestion_runs(status=RUNNING)
   → với từng batch:
-       INSERT ingestion_files(status=PENDING, object_key, ward_keys)
+       INSERT ingestion_files(
+           status=PENDING,
+           object_key,
+           expected_item_count,
+           file_parameters={ward_keys}
+       )
        GET Open-Meteo với bounded retry
        ghi exact response bytes vào MinIO
        UPDATE size/hash/HTTP metadata
        validate HTTP, content type, JSON root và location count
-       UPDATE received_location_count
+       UPDATE received_item_count
   → UPDATE ingestion_runs(status=SUCCEEDED)
 ```
 
@@ -209,9 +235,9 @@ Nếu lỗi, response body đã nhận vẫn được giữ trên MinIO; file v�
 `FAILED`. Loader chỉ claim file thuộc run `SUCCEEDED`, vì vậy partial run không
 lọt xuống Bronze table.
 
-Collector không ghi request JSON. Request-level fields cố định nằm trên run;
-ordered `ward_keys` nằm trên file. Cách này tránh lưu cùng metadata ở cả MinIO
-và PostgreSQL.
+Collector không ghi request JSON. Request-level fields cố định nằm trong typed
+`run_parameters`; ordered `ward_keys` nằm trong typed `file_parameters`. JSONB
+chỉ là persistence format cho immutable context, không chứa file state.
 
 ## 9. MinIO object layout
 
@@ -277,7 +303,8 @@ Loader đã triển khai:
 
 1. claim file từ PostgreSQL;
 2. xác minh checksum khi đọc MinIO;
-3. map response array với ordered `ward_keys`;
+3. deserialize generic context thành `ForecastRunParameters` và
+   `ForecastFileParameters`, rồi map response array với ordered `ward_keys`;
 4. validate `hourly.time` và độ dài mọi parallel array;
 5. tạo Arrow table bằng explicit schema;
 6. `MERGE` vào `bronze_store.tables.open_meteo_forecast_hourly`;
@@ -333,6 +360,7 @@ make run-weather-plan        # plan slot UTC gần nhất, không ghi dữ liệ
 make run-weather             # collect 126 locations rồi drain loader
 make weather-status          # metrics từ PostgreSQL control plane
 make weather-healthcheck     # exit != 0 nếu không HEALTHY
+make migrate-general-control-dry-run # kiểm tra migration control v4
 ```
 
 ## 15. Kế hoạch phase
@@ -407,6 +435,8 @@ Collector `RUNNING` quá 1.800 giây được đóng `FAILED` trước khi attem
 đầu. File lease hết hạn được chuyển `FAILED` và reclaim ở lần load kế tiếp.
 Cron template dùng `flock` để ngăn hai process single-node chạy chồng nhau.
 Metrics được tính trực tiếp từ hai control table, không tạo metrics database mới.
+CLI metrics nhận `pipeline_name`, `dataset`, `scope`; Make target weather chỉ là
+convenience wrapper cho forecast.
 
 Runbook chi tiết: [04b-ingestion-runbook.md](04b-ingestion-runbook.md).
 
@@ -414,6 +444,8 @@ Runbook chi tiết: [04b-ingestion-runbook.md](04b-ingestion-runbook.md).
 
 - MinIO collector mới chỉ ghi response source object.
 - PostgreSQL là nguồn duy nhất cho run và file metadata.
+- Control schema không chứa cột forecast-specific; source context là JSONB nhỏ,
+  immutable và được adapter chuyển lại thành typed dataclass.
 - Không tạo `_manifest.json`, `_SUCCESS`, `_FAILED.json` hoặc request object.
 - Logical run tách khỏi execution attempt và canary tách khỏi production.
 - Partial run không được loader claim.
@@ -428,14 +460,203 @@ Runbook chi tiết: [04b-ingestion-runbook.md](04b-ingestion-runbook.md).
 - Collector timeout và file lease recovery có integration test.
 - Health report có freshness, backlog, retry và row metrics 24 giờ.
 - Full 126-location production run và rerun idempotency đã pass.
+- Migration v4 giữ nguyên 3 run và 7 file production/canary hiện có.
 - Unit, PostgreSQL repository và DuckLake production validation đều pass.
+
+## 18. Historical Archive từ năm 2000
+
+Thiết kế cuối và runbook đầy đủ nằm tại
+[04c-open-meteo-archive.md](04c-open-meteo-archive.md). Các mục H1–H3 bên dưới
+giữ lại quyết định và bằng chứng canary; H4–H6 đã triển khai xong. Backfill toàn
+bộ 2000–nay là tiến trình vận hành theo quota, không phải một batch chạy burst.
+
+### Quyết định partition
+
+Historical dùng `open_meteo_archive / historical_weather_hourly / backfill` và
+pin `models=era5`. Hai cấp thời gian có trách nhiệm khác nhau:
+
+```text
+planning group + Bronze partition : 1 năm
+logical recovery checkpoint       : 1 tháng
+physical HTTP/file checkpoint     : 1 tháng × 1 location batch
+```
+
+Ví dụ planning group `year=2000` có 12 monthly run. Với 126 location và batch
+size 25, mỗi tháng có sáu source files. `batch_index` tăng tuần tự từ 0 đến 5
+trong monthly run để tương thích unique constraint
+`(attempt_id, batch_index)` của control plane.
+
+Runtime ban đầu thử yearly logical run và gặp `HTTP 429` ở tháng 09 sau 48
+request. Vì thế checkpoint đã được thu nhỏ về tháng; partition Parquet vẫn theo
+năm. Lỗi một period giờ không làm replay các period đã thành công.
+
+Năm hiện tại là partition partial. Planner chỉ đi đến `UTC today - 5 days`, là
+biên conservative theo độ trễ công bố của ERA5. Partition vật lý vẫn là
+`year=2026`, nhưng logical key chứa model và cutoff, ví dụ
+`model=era5/year=2026/through=2026-08-16`; vì vậy đổi source contract hoặc chạy
+daily tail sau này không va vào unique successful run của lần backfill ban đầu.
+Cơ chế tail-sync thuộc H6.
+
+Biến hourly H1:
+
+```text
+precipitation
+rain
+weather_code
+soil_moisture_0_to_7cm
+soil_moisture_7_to_28cm
+```
+
+Run context được serialize vào generic `run_parameters`:
+
+```json
+{
+  "year": 2000,
+  "start_date": "2000-01-01",
+  "end_date": "2000-12-31",
+  "model": "era5",
+  "hourly_variables": ["precipitation", "rain"],
+  "location_count": 126,
+  "request_granularity": "month"
+}
+```
+
+File context giữ source window và ordered location identity:
+
+```json
+{
+  "year": 2000,
+  "month": 1,
+  "start_date": "2000-01-01",
+  "end_date": "2000-01-31",
+  "location_batch_index": 0,
+  "ward_keys": [1, 2, 3]
+}
+```
+
+Ở H1, read-only planner được kiểm chứng bằng:
+
+```bash
+make plan-historical
+uv run plan-open-meteo-archive --start-year 2000 --end-date 2000-12-31
+uv run plan-open-meteo-archive --start-year 2026 --limit 1 --as-of 2026-08-21
+```
+
+Planner tạo deterministic year groups, monthly windows, location batches,
+request parameters, expected file count và expected row count. Runtime hoàn
+chỉnh dùng `run-open-meteo-archive`; entrypoint `plan-open-meteo-archive` vẫn là
+alias dry-run để tương thích.
+
+### H2 collector
+
+`ArchiveCollector.collect_year()` nhận đúng một full/partial yearly plan. Nó:
+
+1. tạo execution attempt `RUNNING` trong generic PostgreSQL control plane;
+2. reserve API budget trước khi tạo file hoặc gọi nguồn;
+3. đăng ký từng monthly × location-batch file là `PENDING`;
+4. gọi `/v1/archive` tuần tự với `timeformat=unixtime`, `timezone=GMT`;
+5. ghi nguyên response body, kể cả HTTP error body, vào immutable MinIO object;
+6. ghi size, SHA-256, ETag, HTTP status và attempt count vào PostgreSQL;
+7. validate JSON root và số location nhận được;
+8. chỉ chuyển run sang `SUCCEEDED` sau khi đủ mọi file; lỗi làm file/run
+   `FAILED` và giữ response để điều tra.
+
+Source-time layout:
+
+```text
+bronze/files/open_meteo/historical_weather_hourly/backfill/
+└── year=2000/
+    └── month=01/
+        └── archive_2000_20001231_a1_<attempt-prefix>/
+            ├── response_000.json
+            └── response_001.json
+```
+
+Collector cấp thấp chỉ cho phép execute một source month. Pipeline cấp cao chia
+monthly run và admission mặc định chỉ nhận một run mới. Mặc định CLI chỉ
+in plan:
+
+```bash
+uv run collect-open-meteo-archive --year 2000
+uv run collect-open-meteo-archive --year 2000 --month 1 --limit 1
+```
+
+Ở H2, `--execute` được nối với PostgreSQL và MinIO; H3 đã dùng đúng lệnh thứ hai
+cộng `--execute` để kiểm chứng một location × một tháng trước khi mở rộng.
+
+Quota estimate áp dụng công thức fractional: location count × time factor ×
+variable factor, với baseline 10 variables × 14 ngày. Stress run cho 126
+locations xác nhận không thể coi multi-location request là một unit: server trả
+`Minutely API request limit exceeded`. Batch đó trả HTTP 200 sau cooldown, nên
+collector hiện pace ở 500 units/phút và 4.500/giờ; không áp daily admission
+guardrail nội bộ;
+`429` không có `Retry-After` dùng fallback 60 giây.
+
+### H3 canary và quyết định model
+
+Canary đầu tiên dùng `models=era5_land`, một location và tháng 01/2000. HTTP và
+storage contract đều hợp lệ nhưng business data contract thất bại:
+
+```text
+attempt_id=dba16ced-65d3-4aa9-8946-fa6e94ea585d
+HTTP=200, location=1/1, hours=744, checksum=PASS
+precipitation null=744/744
+rain null=744/744
+weather_code null=744/744
+soil_moisture null=0/744
+```
+
+Attempt này được reclassify thành `FAILED/CanaryContractViolation`; file source
+27.976 bytes vẫn giữ trên MinIO để audit và run `FAILED` ngăn H4 loader claim.
+Kết quả này phù hợp bảng variable availability của Open-Meteo: ERA5-Land không
+cung cấp trực tiếp nhóm rain/precipitation cần cho KPI.
+
+Project đổi default sang `models=era5`. Model trở thành một phần của logical
+key, ví dụ `model=era5/year=2000/through=2000-01-31`, để thay đổi source contract
+không va vào successful run cũ.
+
+Canary ERA5 thứ hai đạt cả transport và business contract:
+
+```text
+attempt_id=a2d443c3-1ea3-4037-91b6-0c44fa3baa6c
+run_status=SUCCEEDED
+file_status=COMMITTED
+HTTP=200, request_attempts=1
+object_bytes=25848
+checksum=0ec3638bc4ea3e7eb26a17a09b17e14a86f800d1e81db53fd21f3a890481652c
+location=1/1
+hours=744; 2000-01-01T00:00Z..2000-01-31T23:00Z
+all_arrays_length=744
+all_required_null_count=0
+precipitation_sum=24.6 mm
+rain_sum=24.6 mm
+soil_moisture_0_to_7cm=0.257..0.351 m³/m³
+Bronze rows=744; rescued_rows=0
+```
+
+Rerun cùng model/period/scope trả `already succeeded`, vẫn đúng một run và một
+file, không gọi lại API hoặc ghi object mới. H4 sau đó đã commit file này thành
+744 Bronze rows, không rescued row.
+
+### Kế hoạch historical
+
+| Phase | Phạm vi | Trạng thái |
+|---|---|---|
+| H1 | ERA5 contract, yearly planner, monthly tasks, dry-run | ✅ |
+| H2 | Collector + control-plane state + immutable JSON | ✅ |
+| H3 | Canary 1 location × 1 tháng và xác minh contract thật | ✅ ERA5, 744 giờ |
+| H4 | Archive parser + Bronze `MERGE`, partition theo năm | ✅ 744-row live canary |
+| H5 | Monthly checkpoint + quota-aware backfill command | ✅ code; dữ liệu đang vận hành dần |
+| H6 | Daily tail incremental + cron/fail-closed | ✅ code; source availability vẫn được kiểm tra |
 
 ## Tham khảo
 
 - [Open-Meteo Weather Forecast API](https://open-meteo.com/en/docs)
+- [Open-Meteo Historical Weather API](https://open-meteo.com/en/docs/historical-weather-api)
 - [Open-Meteo pricing](https://open-meteo.com/en/pricing)
 - [Requests Session](https://requests.readthedocs.io/en/latest/user/advanced/)
 - [PostgreSQL explicit locking](https://www.postgresql.org/docs/current/explicit-locking.html)
 - [PostgreSQL `SKIP LOCKED`](https://www.postgresql.org/docs/current/sql-select.html)
 - [Databricks Auto Loader](https://docs.databricks.com/aws/en/ingestion/cloud-object-storage/auto-loader/)
-- [DuckLake `MERGE INTO`](https://ducklake.select/docs/stable/duckdb/usage/upserting)
+- [DuckLake partitioning](https://ducklake.select/docs/stable/duckdb/advanced_features/partitioning)
+- [DuckDB `MERGE INTO`](https://duckdb.org/docs/stable/sql/statements/merge_into.html)

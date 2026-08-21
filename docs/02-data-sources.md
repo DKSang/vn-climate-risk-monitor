@@ -38,8 +38,12 @@ guardrail tại [04-ingestion.md](04-ingestion.md).
 
 ### S2 — Open-Meteo Archive
 - `https://archive-api.open-meteo.com/v1/archive?start_date=...&end_date=...&hourly=precipitation`
-- Pin một historical product sau khi chốt ERA5 hay ERA5-Land; không dùng Best Match trôi nổi
-  cho baseline dài hạn.
+- Đã pin `models=era5`: hourly, độ phân giải 0,25° (~25 km), nhất quán cho chuỗi
+  nhiều thập kỷ; dữ liệu cập nhật hằng ngày với độ trễ khoảng 5 ngày. Canary H3
+  xác nhận ERA5 có đủ rain/precipitation và soil moisture. `era5_land` 0,1° đã
+  bị loại vì ba trường mưa/weather code trả toàn `null` trong canary 01/2000.
+- Backfill từ `2000-01-01`: một logical/Bronze partition theo năm, chia HTTP
+  request và checkpoint theo tháng; không dùng Best Match trôi nổi cho baseline dài hạn.
 - Dùng giai đoạn 1991–2020 để tính phân vị theo grid và mùa/tháng. Không so trực tiếp phân phối
   reanalysis với forecast model khác nếu chưa đánh giá bias.
 

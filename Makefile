@@ -1,4 +1,4 @@
-.PHONY: bootstrap bootstrap-env up down logs ingest-provinces ingest-weather-plan ingest-weather-canary ingest-weather load-weather-canary load-weather run-weather-plan run-weather-canary run-weather weather-status weather-healthcheck migrate-legacy-dry-run migrate-legacy migrate-bronze-layout-dry-run migrate-bronze-layout migrate-ingestion-control-dry-run migrate-ingestion-control seed dbt dbt-test transform dbt-docs clean-lake lint
+.PHONY: bootstrap bootstrap-env up down logs ingest-provinces ingest-weather-plan ingest-weather-canary ingest-weather load-weather-canary load-weather run-weather-plan run-weather-canary run-weather plan-historical run-historical-canary run-historical-year run-historical-backfill run-historical-tail historical-status historical-tail-status weather-status weather-healthcheck migrate-legacy-dry-run migrate-legacy migrate-bronze-layout-dry-run migrate-bronze-layout migrate-ingestion-control-dry-run migrate-ingestion-control migrate-general-control-dry-run migrate-general-control seed dbt dbt-test transform dbt-docs clean-lake lint
 
 # ==== Setup ====
 bootstrap-env:
@@ -49,6 +49,32 @@ run-weather-canary:
 run-weather:
 	uv run run-open-meteo-pipeline --execute
 
+# Historical plan grouped by year; runtime checkpoints by month, read-only here.
+plan-historical:
+	uv run plan-open-meteo-archive
+
+# Archive source JSON + year-partitioned Bronze table. Backfill admits only one
+# new month per command by default so the configured free-tier guardrail wins.
+HISTORICAL_YEAR ?= 2000
+
+run-historical-canary:
+	uv run run-open-meteo-archive --year $(HISTORICAL_YEAR) --month 1 --limit 1 --execute
+
+run-historical-year:
+	uv run run-open-meteo-archive --year $(HISTORICAL_YEAR) --execute --max-periods 12
+
+run-historical-backfill:
+	uv run run-open-meteo-archive --execute --max-periods 1
+
+run-historical-tail:
+	uv run run-open-meteo-archive --tail --execute
+
+historical-status:
+	uv run observe-ingestion --pipeline-name open_meteo_archive --dataset historical_weather_hourly --scope backfill --stale-after-minutes 2160
+
+historical-tail-status:
+	uv run observe-ingestion --pipeline-name open_meteo_archive --dataset historical_weather_hourly --scope tail --stale-after-minutes 2160
+
 weather-status:
 	uv run observe-open-meteo-ingestion --scope production
 
@@ -77,6 +103,13 @@ migrate-ingestion-control-dry-run:
 
 migrate-ingestion-control:
 	uv run python scripts/migrations/003_move_ingestion_control_to_postgres.py --execute
+
+# Migration v4: generalize run/file control metadata; parser/Bronze giữ theo source.
+migrate-general-control-dry-run:
+	uv run python scripts/migrations/004_generalize_ingestion_control.py
+
+migrate-general-control:
+	uv run python scripts/migrations/004_generalize_ingestion_control.py --execute
 
 # ==== Transform (dbt + DuckDB + DuckLake) ====
 # dbt project ở transform/, không phải transform/dbt/

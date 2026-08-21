@@ -1,8 +1,11 @@
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 import pytest
 
-from vn_climate_risk_monitor.ingestion.layout import BronzeFilesLayout
+from vn_climate_risk_monitor.ingestion.layout import (
+    BronzeBackfillFilesLayout,
+    BronzeFilesLayout,
+)
 
 
 def test_bronze_files_layout_is_utc_and_zero_padded() -> None:
@@ -32,3 +35,18 @@ def test_bronze_files_layout_requires_aware_timestamp() -> None:
 
     with pytest.raises(ValueError, match="timezone-aware"):
         layout.run_prefix(datetime(2026, 8, 21, 10, 15), "run_01")  # noqa: DTZ001
+
+
+def test_backfill_layout_partitions_source_time_by_year_and_month() -> None:
+    layout = BronzeBackfillFilesLayout("Open-Meteo", "Historical-Weather-Hourly")
+
+    key = layout.object_key(
+        date(2000, 2, 1),
+        "archive_2000_a1",
+        "response_000.json",
+    )
+
+    assert key == (
+        "bronze/files/open_meteo/historical_weather_hourly/backfill/"
+        "year=2000/month=02/archive_2000_a1/response_000.json"
+    )

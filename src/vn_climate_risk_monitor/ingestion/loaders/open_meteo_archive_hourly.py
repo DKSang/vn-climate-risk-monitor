@@ -1,4 +1,4 @@
-"""Load verified Open-Meteo response files into the Bronze hourly table."""
+"""Load verified Open-Meteo Archive files into year-partitioned Bronze."""
 
 from __future__ import annotations
 
@@ -16,9 +16,9 @@ import duckdb
 
 from vn_climate_risk_monitor.config import load_settings
 from vn_climate_risk_monitor.ingestion.open_meteo import (
-    PARSER_VERSION,
-    ForecastParseResult,
-    parse_forecast_hourly,
+    ARCHIVE_PARSER_VERSION,
+    ArchiveParseResult,
+    parse_archive_hourly,
 )
 from vn_climate_risk_monitor.ingestion.state import (
     ClaimedObject,
@@ -29,10 +29,10 @@ from vn_climate_risk_monitor.ingestion.state import (
 from vn_climate_risk_monitor.lakehouse import get_connection
 from vn_climate_risk_monitor.storage import VerifiedObjectReader, get_minio_client
 
-PIPELINE_NAME = "open_meteo_forecast"
-DATASET = "forecast"
-TARGET_TABLE = "bronze_store.tables.open_meteo_forecast_hourly"
-STAGING_VIEW = "open_meteo_forecast_hourly_staging"
+PIPELINE_NAME = "open_meteo_archive"
+DATASET = "historical_weather_hourly"
+TARGET_TABLE = "bronze_store.tables.open_meteo_archive_hourly"
+STAGING_VIEW = "open_meteo_archive_hourly_staging"
 QUALIFIED_NAME = re.compile(r"^[a-z_][a-z0-9_]*(\.[a-z_][a-z0-9_]*){0,2}$")
 
 TARGET_DDL = """
@@ -46,12 +46,16 @@ CREATE TABLE IF NOT EXISTS {target_table} (
     source_location_id INTEGER,
     hourly_index INTEGER NOT NULL,
     ward_key BIGINT NOT NULL,
+    source_year INTEGER NOT NULL,
+    source_month INTEGER NOT NULL,
     scheduled_at_utc TIMESTAMP WITH TIME ZONE NOT NULL,
     collection_started_at_utc TIMESTAMP WITH TIME ZONE NOT NULL,
     collection_completed_at_utc TIMESTAMP WITH TIME ZONE NOT NULL,
-    valid_time_utc TIMESTAMP WITH TIME ZONE,
-    interval_start_utc TIMESTAMP WITH TIME ZONE,
-    interval_end_utc TIMESTAMP WITH TIME ZONE,
+    observed_time_utc TIMESTAMP WITH TIME ZONE NOT NULL,
+    interval_start_utc TIMESTAMP WITH TIME ZONE NOT NULL,
+    interval_end_utc TIMESTAMP WITH TIME ZONE NOT NULL,
+    requested_start_date DATE NOT NULL,
+    requested_end_date DATE NOT NULL,
     grid_latitude DOUBLE,
     grid_longitude DOUBLE,
     grid_elevation DOUBLE,
@@ -61,12 +65,11 @@ CREATE TABLE IF NOT EXISTS {target_table} (
     timezone_abbreviation VARCHAR,
     source_endpoint VARCHAR NOT NULL,
     model_requested VARCHAR NOT NULL,
-    forecast_hours INTEGER NOT NULL,
     precipitation DOUBLE,
     rain DOUBLE,
-    showers DOUBLE,
-    precipitation_probability DOUBLE,
     weather_code INTEGER,
+    soil_moisture_0_to_7cm DOUBLE,
+    soil_moisture_7_to_28cm DOUBLE,
     hourly_units_json VARCHAR NOT NULL,
     _source_file_path VARCHAR NOT NULL,
     _source_file_sha256 VARCHAR NOT NULL,
@@ -143,28 +146,50 @@ def _validated_name(value: str) -> str:
     return value
 
 
-def ensure_forecast_hourly_table(
+def _table_exists(
+    connection: duckdb.DuckDBPyConnection,
+    target_table: str,
+) -> bool:
+    parts = target_table.split(".")
+    if len(parts) != 3:
+        return False
+    catalog, schema, table = parts
+    return bool(
+        connection.execute(
+            """
+            SELECT count(*)
+            FROM information_schema.tables
+            WHERE table_catalog = ? AND table_schema = ? AND table_name = ?
+            """,
+            (catalog, schema, table),
+        ).fetchone()[0]
+    )
+
+
+def ensure_archive_hourly_table(
     connection: duckdb.DuckDBPyConnection,
     *,
     target_table: str = TARGET_TABLE,
 ) -> None:
-    """Create the explicit Bronze table without unsupported constraints."""
+    """Create the explicit Archive table and set its immutable year partition."""
     target_table = _validated_name(target_table)
+    existed = _table_exists(connection, target_table)
     connection.execute(TARGET_DDL.format(target_table=target_table))
-    connection.execute(
-        f"ALTER TABLE {target_table} "
-        "ADD COLUMN IF NOT EXISTS source_location_id INTEGER"
-    )
+    if not existed and len(target_table.split(".")) == 3:
+        connection.execute(
+            f"ALTER TABLE {target_table} "
+            "SET PARTITIONED BY (year(observed_time_utc))"
+        )
 
 
-def merge_forecast_hourly(
+def merge_archive_hourly(
     connection: duckdb.DuckDBPyConnection,
-    parsed: ForecastParseResult,
+    parsed: ArchiveParseResult,
     *,
     target_table: str = TARGET_TABLE,
     staging_view: str = STAGING_VIEW,
 ) -> MergeResult:
-    """Merge one parsed file atomically using its deterministic row IDs."""
+    """Upsert one source file atomically by model/ward/observed-hour key."""
     if parsed.row_count < 1:
         raise ValueError("Cannot merge an empty Arrow table")
     target_table = _validated_name(target_table)
@@ -173,7 +198,7 @@ def merge_forecast_hourly(
     try:
         connection.execute("BEGIN TRANSACTION")
         try:
-            ensure_forecast_hourly_table(connection, target_table=target_table)
+            ensure_archive_hourly_table(connection, target_table=target_table)
             matched = connection.execute(
                 f"""
                 SELECT count(*)
@@ -186,6 +211,7 @@ def merge_forecast_hourly(
                 MERGE INTO {target_table} AS target
                 USING {staging_view} AS source
                 ON target.bronze_row_id = source.bronze_row_id
+                WHEN MATCHED THEN UPDATE
                 WHEN NOT MATCHED THEN INSERT BY NAME
                 """
             )
@@ -211,8 +237,8 @@ def merge_forecast_hourly(
     )
 
 
-class ForecastHourlyLoader:
-    """Available-now loader that keeps PostgreSQL and Bronze commits ordered."""
+class ArchiveHourlyLoader:
+    """Available-now Archive loader with ordered Bronze/checkpoint commits."""
 
     def __init__(
         self,
@@ -261,12 +287,12 @@ class ForecastHourlyLoader:
                     expected_size=source.size_bytes,
                     expected_sha256=source.sha256,
                 )
-                parsed = parse_forecast_hourly(
+                parsed = parse_archive_hourly(
                     content,
                     source=source,
                     ingested_at_utc=self.clock(),
                 )
-                merged = merge_forecast_hourly(
+                merged = merge_archive_hourly(
                     self.bronze_connection,
                     parsed,
                     target_table=self.target_table,
@@ -278,7 +304,7 @@ class ForecastHourlyLoader:
                     rows_parsed=merged.rows_parsed,
                     rows_inserted=merged.rows_inserted,
                     rescued_rows=parsed.rescued_row_count,
-                    parser_version=PARSER_VERSION,
+                    parser_version=ARCHIVE_PARSER_VERSION,
                 )
                 committed_files += 1
                 rows_parsed += merged.rows_parsed
@@ -327,7 +353,7 @@ def _nonnegative_int(value: str) -> int:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--scope", default="production")
+    parser.add_argument("--scope", default="backfill")
     parser.add_argument("--limit", type=_positive_int)
     parser.add_argument("--lease-seconds", type=_positive_int)
     parser.add_argument("--max-retries", type=_nonnegative_int)
@@ -347,14 +373,12 @@ def main() -> None:
     bronze_connection = get_connection()
     try:
         ensure_ingestion_state(control_connection)
-        state = PostgresIngestionRepository(control_connection)
-        reader = VerifiedObjectReader(
-            get_minio_client(settings.minio),
-            settings.minio.bucket,
-        )
-        summary = ForecastHourlyLoader(
-            state=state,
-            reader=reader,
+        summary = ArchiveHourlyLoader(
+            state=PostgresIngestionRepository(control_connection),
+            reader=VerifiedObjectReader(
+                get_minio_client(settings.minio),
+                settings.minio.bucket,
+            ),
             bronze_connection=bronze_connection,
         ).load_available(
             scope=args.scope,
@@ -368,7 +392,7 @@ def main() -> None:
         control_connection.close()
 
     print(
-        f"Forecast Bronze load: claimed={summary.claimed_files}, "
+        f"Archive Bronze load: claimed={summary.claimed_files}, "
         f"committed={summary.committed_files}, rows={summary.rows_parsed}, "
         f"inserted={summary.rows_inserted}, rescued={summary.rescued_rows}, "
         f"failed={len(summary.failures)}"

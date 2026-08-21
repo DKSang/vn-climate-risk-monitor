@@ -581,11 +581,12 @@ is_calibrated
 - chưa có composite score hoặc xác suất ngập trong MVP;
 - KPI tính theo grid rồi mới projection sang phường;
 - mọi công thức và threshold đều có version.
+- historical product pin `ERA5`; H3 xác nhận đủ precipitation/rain/weather code
+  và soil moisture, trong khi ERA5-Land trả toàn null cho ba biến mưa/weather.
 
 Cần chốt trước khi triển khai Gold:
 
 - **K1:** định nghĩa định lượng cho “trên 100 mm/h kéo dài nhiều giờ”;
-- **K2:** historical product được pin cho baseline: ERA5 hay ERA5-Land;
 - **K3:** quy tắc event dùng 6 giờ khô có phù hợp với các trận mưa Hà Nội;
 - **K4:** có ingest ET/soil moisture ngay MVP hay chỉ ingest precipitation trước;
 - **K5:** nguồn nhãn sự kiện để hiệu chỉnh POD/FAR/CSI;

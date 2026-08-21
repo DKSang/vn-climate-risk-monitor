@@ -19,6 +19,7 @@ vn-climate-risk-monitor/
 │       ├── collectors/              # API → response JSON bất biến trên MinIO
 │       ├── loaders/                 # bronze/files → Bronze DuckLake table
 │       ├── pipelines/               # compose collect → drain loader
+│       ├── open_meteo/              # typed contracts, locations, source planners
 │       ├── observability.py         # health/metrics từ control plane
 │       ├── scheduling.py            # deterministic hourly logical slot
 │       └── state/                   # PostgreSQL schema/repository/checkpoint
@@ -71,6 +72,13 @@ không overwrite file nguồn.
 | Silver | Schema enforcement, type casting, validation, dedup, mapping, join |
 | Gold | Dimension/fact, rolling/forecast KPI, scenario và pressure feature |
 | Ingestion control | PostgreSQL run/file state, checksum, lease, parser version và lỗi |
+
+Control plane dùng `ClaimedObject` generic. `run_parameters` và
+`file_parameters` chỉ chứa immutable source context; Open-Meteo adapter chuyển
+chúng thành typed forecast hoặc archive parameters. Historical planner nhóm
+output theo năm để ước lượng, nhưng runtime dùng monthly logical run/request
+checkpoint; Bronze Parquet vẫn partition theo năm. Parser và Bronze table vẫn
+source-specific để tránh một generic parser đầy nhánh điều kiện.
 
 ## Quy ước đặt tên
 

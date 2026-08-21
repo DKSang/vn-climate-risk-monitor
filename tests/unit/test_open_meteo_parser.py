@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -9,18 +10,21 @@ from vn_climate_risk_monitor.ingestion.open_meteo import (
     ForecastParseError,
     parse_forecast_hourly,
 )
-from vn_climate_risk_monitor.ingestion.state import ClaimedFile
+from vn_climate_risk_monitor.ingestion.state import ClaimedObject
 
 
-def _source(*, ward_keys: tuple[int, ...] = (11, 22)) -> ClaimedFile:
+def _source(*, ward_keys: tuple[int, ...] = (11, 22)) -> ClaimedObject:
     timestamp = datetime(2026, 8, 21, 10, 15, tzinfo=UTC)
-    return ClaimedFile(
+    return ClaimedObject(
         file_id=UUID("00000000-0000-0000-0000-000000000001"),
         attempt_id=UUID("00000000-0000-0000-0000-000000000002"),
         logical_run_id=UUID("00000000-0000-0000-0000-000000000003"),
+        pipeline_name="open_meteo_forecast",
+        source_name="open_meteo",
+        dataset="forecast",
+        scope="test",
         object_key="bronze/files/open_meteo/forecast/response_000.json",
         batch_index=0,
-        ward_keys=ward_keys,
         size_bytes=100,
         sha256="a" * 64,
         content_type="application/json",
@@ -28,20 +32,24 @@ def _source(*, ward_keys: tuple[int, ...] = (11, 22)) -> ClaimedFile:
         scheduled_at_utc=timestamp,
         collection_started_at_utc=timestamp,
         collection_completed_at_utc=timestamp,
-        source_endpoint="https://api.open-meteo.test/v1/forecast",
-        model_requested="best_match",
-        forecast_hours=72,
-        hourly_variables=(
-            "precipitation",
-            "rain",
-            "showers",
-            "precipitation_probability",
-            "weather_code",
-        ),
+        source_uri="https://api.open-meteo.test/v1/forecast",
         collector_version="0.2.0",
-        request_contract_version=1,
-        expected_location_count=len(ward_keys),
-        received_location_count=len(ward_keys),
+        contract_version="1",
+        run_parameters={
+            "model": "best_match",
+            "forecast_hours": 72,
+            "hourly_variables": [
+                "precipitation",
+                "rain",
+                "showers",
+                "precipitation_probability",
+                "weather_code",
+            ],
+            "location_count": len(ward_keys),
+        },
+        file_parameters={"ward_keys": list(ward_keys)},
+        expected_item_count=len(ward_keys),
+        received_item_count=len(ward_keys),
     )
 
 
@@ -174,5 +182,16 @@ def test_parser_rejects_location_id_that_breaks_ordered_mapping() -> None:
         parse_forecast_hourly(
             json.dumps(payload).encode(),
             source=_source(),
+            ingested_at_utc=datetime(2026, 8, 21, 10, 20, tzinfo=UTC),
+        )
+
+
+def test_parser_rejects_generic_context_without_forecast_contract() -> None:
+    source = replace(_source(), file_parameters={"station_ids": ["HN001"]})
+
+    with pytest.raises(ForecastParseError, match="Invalid forecast control metadata"):
+        parse_forecast_hourly(
+            json.dumps(_location(latitude=21.1)).encode(),
+            source=source,
             ingested_at_utc=datetime(2026, 8, 21, 10, 20, tzinfo=UTC),
         )

@@ -1,31 +1,34 @@
-"""Collect immutable Open-Meteo forecast responses into Bronze files."""
+"""Collect one Open-Meteo Archive period into immutable Bronze source files."""
 
 from __future__ import annotations
 
 import argparse
+import calendar
+import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Protocol
 from uuid import UUID
 
 from requests import Session
 
 from vn_climate_risk_monitor.config import OpenMeteoSettings, load_settings
-from vn_climate_risk_monitor.ingestion.http import build_http_session
-from vn_climate_risk_monitor.ingestion.layout import BronzeFilesLayout
+from vn_climate_risk_monitor.ingestion.http import (
+    EffectiveCallPacer,
+    build_http_session,
+)
+from vn_climate_risk_monitor.ingestion.layout import BronzeBackfillFilesLayout
 from vn_climate_risk_monitor.ingestion.open_meteo import (
+    ARCHIVE_DATASET,
     COLLECTOR_VERSION,
-    FORECAST_DATASET,
-    FORECAST_HOURLY_VARIABLES,
     REQUEST_CONTRACT_VERSION,
     SOURCE_NAME,
-    ForecastFileParameters,
-    ForecastRequestContract,
-    ForecastRunParameters,
-    RequestedLocation,
+    ArchiveRequestTask,
+    ArchiveYearPlan,
     SourceObjectMetadata,
-    split_location_batches,
+    latest_complete_archive_date,
+    plan_archive_year,
 )
 from vn_climate_risk_monitor.ingestion.open_meteo.locations import (
     load_hanoi_locations,
@@ -34,14 +37,13 @@ from vn_climate_risk_monitor.ingestion.open_meteo.response import (
     received_location_count,
     response_attempt_count,
 )
-from vn_climate_risk_monitor.ingestion.scheduling import latest_hourly_schedule_slot
 from vn_climate_risk_monitor.ingestion.state import (
     PostgresIngestionRepository,
+    RunAlreadySucceededError,
     RunAttempt,
     RunStatus,
     connect_control_plane,
     ensure_ingestion_state,
-    logical_schedule_key,
 )
 from vn_climate_risk_monitor.lakehouse import get_connection
 from vn_climate_risk_monitor.storage import (
@@ -50,13 +52,11 @@ from vn_climate_risk_monitor.storage import (
     get_minio_client,
 )
 
-PIPELINE_NAME = "open_meteo_forecast"
-DATASET = FORECAST_DATASET
+PIPELINE_NAME = "open_meteo_archive"
+DATASET = ARCHIVE_DATASET
 
 
 class ObjectWriter(Protocol):
-    """Minimal write-once storage boundary required by the collector."""
-
     def write(
         self,
         object_key: str,
@@ -66,9 +66,11 @@ class ObjectWriter(Protocol):
     ) -> SourceObjectMetadata: ...
 
 
-class IngestionState(Protocol):
-    """Control-plane operations required by the collector."""
+class RequestPacer(Protocol):
+    def wait(self, call_units: int) -> float: ...
 
+
+class IngestionState(Protocol):
     def start_run(self, **values: object) -> RunAttempt: ...
 
     def effective_call_count(
@@ -113,14 +115,31 @@ class IngestionState(Protocol):
 
 
 @dataclass(frozen=True)
-class ForecastCollectionResult:
+class ArchiveCollectionResult:
     attempt: RunAttempt
-    run_prefix: str
+    year_prefix: str
     response_objects: tuple[SourceObjectMetadata, ...]
 
 
-class ForecastCollector:
-    """Sequential collector with PostgreSQL as the metadata source of truth."""
+def effective_call_units(
+    tasks: Sequence[ArchiveRequestTask],
+    *,
+    request_attempts: int = 1,
+) -> int:
+    """Conservatively round Open-Meteo's variable/time fractions once per plan."""
+    if request_attempts < 1:
+        raise ValueError("request_attempts must be positive")
+    units = 0.0
+    for task in tasks:
+        day_count = (task.window.end_date - task.window.start_date).days + 1
+        time_factor = max(1.0, day_count / 14)
+        variable_factor = max(1.0, len(task.hourly_variables) / 10)
+        units += len(task.locations) * time_factor * variable_factor
+    return math.ceil(units * request_attempts)
+
+
+class ArchiveCollector:
+    """Sequential period collector backed by the generic PostgreSQL ledger."""
 
     def __init__(
         self,
@@ -129,32 +148,41 @@ class ForecastCollector:
         session: Session,
         writer: ObjectWriter,
         state: IngestionState,
+        pacer: RequestPacer | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         if settings.concurrency != 1:
-            raise ValueError("Phase 2 collector supports concurrency=1 only")
+            raise ValueError("Archive collector supports concurrency=1 only")
         self.settings = settings
         self.session = session
         self.writer = writer
         self.state = state
+        self.pacer = pacer or EffectiveCallPacer(
+            calls_per_minute=settings.max_effective_calls_per_minute,
+            calls_per_hour=settings.max_effective_calls_per_hour,
+        )
         self.clock = clock or (lambda: datetime.now(UTC))
 
-    def collect(
+    def collect_year(
         self,
-        locations: Sequence[RequestedLocation],
+        year_plan: ArchiveYearPlan,
         *,
         scheduled_at_utc: datetime,
-        scope: str = "production",
-    ) -> ForecastCollectionResult:
+        scope: str = "backfill",
+    ) -> ArchiveCollectionResult:
         if scheduled_at_utc.tzinfo is None or scheduled_at_utc.utcoffset() is None:
             raise ValueError("scheduled_at_utc must be timezone-aware")
         if not scope.strip():
             raise ValueError("scope must not be empty")
+        if year_plan.model != self.settings.archive_model:
+            raise ValueError("year plan model does not match configured archive model")
+        if not year_plan.tasks:
+            raise ValueError("year plan must contain request tasks")
         scheduled_at_utc = scheduled_at_utc.astimezone(UTC)
-        batches = split_location_batches(locations, self.settings.location_batch_size)
         started_at_utc = self.clock()
         if started_at_utc.tzinfo is None or started_at_utc.utcoffset() is None:
             raise ValueError("collector clock must return timezone-aware timestamps")
+        started_at_utc = started_at_utc.astimezone(UTC)
         if started_at_utc < scheduled_at_utc:
             raise ValueError("collector cannot start before scheduled_at_utc")
 
@@ -163,56 +191,43 @@ class ForecastCollector:
             source_name=SOURCE_NAME,
             dataset=DATASET,
             scope=scope,
-            logical_key=logical_schedule_key(scheduled_at_utc),
+            logical_key=year_plan.logical_key,
             scheduled_at_utc=scheduled_at_utc,
             started_at_utc=started_at_utc,
-            expected_file_count=len(batches),
-            source_uri=self.settings.forecast_url,
+            expected_file_count=year_plan.expected_file_count,
+            source_uri=self.settings.archive_url,
             collector_version=COLLECTOR_VERSION,
             contract_version=str(REQUEST_CONTRACT_VERSION),
-            run_parameters=ForecastRunParameters(
-                model=self.settings.forecast_model,
-                forecast_hours=self.settings.forecast_hours,
-                hourly_variables=FORECAST_HOURLY_VARIABLES,
-                location_count=len(locations),
-            ).to_mapping(),
+            run_parameters=year_plan.run_parameters.to_mapping(),
             stale_after_seconds=self.settings.collector_stale_after_seconds,
         )
         run_name = (
-            f"forecast_{scheduled_at_utc:%Y%m%dt%H%M%Sz}_"
+            f"archive_{year_plan.year}_{year_plan.end_date:%Y%m%d}_"
             f"a{attempt.attempt_number}_{attempt.attempt_id.hex[:8]}"
         )
-        layout = BronzeFilesLayout("open_meteo", DATASET, "incremental")
-        run_prefix = layout.run_prefix(started_at_utc, run_name)
+        layout = BronzeBackfillFilesLayout("open_meteo", DATASET)
         response_objects: list[SourceObjectMetadata] = []
         active_file_id: UUID | None = None
 
         try:
-            for batch_index, batch_locations in enumerate(batches):
-                request = ForecastRequestContract(
-                    endpoint=self.settings.forecast_url,
-                    model=self.settings.forecast_model,
-                    forecast_hours=self.settings.forecast_hours,
-                    batch_index=batch_index,
-                    scheduled_at_utc=scheduled_at_utc,
+            for task in year_plan.tasks:
+                self.pacer.wait(effective_call_units((task,)))
+                request = task.request_contract(
+                    endpoint=self.settings.archive_url,
+                    model=self.settings.archive_model,
                     requested_at_utc=self.clock(),
-                    locations=batch_locations,
                 )
                 response_key = layout.object_key(
-                    started_at_utc,
+                    task.window.start_date,
                     run_name,
-                    f"response_{batch_index:03}.json",
+                    f"response_{task.location_batch_index:03}.json",
                 )
                 active_file_id = self.state.register_file(
                     attempt_id=attempt.attempt_id,
-                    batch_index=batch_index,
+                    batch_index=task.batch_index,
                     object_key=response_key,
-                    expected_item_count=len(batch_locations),
-                    file_parameters=ForecastFileParameters(
-                        ward_keys=tuple(
-                            location.ward_key for location in batch_locations
-                        )
-                    ).to_mapping(),
+                    expected_item_count=len(task.locations),
+                    file_parameters=task.file_parameters.to_mapping(),
                 )
                 response = self.session.get(
                     request.endpoint,
@@ -239,7 +254,7 @@ class ForecastCollector:
                     raise ValueError("Open-Meteo response Content-Type is not JSON")
                 received_count = received_location_count(
                     response.content,
-                    len(batch_locations),
+                    len(task.locations),
                 )
                 self.state.validate_file(
                     active_file_id,
@@ -259,9 +274,9 @@ class ForecastCollector:
                 logical_key=attempt.logical_key,
                 status=RunStatus.SUCCEEDED,
             )
-            return ForecastCollectionResult(
+            return ArchiveCollectionResult(
                 attempt=committed_attempt,
-                run_prefix=run_prefix,
+                year_prefix=layout.year_prefix(year_plan.year),
                 response_objects=tuple(response_objects),
             )
         except Exception as error:
@@ -283,44 +298,71 @@ class ForecastCollector:
             raise
 
 
-def parse_utc(value: str) -> datetime:
-    parsed = datetime.fromisoformat(value)
-    if parsed.tzinfo is None or parsed.utcoffset() is None:
-        raise argparse.ArgumentTypeError("scheduled-at must include a UTC offset")
-    return parsed.astimezone(UTC)
-
-
-def positive_int(value: str) -> int:
+def _positive_int(value: str) -> int:
     parsed = int(value)
     if parsed < 1:
         raise argparse.ArgumentTypeError("value must be positive")
     return parsed
 
 
+def _month(value: str) -> int:
+    parsed = int(value)
+    if not 1 <= parsed <= 12:
+        raise argparse.ArgumentTypeError("month must be between 1 and 12")
+    return parsed
+
+
+def _parse_utc(value: str) -> datetime:
+    parsed = datetime.fromisoformat(value)
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise argparse.ArgumentTypeError("scheduled-at must include a UTC offset")
+    return parsed.astimezone(UTC)
+
+
+def _source_period(year: int, month: int | None, available_through: date) -> tuple[date, date]:
+    if year > available_through.year:
+        raise ValueError(f"year {year} is later than available data")
+    if month is None:
+        start_date = date(year, 1, 1)
+        end_date = min(date(year, 12, 31), available_through)
+    else:
+        start_date = date(year, month, 1)
+        last_day = calendar.monthrange(year, month)[1]
+        end_date = min(date(year, month, last_day), available_through)
+    if end_date < start_date:
+        raise ValueError(f"source period starts after available date {available_through}")
+    return start_date, end_date
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--year", type=_positive_int, required=True)
+    parser.add_argument("--month", type=_month)
+    parser.add_argument("--limit", type=_positive_int)
+    parser.add_argument("--scheduled-at", type=_parse_utc)
     parser.add_argument(
         "--execute",
         action="store_true",
-        help="Call Open-Meteo and persist responses; default only prints the plan.",
-    )
-    parser.add_argument(
-        "--limit",
-        type=positive_int,
-        help="Use the first N approved locations for an explicit canary.",
-    )
-    parser.add_argument(
-        "--scheduled-at",
-        type=parse_utc,
-        help="Logical UTC schedule time; defaults to now.",
+        help="Call Archive API for this one period; default only prints the plan.",
     )
     args = parser.parse_args()
+    if args.execute and args.month is None:
+        parser.error(
+            "full-year source runs are disabled because a late HTTP failure would "
+            "replay completed months; use run-open-meteo-archive --year YYYY "
+            "--execute for monthly checkpoints"
+        )
     settings = load_settings()
     observed_at_utc = datetime.now(UTC)
-    scheduled_at_utc = args.scheduled_at or latest_hourly_schedule_slot(
-        observed_at_utc,
-        minute=settings.open_meteo.schedule_minute_utc,
-    )
+    available_through = latest_complete_archive_date(observed_at_utc.date())
+    try:
+        start_date, end_date = _source_period(
+            args.year,
+            args.month,
+            available_through,
+        )
+    except ValueError as error:
+        parser.error(str(error))
 
     connection = get_connection(attach_bronze=False, read_only=True)
     try:
@@ -329,44 +371,59 @@ def main() -> None:
         connection.close()
     if args.limit is not None:
         locations = locations[: args.limit]
-
-    batch_count = len(
-        split_location_batches(locations, settings.open_meteo.location_batch_size)
+    scope = f"canary_{len(locations)}" if args.limit is not None else "backfill"
+    plan = plan_archive_year(
+        locations,
+        start_date=start_date,
+        end_date=end_date,
+        model=settings.open_meteo.archive_model,
+        location_batch_size=settings.open_meteo.location_batch_size,
     )
-    scope = f"canary_{len(locations)}" if args.limit is not None else "production"
+    reserved_units = effective_call_units(
+        plan.tasks,
+        request_attempts=settings.open_meteo.max_attempts,
+    )
+    print(
+        "Archive collection plan: "
+        f"logical_key={plan.logical_key}, scope={scope}, locations={len(locations)}, "
+        f"files={plan.expected_file_count}, expected_rows={plan.expected_row_count}, "
+        f"worst_case_call_reserve={reserved_units}"
+    )
     if not args.execute:
-        print(
-            f"DRY RUN: {len(locations)} locations, {batch_count} batches, "
-            f"scope={scope}, model={settings.open_meteo.forecast_model}, "
-            f"forecast_hours={settings.open_meteo.forecast_hours}"
-        )
+        print("DRY RUN: pass --execute to collect this single period")
         return
 
     minio = get_minio_client(settings.minio)
     ensure_bucket(minio, settings.minio.bucket)
-    writer = ImmutableObjectWriter(minio, settings.minio.bucket)
     control_connection = connect_control_plane(settings.postgres)
     try:
         ensure_ingestion_state(control_connection)
-        state = PostgresIngestionRepository(control_connection)
         with build_http_session(
             max_attempts=settings.open_meteo.max_attempts
         ) as session:
-            result = ForecastCollector(
-                settings=settings.open_meteo,
-                session=session,
-                writer=writer,
-                state=state,
-            ).collect(
-                locations,
-                scheduled_at_utc=scheduled_at_utc,
-                scope=scope,
-            )
+            try:
+                result = ArchiveCollector(
+                    settings=settings.open_meteo,
+                    session=session,
+                    writer=ImmutableObjectWriter(minio, settings.minio.bucket),
+                    state=PostgresIngestionRepository(control_connection),
+                ).collect_year(
+                    plan,
+                    scheduled_at_utc=args.scheduled_at or observed_at_utc,
+                    scope=scope,
+                )
+            except RunAlreadySucceededError:
+                print(
+                    "Archive source collection already succeeded: "
+                    f"logical_key={plan.logical_key}, scope={scope}"
+                )
+                return
     finally:
         control_connection.close()
     print(
-        "Forecast source collection succeeded: "
-        f"attempt_id={result.attempt.attempt_id} prefix={result.run_prefix}"
+        "Archive source collection succeeded: "
+        f"attempt_id={result.attempt.attempt_id} prefix={result.year_prefix}, "
+        f"files={len(result.response_objects)}"
     )
 
 

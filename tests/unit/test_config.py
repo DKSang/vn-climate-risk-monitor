@@ -3,6 +3,32 @@ import pytest
 from vn_climate_risk_monitor.config import load_settings
 
 
+def test_default_archive_model_is_era5(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("OPEN_METEO_ARCHIVE_MODEL", raising=False)
+    load_settings.cache_clear()
+
+    assert load_settings().open_meteo.archive_model == "era5"
+
+    load_settings.cache_clear()
+
+
+def test_default_open_meteo_rate_budgets_keep_minute_and_hour_headroom(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for name in (
+        "OPEN_METEO_MAX_EFFECTIVE_CALLS_PER_MINUTE",
+        "OPEN_METEO_MAX_EFFECTIVE_CALLS_PER_HOUR",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    load_settings.cache_clear()
+
+    settings = load_settings().open_meteo
+
+    assert settings.max_effective_calls_per_minute == 500
+    assert settings.max_effective_calls_per_hour == 4500
+    load_settings.cache_clear()
+
+
 def test_open_meteo_settings_are_loaded_from_environment(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -16,7 +42,8 @@ def test_open_meteo_settings_are_loaded_from_environment(
         "OPEN_METEO_CONCURRENCY": "1",
         "OPEN_METEO_REQUEST_TIMEOUT_SECONDS": "60",
         "OPEN_METEO_MAX_ATTEMPTS": "5",
-        "OPEN_METEO_MAX_EFFECTIVE_CALLS_PER_DAY": "1000",
+        "OPEN_METEO_MAX_EFFECTIVE_CALLS_PER_MINUTE": "500",
+        "OPEN_METEO_MAX_EFFECTIVE_CALLS_PER_HOUR": "4500",
         "OPEN_METEO_SCHEDULE_MINUTE_UTC": "15",
         "OPEN_METEO_COLLECTOR_STALE_AFTER_SECONDS": "1800",
         "OPEN_METEO_LOADER_BATCH_SIZE": "10",
@@ -37,7 +64,8 @@ def test_open_meteo_settings_are_loaded_from_environment(
     assert settings.location_batch_size == 25
     assert settings.concurrency == 1
     assert settings.max_attempts == 5
-    assert settings.max_effective_calls_per_day == 1000
+    assert settings.max_effective_calls_per_minute == 500
+    assert settings.max_effective_calls_per_hour == 4500
     assert settings.schedule_minute_utc == 15
     assert settings.collector_stale_after_seconds == 1800
     assert settings.loader_batch_size == 10

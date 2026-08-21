@@ -1,7 +1,7 @@
 """PostgreSQL control plane for ingestion runs and file checkpoints."""
 
 from vn_climate_risk_monitor.ingestion.state.models import (
-    ClaimedFile,
+    ClaimedObject,
     FileStatus,
     PipelineHealth,
     PipelineMetrics,
@@ -21,7 +21,7 @@ from vn_climate_risk_monitor.ingestion.state.repository import (
 from vn_climate_risk_monitor.ingestion.state.schema import ensure_ingestion_state
 
 __all__ = [
-    "ClaimedFile",
+    "ClaimedObject",
     "FileStatus",
     "PipelineHealth",
     "PipelineMetrics",

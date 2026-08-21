@@ -22,6 +22,43 @@ class RollbackIntegrationCheck(Exception):
     pass
 
 
+def _run_values(
+    pipeline_name: str,
+    timestamp: datetime,
+    *,
+    started_at_utc: datetime | None = None,
+) -> dict[str, object]:
+    return {
+        "pipeline_name": pipeline_name,
+        "source_name": "integration_source",
+        "dataset": "events",
+        "scope": "test",
+        "logical_key": timestamp.isoformat(),
+        "scheduled_at_utc": timestamp,
+        "started_at_utc": started_at_utc or timestamp,
+        "expected_file_count": 1,
+        "source_uri": "https://example.test",
+        "collector_version": "integration",
+        "contract_version": "1",
+        "run_parameters": {"test_kind": "repository"},
+    }
+
+
+def _register_file(
+    repository: PostgresIngestionRepository,
+    *,
+    attempt_id: object,
+    object_key: str,
+):
+    return repository.register_file(
+        attempt_id=attempt_id,
+        batch_index=0,
+        object_key=object_key,
+        expected_item_count=1,
+        file_parameters={"entity_keys": [1]},
+    )
+
+
 def test_repository_run_claim_retry_and_commit_workflow() -> None:
     connection = connect_control_plane()
     ensure_ingestion_state(connection)
@@ -33,28 +70,12 @@ def test_repository_run_claim_retry_and_commit_workflow() -> None:
     try:
         try:
             with connection.transaction():
-                run = repository.start_run(
-                    pipeline_name=pipeline_name,
-                    dataset="forecast",
-                    scope="test",
-                    logical_key=timestamp.isoformat(),
-                    scheduled_at_utc=timestamp,
-                    started_at_utc=timestamp,
-                    batch_count=1,
-                    location_count=1,
-                    source_endpoint="https://example.test",
-                    model_requested="best_match",
-                    forecast_hours=72,
-                    hourly_variables=["precipitation"],
-                    collector_version="integration",
-                    request_contract_version=1,
-                )
+                run = repository.start_run(**_run_values(pipeline_name, timestamp))
                 object_key = f"bronze/files/integration/{run.attempt_id}/response.json"
-                file_id = repository.register_file(
+                file_id = _register_file(
+                    repository,
                     attempt_id=run.attempt_id,
-                    batch_index=0,
                     object_key=object_key,
-                    ward_keys=[1],
                 )
                 repository.record_file(
                     file_id=file_id,
@@ -67,30 +88,15 @@ def test_repository_run_claim_retry_and_commit_workflow() -> None:
                     http_status=200,
                     request_attempt_count=1,
                 )
-                repository.validate_file(file_id, received_location_count=1)
+                repository.validate_file(file_id, received_item_count=1)
                 repository.succeed_run(run.attempt_id, completed_at_utc=timestamp)
 
                 with pytest.raises(StateConflictError, match="already succeeded"):
-                    repository.start_run(
-                        pipeline_name=pipeline_name,
-                        dataset="forecast",
-                        scope="test",
-                        logical_key=timestamp.isoformat(),
-                        scheduled_at_utc=timestamp,
-                        started_at_utc=timestamp,
-                        batch_count=1,
-                        location_count=1,
-                        source_endpoint="https://example.test",
-                        model_requested="best_match",
-                        forecast_hours=72,
-                        hourly_variables=["precipitation"],
-                        collector_version="integration",
-                        request_contract_version=1,
-                    )
+                    repository.start_run(**_run_values(pipeline_name, timestamp))
 
                 assert not repository.claim_files(
                     pipeline_name=pipeline_name,
-                    dataset="forecast",
+                    dataset="events",
                     scope="production",
                     worker_id="worker-1",
                     limit=1,
@@ -99,7 +105,7 @@ def test_repository_run_claim_retry_and_commit_workflow() -> None:
                 )
                 claimed = repository.claim_files(
                     pipeline_name=pipeline_name,
-                    dataset="forecast",
+                    dataset="events",
                     scope="test",
                     worker_id="worker-1",
                     limit=1,
@@ -114,7 +120,7 @@ def test_repository_run_claim_retry_and_commit_workflow() -> None:
                 )
                 retried = repository.claim_files(
                     pipeline_name=pipeline_name,
-                    dataset="forecast",
+                    dataset="events",
                     scope="test",
                     worker_id="worker-2",
                     limit=1,
@@ -138,7 +144,7 @@ def test_repository_run_claim_retry_and_commit_workflow() -> None:
                 assert status == "COMMITTED"
                 metrics = repository.pipeline_metrics(
                     pipeline_name=pipeline_name,
-                    dataset="forecast",
+                    dataset="events",
                     scope="test",
                     max_retries=2,
                     observed_at_utc=timestamp,
@@ -170,20 +176,11 @@ def test_repository_recovers_stale_collector_and_expired_file_lease() -> None:
 
     def start(started_at: datetime):
         return repository.start_run(
-            pipeline_name=pipeline_name,
-            dataset="forecast",
-            scope="test",
-            logical_key=timestamp.isoformat(),
-            scheduled_at_utc=timestamp,
-            started_at_utc=started_at,
-            batch_count=1,
-            location_count=1,
-            source_endpoint="https://example.test",
-            model_requested="best_match",
-            forecast_hours=72,
-            hourly_variables=["precipitation"],
-            collector_version="integration",
-            request_contract_version=1,
+            **_run_values(
+                pipeline_name,
+                timestamp,
+                started_at_utc=started_at,
+            ),
             stale_after_seconds=60,
         )
 
@@ -200,11 +197,10 @@ def test_repository_recovers_stale_collector_and_expired_file_lease() -> None:
                 assert stale_status == "FAILED"
 
                 object_key = f"bronze/files/recovery/{recovered.attempt_id}.json"
-                file_id = repository.register_file(
+                file_id = _register_file(
+                    repository,
                     attempt_id=recovered.attempt_id,
-                    batch_index=0,
                     object_key=object_key,
-                    ward_keys=[1],
                 )
                 repository.record_file(
                     file_id=file_id,
@@ -217,11 +213,11 @@ def test_repository_recovers_stale_collector_and_expired_file_lease() -> None:
                     http_status=200,
                     request_attempt_count=1,
                 )
-                repository.validate_file(file_id, received_location_count=1)
+                repository.validate_file(file_id, received_item_count=1)
                 repository.succeed_run(recovered.attempt_id, completed_at_utc=timestamp)
                 first_claim = repository.claim_files(
                     pipeline_name=pipeline_name,
-                    dataset="forecast",
+                    dataset="events",
                     scope="test",
                     worker_id="dead-worker",
                     limit=1,
@@ -239,7 +235,7 @@ def test_repository_recovers_stale_collector_and_expired_file_lease() -> None:
                 )
                 reclaimed = repository.claim_files(
                     pipeline_name=pipeline_name,
-                    dataset="forecast",
+                    dataset="events",
                     scope="test",
                     worker_id="recovery-worker",
                     limit=1,
@@ -262,22 +258,7 @@ def test_control_plane_read_does_not_rollback_later_checkpoints_on_close() -> No
     repository = PostgresIngestionRepository(connection)
     pipeline_name = f"transaction_{uuid4().hex}"
     timestamp = datetime.now(UTC).replace(microsecond=0)
-    run = repository.start_run(
-        pipeline_name=pipeline_name,
-        dataset="forecast",
-        scope="test",
-        logical_key=timestamp.isoformat(),
-        scheduled_at_utc=timestamp,
-        started_at_utc=timestamp,
-        batch_count=1,
-        location_count=1,
-        source_endpoint="https://example.test",
-        model_requested="best_match",
-        forecast_hours=72,
-        hourly_variables=["precipitation"],
-        collector_version="integration",
-        request_contract_version=1,
-    )
+    run = repository.start_run(**_run_values(pipeline_name, timestamp))
     try:
         assert (
             repository.effective_call_count(
@@ -287,11 +268,10 @@ def test_control_plane_read_does_not_rollback_later_checkpoints_on_close() -> No
             == 0
         )
         object_key = f"bronze/files/transaction/{run.attempt_id}.json"
-        file_id = repository.register_file(
+        file_id = _register_file(
+            repository,
             attempt_id=run.attempt_id,
-            batch_index=0,
             object_key=object_key,
-            ward_keys=[1],
         )
         repository.record_file(
             file_id=file_id,
@@ -304,7 +284,7 @@ def test_control_plane_read_does_not_rollback_later_checkpoints_on_close() -> No
             http_status=200,
             request_attempt_count=1,
         )
-        repository.validate_file(file_id, received_location_count=1)
+        repository.validate_file(file_id, received_item_count=1)
         repository.succeed_run(run.attempt_id, completed_at_utc=timestamp)
         connection.close()
 

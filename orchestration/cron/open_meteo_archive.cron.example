@@ -1,0 +1,7 @@
+# Replace the project path before installing. Both jobs share a non-blocking
+# single-node lock; logical keys make scheduler retries idempotent.
+35 2 * * * /usr/bin/flock -n /tmp/vn-climate-archive.lock -c 'cd /path/to/vn-climate-risk-monitor && /usr/bin/env uv run run-open-meteo-archive --tail --execute' >> /path/to/vn-climate-risk-monitor/logs/open_meteo_archive.log 2>&1
+
+# Backfill at most one not-yet-succeeded month. Keep disabled while the daily
+# free-tier budget is needed by other pipelines.
+# 5 3 * * * /usr/bin/flock -n /tmp/vn-climate-archive.lock -c 'cd /path/to/vn-climate-risk-monitor && /usr/bin/env uv run run-open-meteo-archive --execute --max-periods 1' >> /path/to/vn-climate-risk-monitor/logs/open_meteo_archive.log 2>&1

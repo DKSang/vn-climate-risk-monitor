@@ -34,6 +34,11 @@ def test_ingestion_state_schema_is_idempotent_and_postgres_native() -> None:
     assert "ingestion.ingestion_runs" in ddl
     assert "ingestion.ingestion_files" in ddl
     assert "ingestion_one_running_attempt" in ddl
+    assert "source_name TEXT NOT NULL" in ddl
+    assert "run_parameters JSONB NOT NULL" in ddl
+    assert "file_parameters JSONB NOT NULL" in ddl
+    assert "ward_keys" not in ddl
+    assert "model_requested" not in ddl
     assert "CHECK (status IN ('PENDING', 'PROCESSING', 'COMMITTED', 'FAILED'))" in ddl
     assert connection.commit_count == 2
 
