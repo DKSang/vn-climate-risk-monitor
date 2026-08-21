@@ -35,16 +35,19 @@ Docker Compose (local, 0đ)
 
 ```
 ┌─ NGUỒN ────────────────────────────────────────────────────────┐
-│  Postgres public.*          MinIO raw/*.csv       Open-Meteo    │
-│  (danh mục hành chính)      (toạ độ centroid)     (CHƯA LÀM)    │
-└──────────┬────────────────────────┬────────────────────────────┘
-           │  ATTACH postgres        │  read_csv_auto('s3://...')
-           │  (read_only)            │
-           └───────────┬─────────────┘
-                       │   dbt + DuckDB
-        ┌──────────────▼──────────────────────────────────────┐
+│  Postgres public.*        seeds/*.csv           Open-Meteo      │
+│  (danh mục hành chính)    (toạ độ centroid,     (CHƯA LÀM)      │
+│                            version-control)                     │
+└──────────┬──────────────────────┬──────────────────────────────┘
+           │  ATTACH postgres      │  dbt seed
+           │  (read_only)          │  -> seed.ward_coordinates_seed
+           └──────────┬────────────┘
+                      │   dbt + DuckDB
+        ┌─────────────▼───────────────────────────────────────┐
         │  DuckLake  (catalog: Postgres · data: MinIO Parquet) │
         │                                                       │
+        │  seed.*            input artifact, ngoài medallion    │
+        │        ↓                                              │
         │  bronze.*_raw      as-is, cấm mọi biến đổi           │
         │        ↓                                              │
         │  silver.*_cleaned  làm sạch, ép kiểu, dedup, JOIN     │
@@ -55,6 +58,9 @@ Docker Compose (local, 0đ)
                        ▼
               Serving / Dashboard  (Bước 8, chưa làm)
 ```
+
+**Lưu ý về schema `seed`:** dbt seed là *input artifact*, cùng vai trò với Postgres nguồn —
+không phải một lớp của medallion. Đặt ở schema riêng để `bronze` chỉ chứa đúng 5 bảng `*_raw`.
 
 ## 4. Chuẩn medallion — bám tài liệu Microsoft
 
@@ -97,6 +103,7 @@ là chuẩn Kimball, bổ sung chứ không mâu thuẫn.
 
 | Bảng | Dòng | Vai trò |
 |---|---|---|
+| `seed.ward_coordinates_seed` | 3.321 | Input artifact — CSV toạ độ, version-control trong git |
 | `bronze.provinces_raw` | 34 | 34 tỉnh/thành sau sáp nhập 2025 |
 | `bronze.wards_raw` | 3.321 | Danh mục phường/xã GSO toàn quốc |
 | `bronze.administrative_units_raw` | 5 | Loại đơn vị hành chính |
@@ -107,7 +114,7 @@ là chuẩn Kimball, bổ sung chứ không mâu thuẫn.
 | `silver.ward_locations` | 3.321 | **Ward master toàn quốc** — đã JOIN, chưa aggregate |
 | `gold.dim_hanoi_ward` | **126** | Chiều phường/xã Hà Nội (NQ 1656/NQ-UBTVQH15) |
 
-`dbt build` hiện: **40 PASS / 0 ERROR** (6 table model, 3 view model, 29 test, 2 hook).
+`dbt build` hiện: **49 PASS / 0 ERROR** (1 seed, 6 table model, 3 view model, 37 test, 2 hook).
 
 ## 6. Quyết định kiến trúc (ADR)
 
@@ -183,6 +190,37 @@ không phải rác. Khi cần squash sạch: `make clean-lake` (mất time-trave
 `administrative_units_raw` (5 dòng) và `administrative_regions_raw` (8 dòng) **không có file
 Parquet nào** trên MinIO nhưng đọc bình thường — DuckLake inline dữ liệu nhỏ thẳng vào catalog.
 Không phải lỗi. Cần biết điều này khi đối chiếu danh sách file với danh sách bảng.
+
+### ADR-6 — CSV toạ độ chuyển từ MinIO sang dbt seed
+
+**Trước:** `read_csv_auto('s3://vn-climate/raw/.../dim_location.csv')` qua `meta.external_location`.
+**Sau:** `transform/seeds/ward_coordinates_seed.csv` + `{{ ref('ward_coordinates_seed') }}`.
+
+**Lý do:** file tĩnh 3.321 dòng / 393 KiB, chỉ đổi khi có nghị quyết sắp xếp hành chính mới —
+đúng loại dữ liệu mà dbt khuyến nghị dùng seed. Bỏ được phụ thuộc MinIO cho một file cấu hình,
+và có version control trong git (biết ai đổi gì, khi nào).
+
+**Lợi ích ngoài dự kiến — sửa được một lỗi âm thầm:**
+
+CSV gốc lưu mã hành chính **đã zero-pad**: `province_code = '01'`, `commune_code = '00004'`.
+Nhưng `read_csv_auto()` suy kiểu chúng thành **BIGINT** → `1`, `4` — **mất số 0 đầu**. Đó chính là
+lý do `silver.ward_coordinates_cleaned` phải `LPAD(CAST(commune_code AS VARCHAR), 5, '0')` để
+join được với danh mục GSO (vốn lưu VARCHAR đã pad).
+
+Seed cho phép khai báo `column_types` trong `dbt_project.yml`, ép VARCHAR → bronze giữ **đúng
+nguyên bản nguồn**, đúng tinh thần "as-is" của lớp bronze. Hack `LPAD` ở silver đã gỡ bỏ.
+
+**Bảo vệ hồi quy:** test `assert_seed_codes_zero_padded` fail nếu `province_code` khác 2 ký tự
+hoặc `commune_code` khác 5 ký tự — chặn trường hợp ai đó bỏ `column_types` và pipeline âm thầm
+sinh join hỏng.
+
+**Đánh đổi đã chấp nhận:** seed materialize thành bảng riêng (111 KiB), rồi
+`bronze.ward_coordinates_raw` copy lại lần nữa (111 KiB) chỉ để thêm 2 cột provenance.
+Trùng lặp ~111 KiB. Chấp nhận vì giữ được `bronze` nhất quán 5 bảng `*_raw` cùng dạng, và dung
+lượng không đáng kể. Nếu sau này khó chịu: đổi `bronze.ward_coordinates_raw` sang `view`.
+
+**Giới hạn:** seed chỉ hợp với file nhỏ, tĩnh. **Không dùng cho dữ liệu Open-Meteo** — đó là dữ
+liệu lớn, thay đổi liên tục, phải đi qua ingest thật (ADR-1).
 
 ## 7. Data quality — cổng chặn
 

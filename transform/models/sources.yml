@@ -18,12 +18,7 @@ sources:
       - name: administrative_regions
         description: "Vùng địa lý hành chính"
 
-  # ── Nguồn 2: CSV thô trên MinIO ─────────────────────────────────────────────
-  # Không phải bảng — dbt đọc trực tiếp bằng read_csv_auto().
-  - name: raw_files
-    description: "File thô đã land trên MinIO (s3://vn-climate/raw/...)"
-    meta:
-      external_location: "read_csv_auto('s3://vn-climate/raw/geography/crawl/coordinates_locations/full/2026/08/20/dim_location.csv')"
-    tables:
-      - name: dim_location
-        description: "Toạ độ centroid 3.321 phường/xã (lat, lon, region, climate_zone)"
+  # ── Nguồn 2 (ĐÃ BỎ): CSV trên MinIO ─────────────────────────────────────────
+  # Toạ độ centroid phường/xã trước đây đọc từ MinIO bằng read_csv_auto().
+  # Nay chuyển thành dbt seed: transform/seeds/ward_coordinates_seed.csv
+  # Lý do và đánh đổi: xem docs/03-architecture.md ADR-6.

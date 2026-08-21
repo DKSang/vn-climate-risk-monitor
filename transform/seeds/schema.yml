@@ -1,0 +1,23 @@
+version: 2
+
+seeds:
+  - name: ward_coordinates_seed
+    description: >
+      Toạ độ centroid 3.321 phường/xã Việt Nam sau sắp xếp 2025, kèm vùng địa lý
+      và đới khí hậu. File tĩnh, version-control cùng code, chỉ đổi khi có nghị
+      quyết sắp xếp đơn vị hành chính mới.
+      Zero-padding của mã hành chính được bảo vệ bởi test assert_seed_codes_zero_padded.
+    columns:
+      - name: location_key
+        description: "Khoá thay thế, duy nhất trên toàn file"
+        tests: [unique, not_null]
+      - name: province_code
+        description: "Mã tỉnh 2 ký tự, ĐÃ zero-pad ('01' = Hà Nội)"
+        tests: [not_null]
+      - name: commune_code
+        description: "Mã phường/xã 5 ký tự, ĐÃ zero-pad ('00004')"
+        tests: [unique, not_null]
+      - name: latitude
+        tests: [not_null]
+      - name: longitude
+        tests: [not_null]

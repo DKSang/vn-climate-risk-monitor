@@ -1,4 +1,4 @@
-.PHONY: bootstrap bootstrap-env up down logs ingest-provinces dbt dbt-test transform dbt-docs lint
+.PHONY: bootstrap bootstrap-env up down logs ingest-provinces seed dbt dbt-test transform dbt-docs lint
 
 # ==== Setup ====
 bootstrap-env:
@@ -25,6 +25,9 @@ ingest-provinces:
 
 # ==== Transform (dbt + DuckDB + DuckLake) ====
 # dbt project ở transform/, không phải transform/dbt/
+seed:
+	cd transform && uv run dbt seed --profiles-dir .
+
 dbt:
 	cd transform && uv run dbt run --profiles-dir .
 
