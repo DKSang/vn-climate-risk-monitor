@@ -85,6 +85,11 @@ scenario này là cấp rủi ro pháp lý hoặc xác suất ngập. Điều ki
 2. Tải 126 file GeoJSON từ S13, tính centroid, ghim version.
 3. Viết hàm gán phường-xã → ô lưới Open-Meteo gần nhất (point trùng ô nào thì nhận ô đó).
 
+> **Trạng thái tư liệu (2026-08-22):** centroid đã vào pipeline qua dbt seed
+> `transform/seeds/ward_coordinates_seed.csv`. Còn `reference/s13_wards/*.geojson`
+> và `reference/hanoi_ward_centroids.csv` là **tư liệu gốc chưa được model/script
+> nào tiêu thụ** — giữ làm bằng chứng nguồn, đừng hiểu nhầm là đang chạy.
+
 ## 4. Đã loại khỏi phạm vi (giữ lại ghi chú để không điều tra lại)
 
 | Nguồn | Lý do loại |

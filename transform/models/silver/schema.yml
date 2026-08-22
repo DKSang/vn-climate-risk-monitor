@@ -50,3 +50,35 @@ models:
       - name: has_gso_match
         description: "FALSE ở 2 dòng lệch mã giữa 2 nguồn (Ba Chẽ, Ia Mơ)"
         tests: [not_null]
+
+  # ── THỬ NGHIỆM: contract enforced (thứ Soda KHÔNG có) ─────────────────────
+  # dbt kiểm tra tên cột + KIỂU dữ liệu TRƯỚC khi ghi. Sai kiểu -> build fail,
+  # bảng không bị ghi đè bằng dữ liệu sai schema.
+  - name: forecast_hourly
+    description: >
+      SILVER — dự báo theo giờ, đã dedup theo (ô lưới, giờ hợp lệ).
+    config:
+      contract:
+        enforced: true
+    columns:
+      - name: grid_latitude
+        data_type: DOUBLE
+        constraints: [{type: not_null}]
+      - name: grid_longitude
+        data_type: DOUBLE
+        constraints: [{type: not_null}]
+      - name: valid_time_utc
+        data_type: TIMESTAMP WITH TIME ZONE
+        constraints: [{type: not_null}]
+      - name: precipitation_mm
+        data_type: DOUBLE
+      - name: rain_mm
+        data_type: DOUBLE
+      - name: showers_mm
+        data_type: DOUBLE
+      - name: precipitation_probability_pct
+        data_type: INTEGER
+      - name: weather_code
+        data_type: INTEGER
+      - name: _ingested_at
+        data_type: TIMESTAMP WITH TIME ZONE

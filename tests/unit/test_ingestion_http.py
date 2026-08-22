@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import pytest
 from urllib3.util.retry import Retry
 
-from vn_climate_risk_monitor.ingestion.http import (
+from autoloader.http import (
     RETRYABLE_STATUS_CODES,
     EffectiveCallPacer,
     RetryWith429Cooldown,

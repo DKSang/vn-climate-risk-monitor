@@ -1,145 +1,171 @@
-# Runbook ingestion Open-Meteo
+# Runbook — Ingestion
 
-**Phạm vi:** hourly forecast + historical Archive · single-node · cron + Python
-· 2026-08-21
+**Cập nhật 2026-08-21** sau khi gộp code về package `autoloader`. Mọi lệnh dưới
+đây đã chạy thật trên máy, không phải chép từ thiết kế.
 
-Historical Archive đã có monthly checkpoint, Bronze year partition và cron
-template riêng. Tài liệu chi tiết:
-[04c-open-meteo-archive.md](04c-open-meteo-archive.md).
+---
 
-```bash
-make run-historical-backfill
-make run-historical-tail
+## Kiến trúc hai bước, cố ý tách rời
+
+```
+1. fetch   Python gọi Open-Meteo, ghi JSON as-is lên MinIO
+              bronze/files/open_meteo/<dataset>/...
+2. load    autoloader liệt kê MinIO, nạp file MỚI vào bronze bằng SQL
+              bronze_store.tables.open_meteo_*
 ```
 
-Mỗi backfill invocation mặc định chỉ admit một period mới. Không chạy collector
-cấp thấp cho cả năm; pipeline tự chia năm thành monthly logical run để lỗi
-`429` không replay các tháng đã xong.
+Tách ra vì: lỗi mạng ở bước 1 không làm mất dữ liệu đã tải; bước 2 chạy lại bao
+nhiêu lần cũng an toàn (exactly-once theo object key trong checkpoint Postgres).
 
-## Chạy thủ công
+Bước 2 **không quan tâm ai ghi file** — nó dùng directory listing. File do bước 1
+ghi dở rồi tiến trình chết vẫn được nhặt ở lần chạy sau.
 
-```bash
-make up
-make bootstrap
-make run-weather-plan
-make run-weather
-make weather-healthcheck
-```
-
-`run-weather-plan` chỉ đọc Gold dimension và in logical schedule slot. Lệnh
-`run-weather` dùng slot gần nhất tại phút 15 UTC, collect đủ 126 location rồi
-drain loader. Chạy lại trong cùng slot là idempotent.
-
-Canary tách checkpoint khỏi production:
+## Lệnh hằng ngày
 
 ```bash
-make run-weather-canary
-uv run observe-open-meteo-ingestion --scope canary_1
+make fetch-forecast EXEC=1              # dự báo cho slot giờ hiện tại
+make load                               # nạp mọi nguồn có file mới
+make quality                            # kiểm tra bronze (exit 1 nếu fail)
+make transform                          # dbt: silver + gold
 ```
 
-## Lịch chạy zero-cost
+Bỏ `EXEC=1` thì chỉ in kế hoạch, không gọi API. Luôn chạy thử trước.
 
-Không cần Airflow cho một pipeline hourly. Cài cron template sau khi thay đường
-dẫn tuyệt đối:
+## Backfill lịch sử
+
+ERA5 từ 2000-01 đến nay là **~320 tháng**, mỗi tháng **6 request** (126 phường ÷
+25 phường/request) → **~1.920 request**. Open-Meteo free tier giới hạn theo phút
+và giờ, `EffectiveCallPacer` tự giãn nhịp nên không cần tự sleep.
+
+Chạy **từng năm** để không chiếm hết hạn mức trong ngày:
 
 ```bash
-crontab -e
-# copy orchestration/cron/open_meteo_forecast.cron.example
+# 1. Xem kế hoạch trước
+make fetch-archive START=2002-01-01 END=2002-12-01
+
+# 2. Chạy thật (72 request cho 12 tháng)
+make fetch-archive EXEC=1 START=2002-01-01 END=2002-12-01
+
+# 3. Nạp vào bronze
+make load SOURCE=open_meteo_archive
 ```
 
-Cron gọi `scripts/run_weather_pipeline.sh`; script đổi về project directory và
-dùng `flock --nonblock` trên `/tmp/vn-climate-risk-monitor-weather.lock` để từ
-chối invocation chạy chồng.
+`fetch` **tự bỏ qua từng file đã có** (không bỏ cả tháng) — chạy lại an toàn,
+không tốn request, và crash giữa chừng tháng rồi chạy lại sẽ đi tiếp phần thiếu.
+Muốn tải đè thì thêm `--overwrite` (gọi thẳng `uv run fetch-open-meteo`).
 
-## Health và metrics
+Kiểm tra tiến độ:
 
 ```bash
-make weather-status
-uv run observe-open-meteo-ingestion --scope production --json
-uv run observe-ingestion --pipeline-name open_meteo_forecast \
-  --dataset forecast --scope production --json
-make weather-healthcheck
+docker run --rm --network host --entrypoint sh minio/mc -c "
+mc alias set m http://127.0.0.1:9000 minioadmin minioadmin >/dev/null
+mc ls -r m/vn-climate/bronze/files/open_meteo/historical_weather_hourly/" \
+  | grep -o 'year=[0-9]*/month=[0-9]*' | sort -u | wc -l
 ```
 
-| Health | Điều kiện chính | Hành động |
-|---|---|---|
-| `HEALTHY` | latest success không quá 120 phút, không backlog/error | không cần can thiệp |
-| `DEGRADED` | chưa có success, stale, hoặc còn pending/processing/failed file | kiểm tra scheduler và chạy lại pipeline |
-| `CRITICAL` | latest run failed hoặc file hết retry | đọc `error_type/error_message`, sửa nguyên nhân rồi retry |
+## Đặt lịch
 
-Metrics 24 giờ gồm số run success/failed, file committed, rows parsed/inserted và
-rescued rows. Đây là query trực tiếp PostgreSQL, không có metrics state thứ hai.
+Mẫu cron ở `orchestration/cron/*.cron.example`. Cả hai job dùng **chung một
+`flock`** vì cùng tiêu vào một hạn mức rate limit của Open-Meteo.
 
-## Recovery
+Backfill **không đặt lịch** — chạy tay theo từng năm như trên.
 
-### Collector bị dừng giữa run
+## Xử lý sự cố
 
-Attempt `RUNNING` mới hơn 1.800 giây được coi là đang hoạt động và invocation
-trùng slot thất bại. Sau timeout, lần chạy kế tiếp tự đóng attempt cũ bằng
-`CollectorTimeout`, tạo attempt number mới và object prefix mới.
+### Một file JSON hỏng
 
-### Loader chết sau khi claim
+Không chặn file khác. Engine chạy lại từng file để cô lập thủ phạm; file lành
+vào bảng bình thường, file hỏng bị đánh `FAILED` và retry tối đa `max_retries`
+(mặc định 3) rồi bị loại khỏi hàng đợi.
 
-File ở `PROCESSING` đến khi lease 300 giây hết hạn. Lần loader kế tiếp chuyển nó
-về `FAILED`, tăng `retry_count`, xác minh lại checksum và `MERGE` deterministic.
-
-### Bronze commit nhưng PostgreSQL checkpoint chưa commit
-
-Chạy lại pipeline. `bronze_row_id` giữ nguyên theo attempt/file/location/hour;
-`MERGE` trả `rows_inserted=0`, sau đó checkpoint chuyển `COMMITTED`.
-
-### File hết retry
-
-Không reset hàng loạt. Sau khi sửa root cause, cho phép đúng một attempt bổ sung:
-
-```bash
-uv run load-open-meteo-forecast --scope production --max-retries 4
-make weather-healthcheck
-```
-
-Tăng dần từ giá trị hiện tại và kiểm tra `error_type`; không đặt một giới hạn rất
-lớn vì sẽ tạo retry loop cho source hỏng thực sự.
-
-### Dữ liệu rescued tăng
-
-Lấy mẫu `_rescued_data` theo parser version, phân loại source field mới rồi cập
-nhật explicit Arrow schema. Replay từ immutable response JSON; không sửa JSON
-nguồn. Chỉ coi run usable khi rescued fields đã được review.
-
-### Archive trả HTTP 429
-
-Đọc error body đã lưu thay vì mặc định coi là hết quota ngày. HTTP layer ưu tiên
-`Retry-After`; nếu server chỉ trả `Minutely API request limit exceeded` mà không
-có header, client chờ mặc định 60 giây. Archive collector còn giãn request theo
-500 effective calls/phút và 4.500/giờ. Không tăng concurrency để xử lý backfill.
-
-## Truy vấn điều tra
+Xem file nào hỏng:
 
 ```sql
-SELECT attempt_id, attempt_number, scheduled_at_utc, status,
-       error_type, error_message
-FROM ingestion.ingestion_runs
-WHERE pipeline_name = 'open_meteo_forecast'
-ORDER BY started_at_utc DESC
-LIMIT 20;
-
-SELECT file_id, attempt_id, batch_index, object_key, status, retry_count,
-       rows_parsed, rows_inserted, rescued_rows, error_type, error_message
-FROM ingestion.ingestion_files
-WHERE status <> 'COMMITTED'
-ORDER BY updated_at_utc;
+SELECT f.object_key, f.retry_count, f.error_type, f.error_message
+FROM ingestion.ingestion_files f
+JOIN ingestion.ingestion_runs r ON r.attempt_id = f.attempt_id
+WHERE f.status = 'FAILED';
 ```
 
-Không xóa source object chỉ vì một run thất bại. Orphan cleanup phải resolve exact
-attempt/prefix và đối chiếu PostgreSQL trước khi xóa.
+Sửa xong file trên MinIO thì reset để nạp lại:
 
-## Migration control schema
+```sql
+UPDATE ingestion.ingestion_files
+SET status = 'PENDING', retry_count = 0, error_type = NULL, error_message = NULL
+WHERE object_key = '<object_key>';
+```
+
+### Nạp lại toàn bộ một nguồn
+
+Xoá checkpoint của nguồn đó rồi làm rỗng bảng đích. **Không xoá file trên MinIO** —
+chúng là bản gốc.
+
+```sql
+DELETE FROM ingestion.ingestion_files WHERE attempt_id IN (
+  SELECT attempt_id FROM ingestion.ingestion_runs WHERE dataset = 'forecast');
+DELETE FROM ingestion.ingestion_runs WHERE dataset = 'forecast';
+```
+
+### Lease treo ở PROCESSING
+
+Tiến trình chết giữa chừng để lại file ở `PROCESSING`. `claim_files` tự thu hồi
+khi `lease_expires_at_utc` quá hạn (mặc định 300s) — chỉ cần chờ rồi chạy lại
+`make load`.
+
+### Hết dung lượng MinIO
 
 ```bash
-make migrate-general-control-dry-run
-make migrate-general-control
+make clean-lake     # squash snapshot, bỏ file Parquet của phiên bản cũ
 ```
 
-Migration v4 từ chối chạy khi còn run `RUNNING` hoặc file `PROCESSING`, khóa đúng
-hai control tables, backfill source context, kiểm tra cardinality và row count
-trước khi commit. Lệnh idempotent trên schema đã migrate.
+Mất time-travel, giữ bản hiện tại. `on-run-end` của dbt đã tự dọn với chính sách
+giữ 7 ngày; lệnh này là dọn mạnh tay.
+
+## Thêm nguồn mới
+
+Không cần viết Python. Thêm hai file vào `ingestion/sources/`:
+
+```
+my_source.yml    khai báo discovery prefix, bảng đích, batch size
+my_source.sql    SELECT ... FROM read_json_auto({{ files }})
+```
+
+`{{ files }}` được engine thay bằng danh sách file đã claim. Tạo bảng đích trước
+(`CREATE TABLE ... AS (<sql>) LIMIT 0`), rồi `make load`.
+
+## ADR — các quyết định đã chốt của kiến trúc hiện tại
+
+**Integrity delegated cho MinIO (2026-08-22).** Kiến trúc cũ tính SHA-256 lúc
+ghi và verify lúc đọc. Directory-listing discovery không tải file về nên không
+băm được (băm toàn bộ chỉ để verify là mất ý nghĩa của listing); hợp đồng
+checksum đã bỏ. Cơ chế bảo toàn vẹn còn lại: MinIO bitrot protection + `etag`/
+`size_bytes` ghi trong `file_parameters` JSONB ngay tại discovery. Các cột
+`sha256`, `etag`, `content_type`, `http_status`, `request_attempt_count`,
+`expected_item_count`, `received_item_count` trong `ingestion.ingestion_files`
+là di sản của kiến trúc cũ, luôn NULL — sẽ DROP ở lần evolve schema tới, tránh
+đổi schema khi backfill đang chạy.
+
+**Metrics per-file không ghi (2026-08-22).** Engine INSERT cả lô bằng một câu SQL
+nên chỉ biết tổng; chia đều cho từng file là số giả. `rows_parsed`/
+`rows_inserted`/`rescued_rows` per-file để NULL; tổng của lượt chạy in ra ở
+stdout khi `make load` và suy ra được từ số file COMMITTED.
+
+**Bronze INSERT, dedup ở Silver (2026-08-22).** Không MERGE theo row id ở Bronze:
+forecast giữ MỌI vintage (mỗi vintage là dữ liệu phân tích, docs/04 §1), và
+Silver đã `ROW_NUMBER() ... rn = 1` dedup theo (ô lưới, giờ). Chi phí: re-land
+cùng tháng làm Bronze phình (đo 2026-08-21: 3.062.736 dòng thô cho 1.106.784
+khóa duy nhất) — chấp nhận vì Parquet trên MinIO local gần như miễn phí.
+
+## Bảng đối chiếu lệnh cũ → mới
+
+Kiến trúc trước 2026-08-21 đã bị gỡ. Nếu gặp lệnh cũ trong tài liệu khác:
+
+| Cũ (không còn) | Mới |
+|---|---|
+| `collect-open-meteo-forecast --execute` | `make fetch-forecast EXEC=1` |
+| `collect-open-meteo-archive` | `make fetch-archive EXEC=1 START=… END=…` |
+| `load-open-meteo-forecast` | `make load SOURCE=open_meteo_forecast` |
+| `run-open-meteo-pipeline` | `make fetch-forecast EXEC=1 && make load` |
+| `run-open-meteo-archive --tail` | `make fetch-archive EXEC=1 START=… && make load` |
+| `observe-ingestion` | `make quality` (Provero) |
+| `scripts/run_weather_pipeline.sh` | cron gọi thẳng hai `make` |

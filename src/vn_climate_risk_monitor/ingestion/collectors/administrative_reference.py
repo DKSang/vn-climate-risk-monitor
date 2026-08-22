@@ -13,9 +13,9 @@ from datetime import UTC, datetime
 
 from requests import Session
 
+from autoloader.http import build_http_session
+from autoloader.layout import BronzeFilesLayout
 from vn_climate_risk_monitor.config import load_settings
-from vn_climate_risk_monitor.ingestion.http import build_http_session
-from vn_climate_risk_monitor.ingestion.layout import BronzeFilesLayout
 from vn_climate_risk_monitor.storage import ensure_bucket, get_minio_client
 
 REPOSITORY = "https://github.com/ThangLeQuoc/vietnamese-provinces-database"

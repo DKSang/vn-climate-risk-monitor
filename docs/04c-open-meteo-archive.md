@@ -1,5 +1,23 @@
 # Ingestion Open-Meteo Historical Archive
 
+> ## ⚠️ TÀI LIỆU CŨ — kiến trúc đã thay đổi 2026-08-21
+>
+> Mọi lệnh `collect-open-meteo-*`, `load-open-meteo-*`, `run-open-meteo-*`,
+> `observe-*` trong file này **KHÔNG CÒN TỒN TẠI**. Tầng collector/loader/pipeline
+> viết bằng Python đã được gộp về package generic `autoloader` (discovery +
+> checkpoint) cộng với YAML + SQL cho từng nguồn.
+>
+> **Lệnh hiện hành và cách chạy backfill: xem [04b-ingestion-runbook.md](04b-ingestion-runbook.md).**
+>
+> Giữ file này làm ghi chép thiết kế và kết quả khảo sát API — phần đó vẫn đúng.
+>
+> **Thêm nữa (2026-08-22):** Bronze loader giờ là **INSERT**, không còn
+> `bronze_row_id` + `MERGE INTO` như mô tả ở §6 — bảng đích là
+> `bronze_store.tables.open_meteo_archive` và dedup theo (ô lưới, giờ) làm ở
+> Silver (`ROW_NUMBER() ... rn = 1`). Lý do và đánh đổi: xem ADR cuối
+> [04b-ingestion-runbook.md](04b-ingestion-runbook.md).
+
+
 **Trạng thái code:** hoàn thành collector, parser, Bronze loader, backfill và
 daily tail · **Trạng thái dữ liệu:** năm 2000 đã commit đủ 1.106.784 ward-hour;
 backfill 2001–nay là workload vận hành dài hạn theo giới hạn Free API.

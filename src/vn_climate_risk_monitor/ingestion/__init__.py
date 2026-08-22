@@ -1,10 +1,7 @@
-"""Incremental ingestion primitives.
+"""Ingestion của dự án.
 
-Collectors persist immutable source payloads under ``bronze/files`` and record
-run/file state in native PostgreSQL tables. Loaders claim completed source files
-and parse them into DuckLake Bronze tables.
+  * ``fetch``  — gọi Open-Meteo, land JSON as-is lên MinIO
+  * ``run``    — nối package ``autoloader`` với cấu hình nguồn (YAML + SQL)
+
+Logic nạp file → bảng nằm ở package ``autoloader`` (generic, tái sử dụng được).
 """
-
-from vn_climate_risk_monitor.ingestion.layout import BronzeFilesLayout
-
-__all__ = ["BronzeFilesLayout"]

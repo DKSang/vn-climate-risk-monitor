@@ -37,3 +37,6 @@ transform/dev.duckdb
 # Notebook / OS
 .ipynb_checkpoints/
 .DS_Store
+
+# Provero runtime artifacts (Makefile đang chạy --no-store)
+.provero/

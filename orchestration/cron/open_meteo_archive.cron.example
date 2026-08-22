@@ -1,7 +1,16 @@
-# Replace the project path before installing. Both jobs share a non-blocking
-# single-node lock; logical keys make scheduler retries idempotent.
-35 2 * * * /usr/bin/flock -n /tmp/vn-climate-archive.lock -c 'cd /path/to/vn-climate-risk-monitor && /usr/bin/env uv run run-open-meteo-archive --tail --execute' >> /path/to/vn-climate-risk-monitor/logs/open_meteo_archive.log 2>&1
+# Lịch sử Open-Meteo (ERA5) — backfill và bồi đuôi.
+#
+# Thay /path/to/vn-climate-risk-monitor bằng đường dẫn thật rồi cài bằng `crontab -e`.
+# Dùng CHUNG lock với forecast: cả hai tiêu vào một hạn mức rate limit của Open-Meteo.
 
-# Backfill at most one not-yet-succeeded month. Keep disabled while the daily
-# free-tier budget is needed by other pipelines.
-# 5 3 * * * /usr/bin/flock -n /tmp/vn-climate-archive.lock -c 'cd /path/to/vn-climate-risk-monitor && /usr/bin/env uv run run-open-meteo-archive --execute --max-periods 1' >> /path/to/vn-climate-risk-monitor/logs/open_meteo_archive.log 2>&1
+# Bồi đuôi: ERA5 trễ khoảng 5 ngày, nên lấy lại 2 tháng gần nhất mỗi ngày.
+# fetch tự bỏ qua từng file đã có, trừ khi thêm --overwrite.
+# Lock file PHẢI trùng với forecast (/tmp/vn-climate-open-meteo.lock): hai luồng
+# tiêu chung một hạn mức rate limit của Open-Meteo, pacer chỉ bảo vệ trong
+# một tiến trình nên phải loại trừ nhau bằng lock.
+35 2 * * * /usr/bin/flock -n /tmp/vn-climate-open-meteo.lock -c 'cd /path/to/vn-climate-risk-monitor && /usr/bin/env make fetch-archive EXEC=1 START=$(date -d "-2 month" +\%Y-\%m-01) END=$(date +\%Y-\%m-01) && /usr/bin/env make load SOURCE=open_meteo_archive' >> /path/to/vn-climate-risk-monitor/logs/open_meteo_archive.log 2>&1
+
+# Backfill lịch sử: chạy TAY, không đặt lịch.
+# Mỗi tháng tốn 6 request; 2000-01 → nay là ~320 tháng ≈ 1.920 request.
+# Chạy từng năm để không chiếm hết hạn mức ngày:
+#   make fetch-archive EXEC=1 START=2002-01-01 END=2002-12-01 && make load
