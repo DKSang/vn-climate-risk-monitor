@@ -27,23 +27,26 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "provero>=0.2.1",
     "pytest>=8.3.0",
     "responses>=0.25.0",
     "ruff>=0.11.0",
 ]
 
 [project.scripts]
-vn-climate-risk-monitor = "vn_climate_risk_monitor:main"
 collect-administrative-reference = "vn_climate_risk_monitor.ingestion.collectors.administrative_reference:main"
-collect-open-meteo-forecast = "vn_climate_risk_monitor.ingestion.collectors.open_meteo_forecast:main"
-collect-open-meteo-archive = "vn_climate_risk_monitor.ingestion.collectors.open_meteo_archive:main"
-load-open-meteo-forecast = "vn_climate_risk_monitor.ingestion.loaders.open_meteo_forecast_hourly:main"
-load-open-meteo-archive = "vn_climate_risk_monitor.ingestion.loaders.open_meteo_archive_hourly:main"
-run-open-meteo-pipeline = "vn_climate_risk_monitor.ingestion.pipelines.open_meteo_forecast:main"
-plan-open-meteo-archive = "vn_climate_risk_monitor.ingestion.pipelines.open_meteo_archive:main"
-run-open-meteo-archive = "vn_climate_risk_monitor.ingestion.pipelines.open_meteo_archive:main"
-observe-open-meteo-ingestion = "vn_climate_risk_monitor.ingestion.observability:main"
-observe-ingestion = "vn_climate_risk_monitor.ingestion.observability:main"
+fetch-open-meteo = "vn_climate_risk_monitor.ingestion.fetch:main"
+load-sources = "vn_climate_risk_monitor.ingestion.run:main"
+
+# Connector DuckLake cho Provero — Provero tự phát hiện qua entry_points.
+# Không cần fork Provero, không ghi đè connector built-in.
+[project.entry-points."provero.connectors"]
+ducklake = "autoloader.provero_ducklake:DuckLakeConnector"
+
+[tool.uv.build-backend]
+# Hai package trong src/: `autoloader` là thư viện generic tái sử dụng được cho
+# dự án khác; `vn_climate_risk_monitor` là code riêng của dự án này.
+module-name = ["autoloader", "vn_climate_risk_monitor"]
 
 [build-system]
 requires = ["uv_build>=0.12.3,<0.13.0"]

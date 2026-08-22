@@ -1,4 +1,4 @@
-.PHONY: bootstrap bootstrap-env up down logs ingest-provinces ingest-weather-plan ingest-weather-canary ingest-weather load-weather-canary load-weather run-weather-plan run-weather-canary run-weather plan-historical run-historical-canary run-historical-year run-historical-backfill run-historical-tail historical-status historical-tail-status weather-status weather-healthcheck migrate-legacy-dry-run migrate-legacy migrate-bronze-layout-dry-run migrate-bronze-layout migrate-ingestion-control-dry-run migrate-ingestion-control migrate-general-control-dry-run migrate-general-control seed dbt dbt-test transform dbt-docs clean-lake lint
+.PHONY: bootstrap bootstrap-env up down logs ingest-provinces fetch-forecast fetch-archive load quality seed dbt dbt-test freshness transform dbt-docs clean-lake lint
 
 # ==== Setup ====
 bootstrap-env:
@@ -17,99 +17,42 @@ down:
 logs:
 	docker compose logs -f
 
-# ==== Ingest (PostgreSQL control plane + immutable Bronze response files) ====
-# Collector reference hành chính tĩnh, độc lập với Open-Meteo forecast.
+# ==== Ingest: fetch (Python) -> land JSON -> autoloader nạp vào bronze (SQL) ====
+# Mặc định chỉ IN KẾ HOẠCH; thêm EXEC=1 để chạy thật.
+EXEC ?=
+_X = $(if $(EXEC),--execute,)
+
 ingest-provinces:
-	uv run python -m vn_climate_risk_monitor.ingestion.collectors.administrative_reference
+	uv run collect-administrative-reference
 
-# Forecast collector: plan là read-only; canary/full ghi PostgreSQL + MinIO.
-ingest-weather-plan:
-	uv run collect-open-meteo-forecast
+fetch-forecast:
+	uv run fetch-open-meteo forecast $(_X)
 
-ingest-weather-canary:
-	uv run collect-open-meteo-forecast --execute --limit 1
+START ?= 2000-01-01
+END   ?= $(shell date +%Y-%m-01)
+fetch-archive:
+	uv run fetch-open-meteo archive --start $(START) --end $(END) $(_X)
 
-ingest-weather:
-	uv run collect-open-meteo-forecast --execute
+# Phát hiện file mới trên MinIO và nạp vào bronze. Idempotent, exactly-once.
+# Không tham số = chạy mọi nguồn trong ingestion/sources/*.yml
+load:
+	uv run load-sources $(SOURCE)
 
-# Available-now Bronze loader. Canary và production dùng checkpoint scope riêng.
-load-weather-canary:
-	uv run load-open-meteo-forecast --scope canary_1
-
-load-weather:
-	uv run load-open-meteo-forecast --scope production
-
-# Phase 5 operational entrypoint: deterministic hourly slot, collect then drain.
-run-weather-plan:
-	uv run run-open-meteo-pipeline
-
-run-weather-canary:
-	uv run run-open-meteo-pipeline --execute --limit 1
-
-run-weather:
-	uv run run-open-meteo-pipeline --execute
-
-# Historical plan grouped by year; runtime checkpoints by month, read-only here.
-plan-historical:
-	uv run plan-open-meteo-archive
-
-# Archive source JSON + year-partitioned Bronze table. Backfill admits only one
-# new month per command by default so the configured free-tier guardrail wins.
-HISTORICAL_YEAR ?= 2000
-
-run-historical-canary:
-	uv run run-open-meteo-archive --year $(HISTORICAL_YEAR) --month 1 --limit 1 --execute
-
-run-historical-year:
-	uv run run-open-meteo-archive --year $(HISTORICAL_YEAR) --execute --max-periods 12
-
-run-historical-backfill:
-	uv run run-open-meteo-archive --execute --max-periods 1
-
-run-historical-tail:
-	uv run run-open-meteo-archive --tail --execute
-
-historical-status:
-	uv run observe-ingestion --pipeline-name open_meteo_archive --dataset historical_weather_hourly --scope backfill --stale-after-minutes 2160
-
-historical-tail-status:
-	uv run observe-ingestion --pipeline-name open_meteo_archive --dataset historical_weather_hourly --scope tail --stale-after-minutes 2160
-
-weather-status:
-	uv run observe-open-meteo-ingestion --scope production
-
-weather-healthcheck:
-	uv run observe-open-meteo-ingestion --scope production --check
-
-# Migration v2: exact allowlist; DuckLake cleanup managed files, MinIO chỉ xóa
-# prefix unmanaged raw/geography/... đã khai báo trong migration.
-migrate-legacy-dry-run:
-	uv run python scripts/migrations/001_remove_legacy_relations.py
-
-migrate-legacy:
-	uv run python scripts/migrations/001_remove_legacy_relations.py --execute
-
-# Migration storage layout: bronze/source -> bronze/files và catalog1.bronze ->
-# bronze_store.tables. Mặc định chỉ in plan; target execute không chạy dbt build.
-migrate-bronze-layout-dry-run:
-	uv run python scripts/migrations/002_split_bronze_files_tables.py
-
-migrate-bronze-layout:
-	uv run python scripts/migrations/002_split_bronze_files_tables.py --execute
-
-# Migration control plane: chỉ drop đúng hai DuckLake relation ops legacy khi rỗng.
-migrate-ingestion-control-dry-run:
-	uv run python scripts/migrations/003_move_ingestion_control_to_postgres.py
-
-migrate-ingestion-control:
-	uv run python scripts/migrations/003_move_ingestion_control_to_postgres.py --execute
-
-# Migration v4: generalize run/file control metadata; parser/Bronze giữ theo source.
-migrate-general-control-dry-run:
-	uv run python scripts/migrations/004_generalize_ingestion_control.py
-
-migrate-general-control:
-	uv run python scripts/migrations/004_generalize_ingestion_control.py --execute
+# ==== Data quality: Provero quét bronze NGAY SAU load ====
+# dbt không với tới bronze vì autoloader ghi ngoài đồ thị dbt.
+# Đọc QUA catalog DuckLake (không glob Parquet — glob thấy cả dòng đã xoá).
+#
+# --no-store: BẮT BUỘC. Provero v0.2.1 crash khi check `range` FAIL trên bảng có
+#   cột timestamp: store/sqlite.py json.dumps(failing_rows_sample) không xử lý
+#   được datetime. Tắt store thì né được; đánh đổi là mất `provero history`.
+# --no-optimize: chạy từng check riêng thay vì gộp một query.
+#
+# Trả exit code 1 khi có check fail -> dùng làm cổng chặn trong CI được.
+quality:
+	DUCKLAKE_ALIAS=bronze_store \
+	DUCKLAKE_DATA_PATH=s3://$(or $(MINIO_BUCKET),vn-climate)/bronze \
+	DUCKLAKE_METADATA_SCHEMA=ducklake_bronze \
+	uv run provero run -c quality/provero.yaml --no-optimize --no-store
 
 # ==== Transform (dbt + DuckDB + DuckLake) ====
 # dbt project ở transform/, không phải transform/dbt/
@@ -121,6 +64,10 @@ dbt:
 
 dbt-test:
 	cd transform && uv run dbt test --profiles-dir .
+
+# LƯU Ý: `dbt build` KHÔNG chạy source freshness — phải gọi riêng.
+freshness:
+	cd transform && uv run dbt source freshness --profiles-dir .
 
 # build = run + test, và tự dọn file cũ qua on-run-end
 transform:

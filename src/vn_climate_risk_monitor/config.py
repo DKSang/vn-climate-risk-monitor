@@ -77,18 +77,10 @@ class OpenMeteoSettings:
     archive_model: str
     forecast_hours: int
     location_batch_size: int
-    concurrency: int
     request_timeout_seconds: int
     max_attempts: int
     max_effective_calls_per_minute: int
     max_effective_calls_per_hour: int
-    schedule_minute_utc: int
-    collector_stale_after_seconds: int
-    loader_batch_size: int
-    loader_lease_seconds: int
-    loader_max_retries: int
-    max_load_batches: int
-    stale_after_minutes: int
 
 
 @dataclass(frozen=True)
@@ -142,10 +134,6 @@ def load_settings() -> Settings:
                 "OPEN_METEO_LOCATION_BATCH_SIZE",
                 os.getenv("OPEN_METEO_LOCATION_BATCH_SIZE", "25"),
             ),
-            concurrency=_as_int(
-                "OPEN_METEO_CONCURRENCY",
-                os.getenv("OPEN_METEO_CONCURRENCY", "1"),
-            ),
             request_timeout_seconds=_as_int(
                 "OPEN_METEO_REQUEST_TIMEOUT_SECONDS",
                 os.getenv("OPEN_METEO_REQUEST_TIMEOUT_SECONDS", "60"),
@@ -161,37 +149,6 @@ def load_settings() -> Settings:
             max_effective_calls_per_hour=_as_int(
                 "OPEN_METEO_MAX_EFFECTIVE_CALLS_PER_HOUR",
                 os.getenv("OPEN_METEO_MAX_EFFECTIVE_CALLS_PER_HOUR", "4500"),
-            ),
-            schedule_minute_utc=_as_int(
-                "OPEN_METEO_SCHEDULE_MINUTE_UTC",
-                os.getenv("OPEN_METEO_SCHEDULE_MINUTE_UTC", "15"),
-                minimum=0,
-                maximum=59,
-            ),
-            collector_stale_after_seconds=_as_int(
-                "OPEN_METEO_COLLECTOR_STALE_AFTER_SECONDS",
-                os.getenv("OPEN_METEO_COLLECTOR_STALE_AFTER_SECONDS", "1800"),
-            ),
-            loader_batch_size=_as_int(
-                "OPEN_METEO_LOADER_BATCH_SIZE",
-                os.getenv("OPEN_METEO_LOADER_BATCH_SIZE", "10"),
-            ),
-            loader_lease_seconds=_as_int(
-                "OPEN_METEO_LOADER_LEASE_SECONDS",
-                os.getenv("OPEN_METEO_LOADER_LEASE_SECONDS", "300"),
-            ),
-            loader_max_retries=_as_int(
-                "OPEN_METEO_LOADER_MAX_RETRIES",
-                os.getenv("OPEN_METEO_LOADER_MAX_RETRIES", "3"),
-                minimum=0,
-            ),
-            max_load_batches=_as_int(
-                "OPEN_METEO_MAX_LOAD_BATCHES",
-                os.getenv("OPEN_METEO_MAX_LOAD_BATCHES", "100"),
-            ),
-            stale_after_minutes=_as_int(
-                "OPEN_METEO_STALE_AFTER_MINUTES",
-                os.getenv("OPEN_METEO_STALE_AFTER_MINUTES", "120"),
             ),
         ),
     )

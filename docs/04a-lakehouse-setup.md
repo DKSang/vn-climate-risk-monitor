@@ -29,8 +29,14 @@ PostgreSQL schema `ingestion` lưu control state và tách khỏi DuckLake catal
 ```bash
 make up
 make bootstrap
-uv run python scripts/verify_lakehouse.py
+make quality
 ```
+
+Kiểm tra sau bootstrap: `make quality` (Provero quét Bronze qua catalog DuckLake,
+exit 1 khi có check fail) và `make transform` (dbt build Silver/Gold kèm test).
+Script POC `scripts/verify_lakehouse.py` đã xoá — mọi check của nó giờ có bản
+chạy liên tục: bootstrap step 4 (schema), dbt build + `assert_gold_is_readable`
+(đọc Parquet thật, chống bảng ma), Provero (row_count/freshness).
 
 `make bootstrap` thực hiện idempotently:
 

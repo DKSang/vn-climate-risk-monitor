@@ -20,11 +20,11 @@ from __future__ import annotations
 import sys
 import time
 
-from vn_climate_risk_monitor.config import load_settings
-from vn_climate_risk_monitor.ingestion.state import (
+from autoloader import (
     connect_control_plane,
     ensure_ingestion_state,
 )
+from vn_climate_risk_monitor.config import load_settings
 from vn_climate_risk_monitor.lakehouse import (
     BRONZE_CATALOG,
     BRONZE_METADATA_SCHEMA,
@@ -133,7 +133,7 @@ def step_2_setup_ducklake_catalog() -> None:
 def step_3_setup_control_plane() -> None:
     """Create ingestion state as native PostgreSQL tables."""
     print("\n── Step 3: Setup ingestion control plane ──")
-    connection = connect_control_plane(SETTINGS.postgres)
+    connection = connect_control_plane(SETTINGS.postgres.ducklake_connection_string)
     try:
         ensure_ingestion_state(connection)
     finally:
@@ -144,7 +144,7 @@ def step_3_setup_control_plane() -> None:
 def step_4_verify() -> None:
     """Verify DuckLake metadata and ingestion tables in PostgreSQL."""
     print("\n── Step 4: Quick verification ──")
-    connection = connect_control_plane(SETTINGS.postgres)
+    connection = connect_control_plane(SETTINGS.postgres.ducklake_connection_string)
     try:
         rows = connection.execute(
             """
@@ -190,8 +190,8 @@ def main() -> None:
     print("  ✅ Lakehouse bootstrap complete!")
     print()
     print("  Next steps:")
-    print("    uv run python scripts/verify_lakehouse.py  # full POC check")
-    print("    make transform                              # build dbt models")
+    print("    make transform   # build dbt models (silver + gold)")
+    print("    make quality     # Provero quét bronze")
     print("=" * 60)
 
 

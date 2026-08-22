@@ -1,5 +1,17 @@
 # Thiết kế ingestion Open-Meteo
 
+> ## ⚠️ TÀI LIỆU CŨ — kiến trúc đã thay đổi 2026-08-21
+>
+> Mọi lệnh `collect-open-meteo-*`, `load-open-meteo-*`, `run-open-meteo-*`,
+> `observe-*` trong file này **KHÔNG CÒN TỒN TẠI**. Tầng collector/loader/pipeline
+> viết bằng Python đã được gộp về package generic `autoloader` (discovery +
+> checkpoint) cộng với YAML + SQL cho từng nguồn.
+>
+> **Lệnh hiện hành và cách chạy backfill: xem [04b-ingestion-runbook.md](04b-ingestion-runbook.md).**
+>
+> Giữ file này làm ghi chép thiết kế và kết quả khảo sát API — phần đó vẫn đúng.
+
+
 **Hanoi Flood & Climate Risk Monitor** · v2.0 · 2026-08-21
 
 **Trạng thái:** Forecast Phase 1–5 hoàn thành; pipeline hourly production đã

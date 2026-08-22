@@ -1,13 +1,48 @@
 version: 2
 
 sources:
+  # ── Bronze do autoloader ghi (KHÔNG phải dbt model) ────────────────────────
+  # dbt chỉ có thể coi đây là source: test được, freshness được, nhưng KHÔNG
+  # enforce contract được (contract: enforced chỉ áp dụng cho model).
   - name: bronze_weather
     database: bronze_store
     schema: tables
-    description: "Bronze hourly được loader parse từ immutable Open-Meteo JSON"
+    description: "Bronze Open-Meteo do autoloader nạp từ JSON thô trên MinIO"
+
+    # Freshness: thay thế trực tiếp cho check `freshness` của Soda
+    loaded_at_field: _ingested_at
+    freshness:
+      warn_after: {count: 6, period: hour}
+      error_after: {count: 24, period: hour}
+
     tables:
-      - name: open_meteo_forecast_hourly
-        description: "Mọi forecast retrieval vintage ở grain location × valid hour"
+      - name: open_meteo_forecast
+        description: "Dự báo theo giờ, grain (ô lưới model, giờ hợp lệ)"
+        columns:
+          - name: grid_latitude
+            tests: [not_null]
+          - name: grid_longitude
+            tests: [not_null]
+          - name: valid_time_utc
+            tests: [not_null]
+          - name: precipitation_mm
+            description: "mm/h; NULL hợp lệ khi nguồn thiếu giá trị"
+          - name: weather_code
+            description: "WMO weather code"
+
+      - name: open_meteo_archive
+        description: "Lịch sử ERA5 theo giờ, grain (ô lưới model, giờ hợp lệ)"
+        # Archive là dữ liệu lịch sử, không cần freshness theo giờ
+        freshness: null
+        columns:
+          - name: grid_latitude
+            tests: [not_null]
+          - name: grid_longitude
+            tests: [not_null]
+          - name: valid_time_utc
+            tests: [not_null]
+          - name: soil_moisture_0_to_7cm
+            description: "m³/m³"
 
   # ── Nguồn 1: Postgres (danh mục hành chính GSO) ─────────────────────────────
   # DuckDB ATTACH thẳng Postgres (read_only) trong profiles.yml -> dbt đọc trực

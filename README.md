@@ -11,26 +11,24 @@ MinIO + PostgreSQL/DuckLake + DuckDB/dbt
 Bronze → Silver → Gold
 ```
 
-Open-Meteo forecast collector ghi immutable response JSON vào `bronze/files`;
-PostgreSQL là generic control plane cho logical run, attempt và file checkpoint;
-parser cùng Bronze schema vẫn source-specific. Forecast Phase 1–5 đã hoàn thành;
-production run đã tạo 9.072 dòng Bronze hourly cho đủ 126 phường/xã, không có
-rescued row. Archive ingestion cũng đã đủ planner, immutable collector, strict
-parser, monthly checkpoint, Bronze `MERGE` partition theo năm và daily tail;
-production năm 2000 đã commit đủ 1.106.784 ward-hour và Bronze có cùng số khóa
-duy nhất. Backfill 2001–nay được vận hành dần theo quota Free API với
-minute/hour pacing, không chạy burst cả lịch sử.
+Luồng ingestion tách hai bước: `fetch` gọi API và land immutable response JSON
+vào `bronze/files` trên MinIO; package generic `autoloader` (mô phỏng Databricks
+Auto Loader: directory listing, checkpoint Postgres, lease, micro-batch) phát
+hiện file mới và nạp vào Bronze DuckLake bằng SQL transform khai báo trong
+`ingestion/sources/*.yml` + `*.sql`. Bronze là INSERT — mọi vintage được giữ
+nguyên; dedup theo (ô lưới, giờ) thực hiện ở Silver. Forecast chạy production
+hằng giờ cho đủ 126 phường/xã (9.072 dòng Bronze hourly, không rescued row).
+Archive: năm 2000 đã land đủ 1.106.784 ward-hour; backfill 2001–nay vận hành
+dần theo quota Free API với minute/hour pacing, không chạy burst cả lịch sử.
 
 ```bash
-make up
-make bootstrap
-make transform
-make run-weather-plan
-make run-weather
-make weather-status
-make plan-historical
-make run-historical-backfill # tối đa một monthly checkpoint mới
-make run-historical-tail
+make up            # MinIO + PostgreSQL + pgAdmin
+make bootstrap     # bucket, DuckLake catalog, control plane schema
+make transform     # dbt build Silver/Gold
+make fetch-forecast                # dry-run; EXEC=1 để chạy thật
+make fetch-archive START=… END=…   # dry-run; EXEC=1 để chạy thật
+make load SOURCE=open_meteo_forecast   # autoloader nạp file mới vào Bronze
+make quality       # Provero quét Bronze (exit 1 khi có check fail)
 ```
 
 Xem [tài liệu kiến trúc](docs/03-architecture.md),
