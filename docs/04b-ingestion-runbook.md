@@ -37,22 +37,36 @@ ERA5 từ 2000-01 đến nay là **~320 tháng**, mỗi tháng **6 request** (12
 25 phường/request) → **~1.920 request**. Open-Meteo free tier giới hạn theo phút
 và giờ, `EffectiveCallPacer` tự giãn nhịp nên không cần tự sleep.
 
-Chạy **từng năm** để không chiếm hết hạn mức trong ngày:
+Chạy bằng script — nó lặp từng năm, fetch xong năm nào là `make load` năm đó:
 
 ```bash
-# 1. Xem kế hoạch trước
-make fetch-archive START=2002-01-01 END=2002-12-01
+make backfill-archive              # 2001 → nay
+make backfill-archive FROM=2003    # từ 2003
+```
 
-# 2. Chạy thật (72 request cho 12 tháng)
+Resumable: fetch tự bỏ qua từng file đã có nên interrupt rồi chạy lại chỉ đi
+tiếp phần thiếu. Năm hiện tại script tự dừng ở tháng trước — 2 tháng gần nhất do
+cron tail bồi hằng ngày. Muốn tay từng bước (xem kế hoạch trước, chạy một năm):
+
+```bash
+make fetch-archive START=2002-01-01 END=2002-12-01   # dry-run: xem kế hoạch
 make fetch-archive EXEC=1 START=2002-01-01 END=2002-12-01
-
-# 3. Nạp vào bronze
 make load SOURCE=open_meteo_archive
 ```
 
 `fetch` **tự bỏ qua từng file đã có** (không bỏ cả tháng) — chạy lại an toàn,
 không tốn request, và crash giữa chừng tháng rồi chạy lại sẽ đi tiếp phần thiếu.
-Muốn tải đè thì thêm `--overwrite` (gọi thẳng `uv run fetch-open-meteo`).
+Mỗi lần chạy ghi vào run dir riêng (`…/month=01/run_<timestamp>/response_NNN.json`)
+nên không bao giờ ghi đè object cũ — Bronze giữ cam kết immutable, và resume khớp
+theo tên file nên nhận cả dữ liệu collector cũ ghi (`…/archive_…/response_NNN.json`).
+Muốn tải lại tháng đã xong thì xoá run dir đó trên MinIO rồi chạy lại fetch.
+
+Fetch tải **song song theo tháng** (mặc định 3, chỉnh `--parallel N`). Pacer đã
+thread-safe nên hạn mức/phút và/giờ vẫn được giữ nguyên bất kể số luồng — song
+song không tăng nguy cơ 429, nó chỉ che thời gian chờ chuyển tải của request
+ERA5 (vài giây tới chục giây/file). Trần tốc độ thật sự là hạn mức:
+`OPEN_METEO_MAX_EFFECTIVE_CALLS_PER_HOUR` (mặc định 4500, sát trần free tier
+5000/giờ) — muốn nhanh hơn nữa thì nâng biến này theo plan Open-Meteo đang dùng.
 
 Kiểm tra tiến độ:
 
@@ -71,6 +85,19 @@ Mẫu cron ở `orchestration/cron/*.cron.example`. Cả hai job dùng **chung m
 Backfill **không đặt lịch** — chạy tay theo từng năm như trên.
 
 ## Xử lý sự cố
+
+### Hết hạn mức Open-Meteo (429)
+
+Khi 429 sống sót qua toàn bộ retry (cooldown 60s/lần), fetch dừng sạch cả lô với
+thông báo "⛔ Hết hạn mức Open-Meteo" và exit code 2 — không mất dữ liệu: các
+tháng đã land xong sẽ tự bị bỏ qua khi chạy lại. Chờ quota reset (5.000/giờ lăn,
+10.000/ngày) rồi chạy lại đúng lệnh cũ; script backfill cũng chỉ cần chạy lại.
+
+Lưu ý: chi phí "~N đơn vị" mà dry-run in ra là **ước lượng theo công thức xấp xỉ**
+của Open-Meteo. Nếu 429 đến sớm hơn nhiều so với dự kiến (ví dụ dừng ở ~60%
+kế hoạch) thì hoặc hạn mức hôm đó đã bị tiêu bởi các lần chạy trước, hoặc trọng
+số thực cao hơn công thức — lúc đó hạ `OPEN_METEO_MAX_EFFECTIVE_CALLS_PER_HOUR`
+chứa hơn và chia backfill thành nhiều đợt nhỏ hơn.
 
 ### Một file JSON hỏng
 

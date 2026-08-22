@@ -1,12 +1,16 @@
+import threading
 from types import SimpleNamespace
 
 import pytest
 from urllib3.util.retry import Retry
 
 from autoloader.http import (
+    _RETRY_ABORT,
     RETRYABLE_STATUS_CODES,
     EffectiveCallPacer,
+    RetryCancelledError,
     RetryWith429Cooldown,
+    abort_all_retries,
     build_http_session,
 )
 
@@ -89,7 +93,60 @@ def test_effective_call_pacer_enforces_hourly_bucket_too() -> None:
     assert pacer.wait(25) == 20
 
 
+def test_effective_call_pacer_is_thread_safe() -> None:
+    current = [0.0]
+
+    def monotonic() -> float:
+        return current[0]
+
+    def sleep(seconds: float) -> None:
+        current[0] += seconds
+
+    pacer = EffectiveCallPacer(
+        calls_per_minute=10,
+        calls_per_hour=10,
+        monotonic=monotonic,
+        sleeper=sleep,
+    )
+
+    def spend() -> None:
+        for _ in range(10):
+            pacer.wait(1)
+
+    threads = [threading.Thread(target=spend) for _ in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    # 80 đơn vị tiêu hết, khởi điểm 10, nạp lại 1/6 đơn vị/giây ảo. Token
+    # không âm sau cùng chứng tỏ các luồng không tiêu vượt ngân sách chung.
+    assert current[0] >= (80 - 10) * 6 - 1e-6
+    assert pacer._minute_tokens >= -1e-9
+    assert pacer._hour_tokens >= -1e-9
+
+
 @pytest.mark.parametrize("max_attempts", [0, -1])
 def test_http_session_rejects_invalid_max_attempts(max_attempts: int) -> None:
     with pytest.raises(ValueError, match="max_attempts"):
         build_http_session(max_attempts=max_attempts)
+
+
+def test_retry_sleep_aborts_when_whole_batch_stops() -> None:
+    retry = RetryWith429Cooldown(
+        total=1,
+        allowed_methods=frozenset({"GET"}),
+        status_forcelist={429},
+        respect_retry_after_header=True,
+        fallback_retry_after_429=0.01,
+    )
+    response = SimpleNamespace(status=429, headers={})
+
+    retry.sleep(response)  # chưa hủy: ngủ 10ms rồi dậy bình thường
+
+    abort_all_retries()
+    try:
+        with pytest.raises(RetryCancelledError):
+            retry.sleep(response)
+    finally:
+        _RETRY_ABORT.clear()

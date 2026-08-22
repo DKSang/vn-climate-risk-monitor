@@ -34,7 +34,6 @@ dev = [
 ]
 
 [project.scripts]
-collect-administrative-reference = "vn_climate_risk_monitor.ingestion.collectors.administrative_reference:main"
 fetch-open-meteo = "vn_climate_risk_monitor.ingestion.fetch:main"
 load-sources = "vn_climate_risk_monitor.ingestion.run:main"
 
