@@ -9,21 +9,25 @@ Repository dùng ba data layer `bronze → silver → gold`. PostgreSQL schema
 
 ```text
 vn-climate-risk-monitor/
-├── src/vn_climate_risk_monitor/
+├── src/autoloader/                  # package GENERIC: nạp file → bảng, đúng một lần mỗi file
+│   ├── engine.py                    # discovery → checkpoint → SQL transform → commit
+│   ├── checkpoint.py                # PostgreSQL repository: run/file state, claim, lease
+│   ├── config.py                    # khai báo nguồn bằng YAML (không phải code)
+│   ├── discovery.py                 # directory listing trên object storage
+│   ├── http.py                      # session retry + pacer hạn mức effective-call
+│   ├── models.py                    # RunAttempt, ClaimedObject
+│   ├── schema.py                    # DDL control plane (ingestion.*)
+│   └── provero_ducklake.py          # connector Provero đọc qua catalog DuckLake
+│
+├── src/vn_climate_risk_monitor/     # code riêng của dự án
 │   ├── config.py                    # cấu hình typed từ environment
 │   ├── lakehouse.py                 # kết nối DuckDB + DuckLake
-│   ├── storage/
-│   │   └── minio.py                 # adapter object storage dùng chung
+│   ├── storage/minio.py             # tạo MinIO client, ensure bucket
 │   └── ingestion/
-│       ├── layout.py                # contract object key bronze/files
-│       ├── collectors/              # API → response JSON bất biến trên MinIO
-│       ├── loaders/                 # bronze/files → Bronze DuckLake table
-│       ├── pipelines/               # compose collect → drain loader
-│       ├── open_meteo/              # typed contracts, locations, source planners
-│       ├── observability.py         # health/metrics từ control plane
-│       ├── scheduling.py            # deterministic hourly logical slot
-│       └── state/                   # PostgreSQL schema/repository/checkpoint
+│       ├── fetch.py                 # Open-Meteo API → JSON as-is lên MinIO
+│       └── run.py                   # nối autoloader vào ingestion/sources/*.yml
 │
+├── ingestion/sources/               # khai báo nguồn: 1 YAML + 1 SQL cho mỗi nguồn
 ├── transform/                       # dbt + DuckDB + DuckLake
 │   ├── models/
 │   │   ├── bronze/                  # source-faithful; không hậu tố `_raw`
@@ -33,26 +37,28 @@ vn-climate-risk-monitor/
 │   ├── macros/
 │   └── tests/
 │
-├── reference/                       # GeoJSON và văn bản nguồn tĩnh
+├── reference/                       # GeoJSON và văn bản nguồn tĩnh (chưa tiêu thụ)
 ├── orchestration/cron/              # schedule template; không chứa business logic
-├── serving/                         # API/dashboard chỉ đọc Gold
-├── scripts/                         # bootstrap, verify, maintenance
+├── serving/                         # API/dashboard chỉ đọc Gold (Bước 8, chưa cài)
+├── scripts/                         # bootstrap, maintenance
 └── tests/
     ├── unit/
     ├── integration/
     └── fixtures/
 ```
 
-Không còn package `ingest/` ở repository root. Ingestion là code ứng dụng và nằm
-trong package cài đặt được `vn_climate_risk_monitor.ingestion`.
+Ingestion Open-Meteo là hai lệnh: `fetch-open-meteo` (land JSON) và
+`load-sources` (autoloader nạp vào Bronze). Nguồn geography (GSO) **không có
+collector** — cập nhật rất chậm nên nạp thủ công vào PostgreSQL nguồn, dbt đọc
+trực tiếp qua attach `pg_source`.
 
 ## Bố trí vật lý trên MinIO
 
 ```text
 s3://vn-climate/
 ├── bronze/
-│   ├── files/                       # payload nguyên bản, collector quản lý
-│   │   └── <source>/<dataset>/<load_type>/YYYY/MM/DD/HH/<run_id>/
+│   ├── files/                       # payload nguyên bản, fetch quản lý
+│   │   └── open_meteo/<dataset>/{incremental/YYYY/MM/DD/HH, backfill/year=YYYY/month=MM}/
 │   └── tables/                      # Parquet do DuckLake quản lý
 │       └── <table>/
 ├── silver/<ducklake-table>/
@@ -60,8 +66,8 @@ s3://vn-climate/
 ```
 
 `bronze/files` và `bronze/tables` có owner/lifecycle tách biệt.
-Các thủ tục maintenance DuckLake chỉ xóa file đã được catalog quản lý; collector
-không overwrite file nguồn.
+Các thủ tục maintenance DuckLake chỉ xóa file đã được catalog quản lý; fetch
+không overwrite file nguồn (skip theo từng file đã có).
 
 ## Trách nhiệm từng layer
 
@@ -71,14 +77,11 @@ không overwrite file nguồn.
 | Bronze tables | Parse cấu trúc nguồn; được explode array nhưng không lọc/dedup |
 | Silver | Schema enforcement, type casting, validation, dedup, mapping, join |
 | Gold | Dimension/fact, rolling/forecast KPI, scenario và pressure feature |
-| Ingestion control | PostgreSQL run/file state, checksum, lease, parser version và lỗi |
+| Ingestion control | PostgreSQL run/file state, lease, retry, parser version và lỗi |
 
-Control plane dùng `ClaimedObject` generic. `run_parameters` và
-`file_parameters` chỉ chứa immutable source context; Open-Meteo adapter chuyển
-chúng thành typed forecast hoặc archive parameters. Historical planner nhóm
-output theo năm để ước lượng, nhưng runtime dùng monthly logical run/request
-checkpoint; Bronze Parquet vẫn partition theo năm. Parser và Bronze table vẫn
-source-specific để tránh một generic parser đầy nhánh điều kiện.
+Thêm nguồn mới = thêm 1 cặp `ingestion/sources/<tên>.yml` + `<tên>.sql`, không
+viết Python (xem runbook 04b). Parser và Bronze table vẫn source-specific để
+tránh một generic parser đầy nhánh điều kiện.
 
 ## Quy ước đặt tên
 
@@ -93,16 +96,13 @@ source-specific để tránh một generic parser đầy nhánh điều kiện.
 
 ## Incremental contract
 
-1. Collector tạo attempt `RUNNING` và file `PENDING` trong PostgreSQL.
-2. Collector chỉ ghi immutable response JSON vào `bronze/files`.
-3. Khi đủ batch hợp lệ, attempt chuyển `SUCCEEDED`.
-4. Loader claim file bằng transaction, `SKIP LOCKED` và lease.
-5. Parser ghi staging, sau đó `MERGE` theo deterministic row id và commit Bronze.
-6. Chỉ sau Bronze commit mới cập nhật file ledger thành `COMMITTED`.
-7. Crash giữa hai commit sẽ retry; deterministic id ngăn duplicate. Payload luôn
-   được giữ để replay, không dựa vào distributed transaction giữa hai catalog.
-
-Open-Meteo forecast collector, PostgreSQL discovery/checkpoint và Bronze hourly
-loader đã được triển khai. Collector, parser, object reader và loader vẫn tách
-module để HTTP, schema parsing, storage và checkpoint có thể test độc lập.
-Phase 5 chỉ compose các module này; cron không chứa parsing hoặc state logic.
+1. `fetch` land JSON as-is lên `bronze/files`, không đăng ký gì — crash giữa
+   chừng không tạo file mồ côi vì discovery liệt kê storage.
+2. `load-sources` liệt kê prefix nguồn, đối chiếu checkpoint theo object key,
+   đăng ký file mới (run `SUCCEEDED` sau khi đủ file PENDING).
+3. Engine claim micro-batch bằng `FOR UPDATE SKIP LOCKED` + lease.
+4. DuckDB chạy SQL transform của nguồn (`INSERT ... BY NAME` vào bảng đích).
+5. Chỉ sau Bronze commit mới cập nhật file ledger thành `COMMITTED`.
+6. Crash giữa bước 4 và 5: lease hết hạn, file được claim lại, INSERT lặp —
+   Bronze at-least-once, Silver dedup theo (ô lưới, giờ). Payload luôn giữ để
+   replay, không giả định distributed transaction giữa hai catalog.

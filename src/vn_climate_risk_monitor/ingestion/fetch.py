@@ -14,22 +14,32 @@ from __future__ import annotations
 import argparse
 import io
 import json
+import logging
 import math
 from collections.abc import Iterator, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 
 import duckdb
 from minio import Minio
-from requests import Session
+from requests import HTTPError, Session
 
-from autoloader.http import EffectiveCallPacer, build_http_session
+from autoloader.http import (
+    EffectiveCallPacer,
+    abort_all_retries,
+    build_http_session,
+)
 from vn_climate_risk_monitor.config import OpenMeteoSettings, load_settings
 from vn_climate_risk_monitor.lakehouse import get_connection
 from vn_climate_risk_monitor.storage import ensure_bucket, get_minio_client
 
 FORECAST_PREFIX = "bronze/files/open_meteo/forecast/incremental"
 ARCHIVE_PREFIX = "bronze/files/open_meteo/historical_weather_hourly/backfill"
+
+
+class QuotaExhausted(RuntimeError):
+    """Open-Meteo vẫn trả 429 sau khi cạn retry — hạn mức giờ/ngày đã hết."""
 
 FORECAST_FIELDS = "precipitation,rain,showers,precipitation_probability,weather_code"
 ARCHIVE_FIELDS = (
@@ -114,9 +124,15 @@ def _write(client: Minio, bucket: str, key: str, payload: object) -> None:
     )
 
 
-def _existing_keys(client: Minio, bucket: str, prefix: str) -> set[str]:
+def _existing_files(client: Minio, bucket: str, prefix: str) -> set[str]:
+    """Tên file đã có dưới prefix, bỏ tầng run dir khỏi key.
+
+    Khớp theo tên response_NNN.json nên resume nhận diện được cả file do
+    collector cũ ghi (`archive_.../response_NNN.json`) lẫn file fetcher ghi
+    (`run_.../response_NNN.json`).
+    """
     return {
-        obj.object_name
+        obj.object_name.rsplit("/", 1)[-1]
         for obj in client.list_objects(bucket, prefix=f"{prefix}/", recursive=True)
     }
 
@@ -132,37 +148,42 @@ def _land(
     prefix: str,
     extra_params: dict[str, str],
     url: str,
-    overwrite: bool,
     days: int,
 ) -> int:
-    # Bỏ qua theo TỪNG FILE, không theo cả prefix: crash giữa chừng tháng/giờ để
-    # lại vài file rồi chạy lại phải đi tiếp phần thiếu, không skip cả tháng.
-    existing: set[str] = set()
-    if not overwrite:
-        existing = _existing_keys(client, bucket, prefix)
+    # Mỗi lần _land ghi vào một run dir riêng nên key không bao giờ trùng lần
+    # chạy trước — object immutable thật sự, Auto Loader checkpoint theo key
+    # không bỏ sót hay nạp lại. Resume theo TỪNG FILE: crash giữa chừng
+    # tháng/giờ để lại vài file rồi chạy lại phải đi tiếp phần thiếu, không
+    # skip cả tháng.
+    existing = _existing_files(client, bucket, prefix)
+    run = f"run_{datetime.now(UTC):%Y%m%dT%H%M%S}"
     written = 0
     variables = len(extra_params["hourly"].split(","))
-    for index, batch in enumerate(_batches(locations, settings.location_batch_size)):
-        key = f"{prefix}/response_{index:03}.json"
-        if key in existing:
+    batches = list(_batches(locations, settings.location_batch_size))
+    for index, batch in enumerate(batches):
+        if f"response_{index:03}.json" in existing:
             continue
         units = effective_call_units(
             locations=len(batch), days=days, variables=variables
         )
-        payload = _fetch(
-            session,
-            pacer,
-            url,
-            _base_params(batch) | extra_params,
-            settings.request_timeout_seconds,
-            call_units=units,
-        )
-        _write(client, bucket, key, payload)
+        try:
+            payload = _fetch(
+                session,
+                pacer,
+                url,
+                _base_params(batch) | extra_params,
+                settings.request_timeout_seconds,
+                call_units=units,
+            )
+        except HTTPError as error:
+            # 429 sống sót qua toàn bộ retry (cooldown 60s/lần) nghĩa là hạn
+            # mức đã cạn thật — tiếp tục chỉ đốt thêm retry ở các tháng sau.
+            if error.response is not None and error.response.status_code == 429:
+                raise QuotaExhausted(str(error)) from error
+            raise
+        _write(client, bucket, f"{prefix}/{run}/response_{index:03}.json", payload)
         written += 1
-    print(
-        f"  {prefix} -> {written} file mới"
-        + (f", bỏ qua {len(existing)} file cũ" if existing else "")
-    )
+    print(f"  {prefix} -> {written} file mới, bỏ qua {len(batches) - written} file cũ")
     return written
 
 
@@ -174,6 +195,9 @@ def months_between(start: date, end: date) -> Iterator[date]:
 
 
 def main() -> None:
+    # Hiện dòng "Đợi Ns trước khi thử lại..." của retry — không còn khoảng lặng
+    # im lặng từng bị tưởng là treo máy.
+    logging.basicConfig(level=logging.WARNING, format="%(message)s")
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
     p_fc = sub.add_parser("forecast", help="Land dự báo cho slot giờ hiện tại")
@@ -184,11 +208,18 @@ def main() -> None:
     )
     for sub_parser in (p_fc, p_ar):
         sub_parser.add_argument("--limit", type=int, help="Chỉ N phường đầu (canary)")
-        sub_parser.add_argument("--overwrite", action="store_true")
         sub_parser.add_argument(
             "--execute", action="store_true", help="Mặc định chỉ in kế hoạch"
         )
+        sub_parser.add_argument(
+            "--parallel",
+            type=int,
+            default=3,
+            help="Số tháng tải song song (pacer vẫn giữ nguyên hạn mức)",
+        )
     args = parser.parse_args()
+    if args.parallel < 1:
+        parser.error("--parallel phải ≥ 1")
     settings = load_settings()
 
     connection = get_connection(attach_bronze=False, read_only=True)
@@ -203,8 +234,7 @@ def main() -> None:
         targets: list = [datetime.now(UTC).replace(minute=0, second=0, microsecond=0)]
     else:
         targets = list(months_between(args.start, args.end))
-    batch_size = settings.open_meteo.location_batch_size
-    per_run = -(-len(locations) // batch_size)
+    per_run = -(-len(locations) // settings.open_meteo.location_batch_size)
     if args.command == "forecast":
         days_each = max(1, settings.open_meteo.forecast_hours // 24)
         variables = len(FORECAST_FIELDS.split(","))
@@ -212,13 +242,10 @@ def main() -> None:
         days_each = 31
         variables = len(ARCHIVE_FIELDS.split(","))
     units_total = sum(
-        effective_call_units(
-            locations=min(batch_size, len(locations) - i * batch_size),
-            days=days_each,
-            variables=variables,
-        )
-        for i in range(per_run)
-    ) * len(targets)
+        effective_call_units(locations=len(b), days=days_each, variables=variables)
+        for _ in targets
+        for b in _batches(locations, settings.open_meteo.location_batch_size)
+    )
     print(
         f"Kế hoạch {args.command}: {len(locations)} phường, {per_run} request/lần, "
         f"{len(targets)} lần → {per_run * len(targets)} request"
@@ -243,7 +270,10 @@ def main() -> None:
         calls_per_hour=settings.open_meteo.max_effective_calls_per_hour,
     )
     total = 0
-    with build_http_session(max_attempts=settings.open_meteo.max_attempts) as session:
+    with build_http_session(
+        max_attempts=settings.open_meteo.max_attempts,
+        pool_size=max(10, args.parallel),
+    ) as session:
         shared = {
             "locations": locations,
             "settings": settings.open_meteo,
@@ -251,11 +281,11 @@ def main() -> None:
             "pacer": pacer,
             "client": client,
             "bucket": settings.minio.bucket,
-            "overwrite": args.overwrite,
         }
-        for target in targets:
+
+        def land(target: date) -> int:
             if args.command == "forecast":
-                total += _land(
+                return _land(
                     prefix=f"{FORECAST_PREFIX}/{target:%Y/%m/%d/%H}",
                     url=settings.open_meteo.forecast_url,
                     extra_params={
@@ -266,22 +296,39 @@ def main() -> None:
                     days=max(1, settings.open_meteo.forecast_hours // 24),
                     **shared,
                 )
-            else:
-                last = (target.replace(day=28) + timedelta(days=4)).replace(
-                    day=1
-                ) - timedelta(days=1)
-                total += _land(
-                    prefix=f"{ARCHIVE_PREFIX}/year={target.year:04}/month={target.month:02}",
-                    url=settings.open_meteo.archive_url,
-                    extra_params={
-                        "hourly": ARCHIVE_FIELDS,
-                        "models": settings.open_meteo.archive_model,
-                        "start_date": target.isoformat(),
-                        "end_date": last.isoformat(),
-                    },
-                    days=(last - target).days + 1,
-                    **shared,
-                )
+            last = (target.replace(day=28) + timedelta(days=4)).replace(
+                day=1
+            ) - timedelta(days=1)
+            return _land(
+                prefix=f"{ARCHIVE_PREFIX}/year={target.year:04}/month={target.month:02}",
+                url=settings.open_meteo.archive_url,
+                extra_params={
+                    "hourly": ARCHIVE_FIELDS,
+                    "models": settings.open_meteo.archive_model,
+                    "start_date": target.isoformat(),
+                    "end_date": last.isoformat(),
+                },
+                days=(last - target).days + 1,
+                **shared,
+            )
+
+        # Tải song song theo tháng: pacer thread-safe vẫn tiết chế nhịp gọi,
+        # luồng khác tranh thủ chuyển tải trong lúc luồng này chờ ngân sách.
+        pool = ThreadPoolExecutor(max_workers=args.parallel)
+        try:
+            total = sum(pool.map(land, targets))
+        except QuotaExhausted:
+            # Hạn mức cạn: đánh thức mọi giấc ngủ retry trong các luồng đang
+            # chạy rồi thoát mã lỗi cho cron/make thấy thất bại.
+            abort_all_retries()
+            print("⛔ Hết hạn mức Open-Meteo (429 sau khi cạn retry) — dừng hẳn.")
+            print("   Không mất dữ liệu: chạy lại sau khi quota reset,")
+            print("   các tháng đã land sẽ tự bị bỏ qua.")
+            raise SystemExit(2)
+        finally:
+            # cancel_futures ở mọi đường thoát: hàng đợi tháng chưa chạy không
+            # tiếp tục đốt retry vô ích sau khi lô đã dừng.
+            pool.shutdown(wait=False, cancel_futures=True)
     print(f"Xong: {total} file đã land. Bước tiếp theo: make load")
 
 

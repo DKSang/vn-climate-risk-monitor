@@ -1,4 +1,4 @@
-.PHONY: bootstrap bootstrap-env up down logs ingest-provinces fetch-forecast fetch-archive load quality seed dbt dbt-test freshness transform dbt-docs clean-lake lint
+.PHONY: bootstrap bootstrap-env up down logs fetch-forecast fetch-archive backfill-archive load quality seed dbt dbt-test freshness transform dbt-docs clean-lake lint
 
 # ==== Setup ====
 bootstrap-env:
@@ -22,9 +22,6 @@ logs:
 EXEC ?=
 _X = $(if $(EXEC),--execute,)
 
-ingest-provinces:
-	uv run collect-administrative-reference
-
 fetch-forecast:
 	uv run fetch-open-meteo forecast $(_X)
 
@@ -32,6 +29,12 @@ START ?= 2000-01-01
 END   ?= $(shell date +%Y-%m-01)
 fetch-archive:
 	uv run fetch-open-meteo archive --start $(START) --end $(END) $(_X)
+
+# Backfill archive 2001→nay theo từng năm, resumable (fetch bỏ qua file đã có).
+FROM ?= 2001
+TO   ?= $(shell date +%Y)
+backfill-archive:
+	scripts/backfill_archive.sh $(FROM) $(TO)
 
 # Phát hiện file mới trên MinIO và nạp vào bronze. Idempotent, exactly-once.
 # Không tham số = chạy mọi nguồn trong ingestion/sources/*.yml

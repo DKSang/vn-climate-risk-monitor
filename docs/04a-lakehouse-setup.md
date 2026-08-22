@@ -21,7 +21,7 @@ gold/
 ```
 
 Bronze chỉ có hai prefix con: `bronze/files/` chứa response object nguyên bản do
-collector quản lý; `bronze/tables/` chứa Parquet do DuckLake quản lý. Native
+fetch quản lý; `bronze/tables/` chứa Parquet do DuckLake quản lý. Native
 PostgreSQL schema `ingestion` lưu control state và tách khỏi DuckLake catalog.
 
 ## Khởi động
@@ -49,7 +49,7 @@ chạy liên tục: bootstrap step 4 (schema), dbt build + `assert_gold_is_reada
 
 | Prefix/schema | Owner | Chính sách |
 |---|---|---|
-| `bronze/files` | collectors | immutable, append-only, không DuckLake cleanup |
+| `bronze/files` | fetch | immutable, append-only, không DuckLake cleanup |
 | `bronze/tables/<table>` | `bronze_store.tables` | snapshot/maintenance qua catalog |
 | `silver/<table>` | DuckLake | validated/conformed |
 | `gold/<table>` | DuckLake | business-ready |
