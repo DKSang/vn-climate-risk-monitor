@@ -8,11 +8,6 @@ authors = [
 ]
 requires-python = ">=3.13"
 dependencies = [
-    # ── Ingest (small explicit Python stack) ──
-    "requests>=2.32.0",
-    "urllib3>=2.2.0",
-    "pyarrow>=19.0.0",
-
     # ── Lakehouse (DuckDB compute + MinIO storage) ──
     "duckdb>=1.5.5",
     "minio>=7.2.0",
@@ -34,8 +29,8 @@ dev = [
 ]
 
 [project.scripts]
-fetch-open-meteo = "vn_climate_risk_monitor.ingestion.fetch:main"
-load-sources = "vn_climate_risk_monitor.ingestion.run:main"
+fetch-open-meteo = "vn_climate_risk_monitor.open_meteo:main"
+load-sources = "vn_climate_risk_monitor.load:main"
 
 # Connector DuckLake cho Provero — Provero tự phát hiện qua entry_points.
 # Không cần fork Provero, không ghi đè connector built-in.
@@ -43,9 +38,9 @@ load-sources = "vn_climate_risk_monitor.ingestion.run:main"
 ducklake = "autoloader.provero_ducklake:DuckLakeConnector"
 
 [tool.uv.build-backend]
-# Hai package trong src/: `autoloader` là thư viện generic tái sử dụng được cho
-# dự án khác; `vn_climate_risk_monitor` là code riêng của dự án này.
-module-name = ["autoloader", "vn_climate_risk_monitor"]
+# Ba package trong src/: `autoloader` nạp file→bảng; `activities` Copy Data (Bento);
+# `vn_climate_risk_monitor` là code riêng của dự án này.
+module-name = ["autoloader", "activities", "vn_climate_risk_monitor"]
 
 [build-system]
 requires = ["uv_build>=0.12.3,<0.13.0"]

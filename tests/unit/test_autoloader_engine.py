@@ -15,6 +15,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from autoloader.checkpoint import PostgresIngestionRepository
 from autoloader.config import (
     DiscoveryConfig,
     LoaderConfig,
@@ -58,24 +59,23 @@ class FakeCheckpoint:
         self.files: dict[str, dict[str, Any]] = {}
         self.committed: list[UUID] = []
         self.failed: list[UUID] = []
+        self.source_attempt = FakeAttempt(attempt_id=uuid4())
 
     def known_object_keys(self, **_: Any) -> set[str]:
         return set(self.files)
 
-    def start_run(self, **_: Any) -> FakeAttempt:
-        return FakeAttempt(attempt_id=uuid4())
+    def ensure_source_run(self, **_: Any) -> FakeAttempt:
+        return self.source_attempt
 
-    def register_file(self, *, object_key: str, **_: Any) -> UUID:
+    def register_file(self, *, object_key: str, attempt_id: UUID | None = None, **_: Any) -> UUID:
         file_id = uuid4()
         self.files[object_key] = {
             "file_id": file_id,
+            "attempt_id": attempt_id or self.source_attempt.attempt_id,
             "status": "PENDING",
             "retry_count": 0,
         }
         return file_id
-
-    def succeed_run(self, *_: Any, **__: Any) -> None:
-        return None
 
     def claim_files(self, *, limit: int, max_retries: int, **_: Any):
         claimable = [
@@ -173,6 +173,20 @@ def test_second_run_loads_nothing_exactly_once(tmp_path: Path) -> None:
     assert second.rows_inserted == 0
 
 
+def test_later_discovery_keeps_the_same_attempt(tmp_path: Path) -> None:
+    """Directory listing không phải collector: mỗi load không được mint logical run mới."""
+    loader = build_loader(tmp_path, ["raw/a.json"], batch_size=10)
+    loader.load(now=datetime(2026, 1, 1, tzinfo=UTC))
+    loader.object_client._keys.append("raw/b.json")
+
+    later = loader.load(now=datetime(2026, 6, 1, tzinfo=UTC))
+
+    assert later.newly_registered == 1
+    assert later.committed_files == 1
+    attempt_ids = {meta["attempt_id"] for meta in loader.checkpoint.files.values()}
+    assert len(attempt_ids) == 1
+
+
 @pytest.mark.parametrize("batch_size", [1, 3, 10])
 def test_poison_file_does_not_block_healthy_files(
     tmp_path: Path, batch_size: int
@@ -257,3 +271,9 @@ def test_run_timestamp_is_timezone_aware(tmp_path: Path) -> None:
     result = loader.load(now=moment)
 
     assert result.source == "src"
+
+
+def test_repository_drops_collector_run_lifecycle() -> None:
+    assert not hasattr(PostgresIngestionRepository, "fail_run")
+    assert not hasattr(PostgresIngestionRepository, "succeed_run")
+    assert hasattr(PostgresIngestionRepository, "ensure_source_run")

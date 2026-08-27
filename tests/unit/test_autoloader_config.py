@@ -90,7 +90,7 @@ def test_missing_sql_file_fails_loudly(tmp_path: Path) -> None:
 
 def test_project_sources_are_all_valid() -> None:
     """Cấu hình thật trong repo phải nạp được — bắt lỗi gõ sai sớm."""
-    sources = sorted(Path("ingestion/sources").glob("*.yml"))
+    sources = sorted(Path("ingest/load").glob("*.yml"))
     assert sources, "không tìm thấy nguồn nào"
 
     for path in sources:
@@ -100,3 +100,11 @@ def test_project_sources_are_all_valid() -> None:
             f"{path}: target phải dạng catalog.schema.table"
         )
         assert "{{ files }}" in config.sql, f"{path}: SQL thiếu placeholder"
+
+
+def test_project_sources_omit_default_loader_block() -> None:
+    import yaml
+
+    for path in sorted(Path("ingest/load").glob("*.yml")):
+        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+        assert "loader" not in raw, f"{path}: loader knobs trùng LoaderConfig default"

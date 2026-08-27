@@ -13,6 +13,20 @@ class DDLConnection(Protocol):
     def commit(self) -> None: ...
 
 
+COLLECTOR_FILE_COLUMNS = (
+    "size_bytes",
+    "sha256",
+    "etag",
+    "content_type",
+    "http_status",
+    "request_attempt_count",
+    "expected_item_count",
+    "received_item_count",
+    "rows_parsed",
+    "rows_inserted",
+    "rescued_rows",
+)
+
 SCHEMA_STATEMENTS = (
     "CREATE SCHEMA IF NOT EXISTS ingestion",
     """
@@ -71,14 +85,6 @@ SCHEMA_STATEMENTS = (
         object_key TEXT NOT NULL UNIQUE,
         file_parameters JSONB NOT NULL DEFAULT '{}'::jsonb
             CHECK (jsonb_typeof(file_parameters) = 'object'),
-        size_bytes BIGINT CHECK (size_bytes >= 0),
-        sha256 CHAR(64),
-        etag TEXT,
-        content_type TEXT,
-        http_status INTEGER,
-        request_attempt_count INTEGER CHECK (request_attempt_count > 0),
-        expected_item_count INTEGER CHECK (expected_item_count > 0),
-        received_item_count INTEGER CHECK (received_item_count > 0),
         status TEXT NOT NULL
             CHECK (status IN ('PENDING', 'PROCESSING', 'COMMITTED', 'FAILED')),
         retry_count INTEGER NOT NULL DEFAULT 0 CHECK (retry_count >= 0),
@@ -86,34 +92,18 @@ SCHEMA_STATEMENTS = (
         processing_started_at_utc TIMESTAMPTZ,
         lease_expires_at_utc TIMESTAMPTZ,
         committed_at_utc TIMESTAMPTZ,
-        rows_parsed BIGINT,
-        rows_inserted BIGINT,
-        rescued_rows BIGINT,
         parser_version TEXT,
         error_type TEXT,
         error_message TEXT,
         created_at_utc TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at_utc TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        UNIQUE (attempt_id, batch_index),
-        CHECK (
-            received_item_count IS NULL
-            OR expected_item_count IS NULL
-            OR received_item_count = expected_item_count
-        )
+        UNIQUE (attempt_id, batch_index)
     )
     """,
-    """
-    ALTER TABLE ingestion.ingestion_files
-        ADD COLUMN IF NOT EXISTS rescued_rows BIGINT
-    """,
-    # Với directory-listing discovery, engine đăng ký file TRƯỚC khi đọc nội dung
-    # nên chưa thể biết số item. Bảng cũ (do collector tự ghi, biết trước số item)
-    # đặt NOT NULL; CREATE TABLE IF NOT EXISTS không sửa được bảng đã tồn tại nên
-    # phải ALTER tường minh. Idempotent.
-    """
-    ALTER TABLE ingestion.ingestion_files
-        ALTER COLUMN expected_item_count DROP NOT NULL
-    """,
+    *(
+        f"ALTER TABLE ingestion.ingestion_files DROP COLUMN IF EXISTS {column}"
+        for column in COLLECTOR_FILE_COLUMNS
+    ),
     """
     CREATE INDEX IF NOT EXISTS ingestion_files_checkpoint_idx
         ON ingestion.ingestion_files (status, created_at_utc)

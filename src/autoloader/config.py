@@ -7,7 +7,6 @@ Ví dụ ``sources/open_meteo_forecast.yml``::
 
     name: open_meteo_forecast
     dataset: forecast
-    scope: production
 
     discovery:
       prefix: bronze/files/open_meteo/forecast
@@ -16,11 +15,6 @@ Ví dụ ``sources/open_meteo_forecast.yml``::
     transform:
       sql_file: open_meteo_forecast.sql
       target: bronze_store.tables.open_meteo_forecast
-
-    loader:
-      batch_size: 10
-      lease_seconds: 300
-      max_retries: 3
 """
 
 from __future__ import annotations

@@ -1,10 +1,4 @@
-"""Nối autoloader vào cấu hình nguồn của dự án.
-
-Toàn bộ phần "biết về Open-Meteo" nằm trong ``ingestion/sources/*.yml`` và
-``*.sql``. File này chỉ dựng kết nối rồi giao cho engine.
-
-Thêm nguồn mới: tạo thêm 1 cặp YAML + SQL, KHÔNG cần sửa Python.
-"""
+"""Nối autoloader vào ``ingest/load/*.yml`` (file trên MinIO → bảng Bronze)."""
 
 from __future__ import annotations
 
@@ -22,7 +16,7 @@ from vn_climate_risk_monitor.config import load_settings
 from vn_climate_risk_monitor.lakehouse import get_connection
 from vn_climate_risk_monitor.storage import get_minio_client
 
-SOURCES_DIR = Path("ingestion/sources")
+LOAD_DIR = Path("ingest/load")
 
 
 def main() -> None:
@@ -36,11 +30,11 @@ def main() -> None:
 
     configs = [
         SourceConfig.from_yaml(path)
-        for path in sorted(SOURCES_DIR.glob("*.yml"))
+        for path in sorted(LOAD_DIR.glob("*.yml"))
         if not args.sources or path.stem in args.sources
     ]
     if not configs:
-        raise SystemExit(f"Không tìm thấy nguồn nào trong {SOURCES_DIR}")
+        raise SystemExit(f"Không tìm thấy nguồn nào trong {LOAD_DIR}")
 
     settings = load_settings()
     control = connect_control_plane(settings.postgres.ducklake_connection_string)

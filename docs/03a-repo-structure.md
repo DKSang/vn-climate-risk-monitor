@@ -9,26 +9,16 @@ Repository dùng ba data layer `bronze → silver → gold`. PostgreSQL schema
 
 ```text
 vn-climate-risk-monitor/
-├── src/autoloader/                  # package GENERIC: nạp file → bảng, đúng một lần mỗi file
-│   ├── engine.py                    # discovery → checkpoint → SQL transform → commit
-│   ├── checkpoint.py                # PostgreSQL repository: run/file state, claim, lease
-│   ├── config.py                    # khai báo nguồn bằng YAML (không phải code)
-│   ├── discovery.py                 # directory listing trên object storage
-│   ├── http.py                      # session retry + pacer hạn mức effective-call
-│   ├── models.py                    # RunAttempt, ClaimedObject
-│   ├── schema.py                    # DDL control plane (ingestion.*)
-│   └── provero_ducklake.py          # connector Provero đọc qua catalog DuckLake
+├── src/activities/                  # Copy Data: một row → một lần chạy Bento
+├── src/autoloader/                  # GENERIC: file mới → bảng, đúng một lần mỗi file
+├── src/vn_climate_risk_monitor/     # app: config, lakehouse, MinIO, nguồn, load CLI
+│   ├── open_meteo.py                # nguồn: missing_rows + CLI fetch
+│   └── load.py                      # nối autoloader vào ingest/load/*.yml
 │
-├── src/vn_climate_risk_monitor/     # code riêng của dự án
-│   ├── config.py                    # cấu hình typed từ environment
-│   ├── lakehouse.py                 # kết nối DuckDB + DuckLake
-│   ├── storage/minio.py             # tạo MinIO client, ensure bucket
-│   └── ingestion/
-│       ├── fetch.py                 # Open-Meteo API → JSON as-is lên MinIO
-│       └── run.py                   # nối autoloader vào ingestion/sources/*.yml
-│
-├── ingestion/sources/               # khai báo nguồn: 1 YAML + 1 SQL cho mỗi nguồn
-├── transform/                       # dbt + DuckDB + DuckLake
+├── ingest/
+│   ├── copy/open_meteo.yaml         # Bento: ROW_URL → PUT ROW_KEY
+│   └── load/                        # autoloader: 1 YAML + 1 SQL / nguồn
+├── transform/                       # dbt bronze → silver → gold
 │   ├── models/
 │   │   ├── bronze/                  # source-faithful; không hậu tố `_raw`
 │   │   ├── silver/                  # validate, dedup, conform
@@ -47,7 +37,7 @@ vn-climate-risk-monitor/
     └── fixtures/
 ```
 
-Ingestion Open-Meteo là hai lệnh: `fetch-open-meteo` (land JSON) và
+Ingestion Open-Meteo là hai lệnh: `fetch-open-meteo` (missing rows + Copy Data) và
 `load-sources` (autoloader nạp vào Bronze). Nguồn geography (GSO) **không có
 collector** — cập nhật rất chậm nên nạp thủ công vào PostgreSQL nguồn, dbt đọc
 trực tiếp qua attach `pg_source`.
@@ -79,9 +69,9 @@ không overwrite file nguồn (skip theo từng file đã có).
 | Gold | Dimension/fact, rolling/forecast KPI, scenario và pressure feature |
 | Ingestion control | PostgreSQL run/file state, lease, retry, parser version và lỗi |
 
-Thêm nguồn mới = thêm 1 cặp `ingestion/sources/<tên>.yml` + `<tên>.sql`, không
-viết Python (xem runbook 04b). Parser và Bronze table vẫn source-specific để
-tránh một generic parser đầy nhánh điều kiện.
+Thêm nguồn REST mới = hàm trả `[{url, key}]` trong app + YAML Bento trong
+`ingest/copy/`. Thêm nguồn file đã có trên MinIO = 1 cặp
+`ingest/load/<tên>.yml` + `<tên>.sql`.
 
 ## Quy ước đặt tên
 
@@ -99,8 +89,9 @@ tránh một generic parser đầy nhánh điều kiện.
 1. `fetch` land JSON as-is lên `bronze/files`, không đăng ký gì — crash giữa
    chừng không tạo file mồ côi vì discovery liệt kê storage.
 2. `load-sources` liệt kê prefix nguồn, đối chiếu checkpoint theo object key,
-   đăng ký file mới (run `SUCCEEDED` sau khi đủ file PENDING).
-3. Engine claim micro-batch bằng `FOR UPDATE SKIP LOCKED` + lease.
+   gắn file mới vào một discovery run `SUCCEEDED` ổn định / nguồn
+   (`logical_key=discovery`).
+3. Engine claim micro-batch kèm lease (gỡ file kẹt `PROCESSING` khi process chết).
 4. DuckDB chạy SQL transform của nguồn (`INSERT ... BY NAME` vào bảng đích).
 5. Chỉ sau Bronze commit mới cập nhật file ledger thành `COMMITTED`.
 6. Crash giữa bước 4 và 5: lease hết hạn, file được claim lại, INSERT lặp —

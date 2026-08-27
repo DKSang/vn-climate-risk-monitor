@@ -1,6 +1,13 @@
+from pathlib import Path
+
 import pytest
 
 from vn_climate_risk_monitor.config import load_settings
+
+
+def test_pyarrow_is_not_a_direct_dependency() -> None:
+    text = Path("pyproject.toml").read_text(encoding="utf-8")
+    assert "pyarrow" not in text
 
 
 def test_default_archive_model_is_era5(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -12,20 +19,16 @@ def test_default_archive_model_is_era5(monkeypatch: pytest.MonkeyPatch) -> None:
     load_settings.cache_clear()
 
 
-def test_default_open_meteo_rate_budgets_keep_minute_and_hour_headroom(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    for name in (
-        "OPEN_METEO_MAX_EFFECTIVE_CALLS_PER_MINUTE",
-        "OPEN_METEO_MAX_EFFECTIVE_CALLS_PER_HOUR",
-    ):
-        monkeypatch.delenv(name, raising=False)
+def test_default_open_meteo_hourly_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("OPEN_METEO_MAX_EFFECTIVE_CALLS_PER_HOUR", raising=False)
     load_settings.cache_clear()
 
     settings = load_settings().open_meteo
 
-    assert settings.max_effective_calls_per_minute == 500
     assert settings.max_effective_calls_per_hour == 4500
+    assert not hasattr(settings, "max_effective_calls_per_minute")
+    assert not hasattr(settings, "request_timeout_seconds")
+    assert not hasattr(settings, "max_attempts")
     load_settings.cache_clear()
 
 
@@ -37,8 +40,7 @@ def test_open_meteo_settings_are_loaded_from_environment(
         "OPEN_METEO_ARCHIVE_MODEL": "era5_land",
         "OPEN_METEO_FORECAST_HOURS": "72",
         "OPEN_METEO_LOCATION_BATCH_SIZE": "25",
-        "OPEN_METEO_REQUEST_TIMEOUT_SECONDS": "60",
-        "OPEN_METEO_MAX_ATTEMPTS": "5",
+        "OPEN_METEO_MAX_EFFECTIVE_CALLS_PER_HOUR": "1200",
     }
     for name, value in values.items():
         monkeypatch.setenv(name, value)
@@ -50,7 +52,7 @@ def test_open_meteo_settings_are_loaded_from_environment(
     assert settings.archive_model == "era5_land"
     assert settings.forecast_hours == 72
     assert settings.location_batch_size == 25
-    assert settings.max_attempts == 5
+    assert settings.max_effective_calls_per_hour == 1200
     load_settings.cache_clear()
 
 

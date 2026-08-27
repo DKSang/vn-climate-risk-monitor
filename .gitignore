@@ -11,6 +11,7 @@ wheels/
 
 # Secrets / local config
 .env
+.cache/
 .dlt/secrets.toml
 **/.dlt/secrets.toml
 

@@ -16,6 +16,9 @@
 > `bronze_store.tables.open_meteo_archive` và dedup theo (ô lưới, giờ) làm ở
 > Silver (`ROW_NUMBER() ... rn = 1`). Lý do và đánh đổi: xem ADR cuối
 > [04b-ingestion-runbook.md](04b-ingestion-runbook.md).
+>
+> **2026-08-27:** nhịp API chỉ còn `OPEN_METEO_MAX_EFFECTIVE_CALLS_PER_HOUR`
+> (đã bỏ `MAX_ATTEMPTS` / `CALLS_PER_MINUTE`). Fetch = Bento Copy Data.
 
 
 **Trạng thái code:** hoàn thành collector, parser, Bronze loader, backfill và
