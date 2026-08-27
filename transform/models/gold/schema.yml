@@ -27,3 +27,48 @@ models:
         tests: [not_null]
       - name: longitude
         tests: [not_null]
+
+  - name: fct_rainfall_forecast_hourly
+    description: >
+      GOLD — rolling rainfall 1/3/6/12/24/48/72 giờ theo returned model grid,
+      chỉ công bố giá trị khi đủ coverage.
+    columns:
+      - name: forecast_snapshot_id
+        tests: [not_null]
+      - name: grid_cell_id
+        tests: [not_null]
+      - name: valid_time_utc
+        tests: [not_null]
+
+  - name: fct_rainfall_forecast_summary
+    description: >
+      GOLD — tổng mưa và peak trong horizon 3/6/12/24/48 giờ cho mỗi grid.
+    columns:
+      - name: forecast_snapshot_id
+        tests: [not_null]
+      - name: grid_cell_id
+        tests: [not_null]
+      - name: as_of_utc
+        tests: [not_null]
+
+  - name: fct_ward_rainfall_forecast_hourly
+    description: "Projection rolling rainfall từ grid sang 126 phường Hà Nội."
+    columns:
+      - name: ward_key
+        tests: [not_null]
+      - name: ward_code
+        tests: [not_null]
+      - name: grid_cell_id
+        tests: [not_null]
+      - name: valid_time_utc
+        tests: [not_null]
+
+  - name: fct_ward_rainfall_forecast_summary
+    description: "Projection forecast horizon summary sang 126 phường Hà Nội."
+    columns:
+      - name: ward_key
+        tests: [unique, not_null]
+      - name: ward_code
+        tests: [unique, not_null]
+      - name: grid_cell_id
+        tests: [not_null]

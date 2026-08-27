@@ -1,9 +1,20 @@
 # Phương pháp KPI mưa lớn và áp lực ngập đô thị
 
-**Hanoi Flood & Climate Risk Monitor** · Draft v1.0 · 2026-08-21
+**Hanoi Flood & Climate Risk Monitor** · MVP v1.0 · 2026-08-22
 
-**Trạng thái:** phương pháp đã nghiên cứu, chờ kiểm định bằng dữ liệu lịch sử và
-nhãn ngập thực tế trước khi công bố như một sản phẩm cảnh báo.
+**Trạng thái:** logic forecast MVP đã được triển khai và kiểm thử trong dbt.
+Baseline khí hậu, event rainfall và hiệu chỉnh với nhãn ngập vẫn chờ backfill
+lịch sử đầy đủ; vì vậy sản phẩm hiện chỉ công bố feature áp lực mưa, không công
+bố xác suất ngập.
+
+Phạm vi đã triển khai:
+
+- Silver chọn đúng một forecast snapshot mới nhất có đủ 6 batch nguồn;
+- bridge 126 phường sang returned forecast grid;
+- rolling 1/3/6/12/24/48/72 giờ (`rain_*h_mm` NULL khi incomplete);
+- tổng mưa/peak forecast horizon 3/6/12/24/48 giờ;
+- scenario band 50/70/100 bằng CASE trên `rain_1h_mm`;
+- projection KPI grid sang 126 phường và fixture test các boundary quan trọng.
 
 ## 1. Mục tiêu
 
@@ -118,10 +129,12 @@ Ví dụ profile ERA5/ERA5-Land:
 - `requested_latitude/longitude` là tọa độ yêu cầu.
 - `grid_latitude/longitude` là tâm ô lưới thực sự được API sử dụng.
 - Nhiều phường có thể dùng chung một grid; đó không phải các forecast độc lập.
-- `retrieved_at_utc` là thời điểm lấy snapshot, không phải model run time.
-- Rolling KPI forecast không được trộn record từ các retrieval vintage khác nhau.
-- Live Best Match không bảo đảm một model cố định qua thời gian; KPI cần lưu model
-  request, endpoint và contract version để truy vết.
+- Logical slot trong `_source_file` là thời điểm hệ thống lấy snapshot, không phải
+  model run time do nhà cung cấp công bố.
+- Rolling KPI forecast không được trộn record từ các logical slot khác nhau.
+- Live Best Match không bảo đảm một model cố định qua thời gian. MVP chỉ phục vụ
+  snapshot hiện hành; khi K6 hoặc một use case backtest vintage được chốt mới mở
+  rộng ingestion contract cho model, endpoint và retrieval metadata.
 
 ## 4. Bộ KPI MVP
 
@@ -133,10 +146,6 @@ Với \(H\in\{1,3,6,12,24,48,72\}\):
 R_H(t)=\sum_{i=0}^{H-1}P_{t-i}
 \]
 
-\[
-\bar I_H(t)=\frac{R_H(t)}{H}
-\]
-
 | KPI | Đơn vị | Vai trò |
 |---|---:|---|
 | `rain_1h_mm` | mm | Áp lực mưa một giờ |
@@ -146,7 +155,9 @@ R_H(t)=\sum_{i=0}^{H-1}P_{t-i}
 | `rain_24h_mm` | mm | Mưa ngày/cửa sổ cảnh báo quốc gia |
 | `rain_48h_mm` | mm | Tham chiếu thiết kế thoát nước Hà Nội |
 | `rain_72h_mm` | mm | Điều kiện mưa kéo dài/tiền kỳ |
-| `mean_intensity_Hh_mmph` | mm/h | Cường độ trung bình trong cửa sổ |
+
+Cường độ trung bình trong cửa sổ là \(R_H/H\); consumer tự chia khi cần, không
+lưu thành cột riêng.
 
 Quy ước cửa sổ là `(t-H, t]`. KPI chỉ hợp lệ khi có đủ đúng \(H\) khoảng giờ
 liên tục. Khi thiếu dữ liệu:
@@ -225,15 +236,10 @@ hanoi_rain_scenario_band =
   over_100        if R1 > 100
 ```
 
-Riêng band cuối phải có thêm:
-
-```text
-consecutive_hours_over_100
-prolonged_condition_met
-```
-
-`prolonged_condition_met` chưa được hard-code cho đến khi nghiệp vụ định nghĩa
-“nhiều giờ”. Band này là **tham chiếu vận hành toàn thành phố**, không phải bằng
+Band cuối ("trên 100 mm/h kéo dài nhiều giờ") cần thêm điều kiện thời lượng,
+nhưng "nhiều giờ" chưa được nghiệp vụ định lượng (mục K1). Chờ K1 chốt mới
+triển khai cột thời lượng tương ứng; MVP chỉ gắn band `over_100` theo R1.
+Band này là **tham chiếu vận hành toàn thành phố**, không phải bằng
 chứng rằng mọi phường hoặc mọi điểm trong danh mục sẽ ngập.
 
 Với bảng KPI theo từng `valid_time`, scenario lấy từ `rain_1h_mm` tại giờ đó.
@@ -255,6 +261,9 @@ Tên KPI:
 hanoi_310mm_48h_reference_ratio
 hanoi_310mm_48h_exceeded
 ```
+
+Chưa triển khai trong MVP: ratio là phép chia R48/310, bổ sung cột khi có
+consumer thật.
 
 Không gọi đây là `drainage_capacity_utilization`: năng lực thực tế phụ thuộc lưu
 vực, mực nước đệm, cống, hồ và vận hành trạm bơm.
@@ -469,52 +478,48 @@ CSI=\frac{H}{H+M+F}
 Trong đó `H`, `M`, `F` lần lượt là hit, miss và false alarm. Cần đánh giá riêng
 theo lead-time `0–6h`, `6–24h`, `24–48h` và theo mùa.
 
-## 11. Data model đề xuất
+## 11. Data model triển khai
 
 ### 11.1 Silver forecast hourly
 
-Grain:
+MVP không tạo `silver.forecast_hourly_vintage`. Bronze vẫn giữ `_source_file` và
+`_ingested_at`; Silver chọn logical slot mới nhất có đủ đúng 6 batch production,
+dedup retry theo source object rồi gom các requested point trùng returned grid.
+
+Grain hiện tại:
 
 ```text
-requested_location_id
-× valid_time_utc
-× retrieved_at_utc
-× source_endpoint
-× model_requested
+forecast_snapshot_id × grid_cell_id × valid_time_utc
 ```
 
-Cột bắt buộc:
+Cột hiện tại:
 
 ```text
-request_id
-requested_location_id
-requested_latitude
-requested_longitude
+forecast_snapshot_id
+as_of_utc
 grid_cell_id
 grid_latitude
 grid_longitude
-grid_elevation_m
 valid_time_utc
-interval_start_utc
-interval_end_utc
-retrieved_at_utc
-run_initialisation_utc nullable
-source_endpoint
-model_requested
 precipitation_mm
 rain_mm
 showers_mm
 precipitation_probability_pct nullable
-source_object_key
-source_checksum
+weather_code
+source_object_keys
+_ingested_at
 ```
+
+Requested coordinate không cần lặp trên từng dòng: mapping forecast dùng
+returned grid gần nhất trong chính snapshot hiện hành. Contract vintage đầy
+đủ chỉ bổ sung khi có consumer cần đánh giá lịch sử forecast.
 
 ### 11.2 Gold rainfall KPI
 
 Grain forecast KPI:
 
 ```text
-grid_cell_id × forecast_vintage × as_of_utc × valid_time_utc
+forecast_snapshot_id × grid_cell_id × as_of_utc × valid_time_utc
 ```
 
 Phường là projection từ grid:
@@ -527,19 +532,17 @@ Không average 126 dòng phường để tạo KPI toàn Hà Nội vì grid có 
 bị tăng trọng số. KPI toàn thành phố phải dùng unique grid cell hoặc area-weighted
 mapping khi có polygon-grid intersection.
 
-Metadata KPI tối thiểu:
+Metadata KPI trên Gold:
 
 ```text
-kpi_definition_version
-threshold_source
-threshold_version
-threshold_scope
-forecast_vintage
-source_model
-coverage_ratio
-is_complete
-is_calibrated
+forecast_snapshot_id
+hanoi_rain_scenario_band
+source_object_keys   # snapshot grain — fct_rainfall_forecast_summary
 ```
+
+`rain_*h_mm IS NULL` nghĩa là cửa sổ incomplete; không lưu thêm
+`coverage_ratio` / `is_complete`. Lineage source object nằm ở summary, không
+lặp trên từng grid-hour.
 
 ## 12. Quality rules
 
@@ -551,12 +554,12 @@ is_calibrated
 - Unit phải lấy từ `hourly_units`, không giả định ngầm.
 - Với vùng không tuyết, `precipitation ≈ rain + showers` chỉ là soft check có
   tolerance, không phải công thức tái tạo tổng.
-- Mọi KPI theo phường phải công bố `weather_spatial_support = model_grid`.
-- Không publish nếu thiếu threshold version hoặc KPI definition version.
+- KPI phường là projection từ model grid; không suy ra độ phân giải phường.
 
 ## 13. Definition of Done cho KPI MVP
 
-- Có Silver hourly giữ đủ requested coordinate, returned grid và forecast vintage.
+- Có Silver hourly giữ một snapshot hoàn chỉnh, returned grid và source-object
+  lineage; không trộn logical slot.
 - Tính đúng `R1/R3/R6/R12/R24/R48/R72` trên fixture có kết quả biết trước.
 - Thiếu một giờ làm rolling incomplete, không biến thành mưa 0.
 - Không cộng trùng precipitation/rain/showers.
@@ -566,8 +569,14 @@ is_calibrated
 - Không sinh `official_disaster_risk_level`, `flood_probability` hoặc
   `flood_depth`.
 - Ward cùng grid nhận cùng forcing và UI hiển thị giới hạn độ phân giải.
-- Forecast vintage cũ vẫn truy vấn được sau lần retrieval mới.
-- Gold có lineage về Silver/Bronze và source object checksum.
+- 126 phường đều map được vào returned forecast grid.
+- Gold summary có lineage về các Bronze source object.
+
+Ngoài scope MVP hiện tại:
+
+- bảng Silver cho lịch sử forecast vintage và backtest theo model run;
+- source checksum/model/endpoint ở row-level ingestion contract;
+- baseline 1991–2020, event rainfall và hiệu chỉnh với nhãn ngập.
 
 ## 14. Quyết định và điểm còn mở
 
@@ -584,7 +593,7 @@ is_calibrated
 - historical product pin `ERA5`; H3 xác nhận đủ precipitation/rain/weather code
   và soil moisture, trong khi ERA5-Land trả toàn null cho ba biến mưa/weather.
 
-Cần chốt trước khi triển khai Gold:
+Còn mở sau forecast MVP:
 
 - **K1:** định nghĩa định lượng cho “trên 100 mm/h kéo dài nhiều giờ”;
 - **K3:** quy tắc event dùng 6 giờ khô có phù hợp với các trận mưa Hà Nội;

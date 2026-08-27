@@ -14,16 +14,16 @@ Theo dõi rủi ro **ngập úng / lũ / hạn hán** cho Hà Nội, chi tiết 
 | 4a | Setup Lakehouse (DuckLake+MinIO+Postgres) | [04a-lakehouse-setup.md](04a-lakehouse-setup.md) | ✅ Xong |
 | 4b | Ingestion runbook | [04b-ingestion-runbook.md](04b-ingestion-runbook.md) | ✅ Cron, health, recovery |
 | 4c | Open-Meteo Archive | [04c-open-meteo-archive.md](04c-open-meteo-archive.md) | ✅ Monthly incremental + year partition + tail |
-| 5 | Clean, Transform & KPI | [05-kpi-methodology.md](05-kpi-methodology.md) | 🟡 Phương pháp KPI xong · model thời tiết chưa làm |
+| 5 | Clean, Transform & KPI | [05-kpi-methodology.md](05-kpi-methodology.md) | 🟡 MVP forecast đã triển khai/test · baseline lịch sử và hiệu chỉnh chưa làm |
 | 6 | Lưu trữ — single source of truth | `06-storage-modeling.md` | ⬜ |
 | 7 | Data Quality & Observability | `07-data-quality.md` | 🟡 ingestion health có · model observability chưa làm |
 | 8 | Make it accessible | `08-serving-bi.md` | ⬜ |
 | 9 | Governance & Continuous Improvement | `09-governance.md` | ⬜ |
 
-## Trạng thái hệ thống (2026-08-21)
+## Trạng thái hệ thống (2026-08-22)
 
 ```
-dbt build  → PASS=51  ERROR=0
+dbt build  → PASS=112  WARN=0  ERROR=0
 MinIO      → 257 object / 153.9 MiB
 PostgreSQL → ingestion_runs + ingestion_files
 ```
@@ -34,8 +34,12 @@ PostgreSQL → ingestion_runs + ingestion_files
 | bronze | `gso_provinces` · `gso_wards` · `gso_administrative_units` · `gso_administrative_regions` · `ward_coordinates` | 34 · 3.321 · 5 · 8 · 3.321 |
 | silver | `wards` · `ward_centroids` · `ward_locations` | 3.321 mỗi bảng (view) |
 | gold | `dim_hanoi_ward` | **126** |
-| bronze weather | `open_meteo_forecast_hourly` | **9.144 rows** *(9.072 production + 72 canary)* |
-| bronze archive | `open_meteo_archive_hourly` | **1.106.784 rows** *(126 wards × 8.784 giờ năm 2000)* |
+| bronze weather | `open_meteo_forecast_hourly` | **11.016 rows** *(nhiều retrieval slot; Silver chỉ chọn slot hoàn chỉnh mới nhất)* |
+| bronze archive | `open_meteo_archive_hourly` | **9.470.184 rows** *(backfill chưa hoàn tất; khoảng thời gian hiện có còn có thể có gap)* |
+| silver weather | `forecast_hourly` | **3.456 rows** *(48 grid × 72 giờ, snapshot `2026-08-21 11:00 UTC`)* |
+| silver bridge | `bridge_hanoi_ward_forecast_grid` | **126** |
+| gold forecast | `fct_rainfall_forecast_hourly` · `fct_rainfall_forecast_summary` | **3.456** · **48** |
+| gold ward forecast | `fct_ward_rainfall_forecast_hourly` · `fct_ward_rainfall_forecast_summary` | **9.072** · **126** |
 
 ## Lệnh thường dùng
 

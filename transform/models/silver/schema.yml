@@ -56,11 +56,22 @@ models:
   # bảng không bị ghi đè bằng dữ liệu sai schema.
   - name: forecast_hourly
     description: >
-      SILVER — dự báo theo giờ, đã dedup theo (ô lưới, giờ hợp lệ).
+      SILVER — snapshot forecast hoàn chỉnh mới nhất, grain
+      (forecast_snapshot_id, grid_cell_id, valid_time_utc). Không ghép các
+      retrieval slot khác nhau.
     config:
       contract:
         enforced: true
     columns:
+      - name: forecast_snapshot_id
+        data_type: VARCHAR
+        constraints: [{type: not_null}]
+      - name: as_of_utc
+        data_type: TIMESTAMP WITH TIME ZONE
+        constraints: [{type: not_null}]
+      - name: grid_cell_id
+        data_type: VARCHAR
+        constraints: [{type: not_null}]
       - name: grid_latitude
         data_type: DOUBLE
         constraints: [{type: not_null}]
@@ -80,5 +91,24 @@ models:
         data_type: INTEGER
       - name: weather_code
         data_type: INTEGER
+      - name: source_object_keys
+        data_type: VARCHAR
+        constraints: [{type: not_null}]
       - name: _ingested_at
         data_type: TIMESTAMP WITH TIME ZONE
+
+  - name: bridge_hanoi_ward_forecast_grid
+    description: >
+      Map 126 centroid Hà Nội sang returned grid gần nhất trong snapshot
+      forecast hiện hành.
+    columns:
+      - name: ward_key
+        tests: [unique, not_null]
+      - name: ward_code
+        tests: [unique, not_null]
+      - name: forecast_snapshot_id
+        tests: [not_null]
+      - name: grid_cell_id
+        tests: [not_null]
+      - name: mapping_distance_km
+        tests: [not_null]
