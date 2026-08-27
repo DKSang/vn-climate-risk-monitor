@@ -1,0 +1,57 @@
+# Copy Data: một row → một GET → một object MinIO.
+# activities.copy đẩy cột lookup thành ROW_URL / ROW_KEY.
+# Nguồn REST khác: copy file này, sửa/bỏ processor mapping.
+
+http:
+  enabled: false
+
+input:
+  generate:
+    count: 1
+    mapping: 'root = ""'
+    auto_replay_nacks: false
+
+pipeline:
+  threads: 1
+  processors:
+    - try:
+        - http:
+            url: ${ROW_URL}
+            verb: GET
+            payload: ""
+            timeout: 60s
+            retries: 5
+            retry_period: 60s
+            max_retry_backoff: 60s
+            backoff_on: [429, 500, 502, 503, 504]
+            parallel: false
+            headers:
+              Accept: application/json
+              Accept-Encoding: identity
+              User-Agent: vn-climate-risk-monitor
+        - mapping: |
+            let body = content().parse_json()
+            let rows = if $body.type() == "array" { $body } else { [ $body ] }
+            let bad = $rows.filter(item -> item.error == true)
+            root = if $bad.length() > 0 {
+              throw("Open-Meteo: " + $bad.index(0).reason.or("error"))
+            } else { $rows }
+    - catch:
+        - log:
+            level: ERROR
+            message: 'Copy Data thất bại (${ROW_KEY}): ${! error() }'
+        - mapping: root = deleted()
+
+output:
+  aws_s3:
+    bucket: ${MINIO_BUCKET:vn-climate}
+    path: ${ROW_KEY}
+    content_type: application/json
+    endpoint: ${MINIO_S3_ENDPOINT:http://127.0.0.1:9000}
+    region: us-east-1
+    force_path_style_urls: true
+    max_in_flight: 1
+    timeout: 60s
+    credentials:
+      id: ${MINIO_ACCESS_KEY:minioadmin}
+      secret: ${MINIO_SECRET_KEY:minioadmin}

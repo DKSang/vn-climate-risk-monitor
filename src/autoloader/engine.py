@@ -11,8 +11,7 @@ Vòng đời một lần chạy, bám sát Databricks Auto Loader::
     4. execute SQL     DuckDB đọc file và ghi bảng đích (xử lý bằng SQL)
     5. commit_file()   đánh dấu COMMITTED               (exactly-once)
 
-Bước 4 là điểm khác biệt then chốt so với bản cũ: trước đây parse bằng Python
-(pyarrow, vòng lặp dict), giờ giao hẳn cho DuckDB. Python chỉ còn điều phối.
+Bước 4 giao explode/ép kiểu cho DuckDB. Python chỉ điều phối.
 """
 
 from __future__ import annotations
@@ -76,40 +75,27 @@ class AutoLoader:
             self.config.discovery.prefix,
             self.config.discovery.pattern,
         )
-        known = self.checkpoint.known_object_keys(
-            pipeline_name=self.config.name,
-            dataset=self.config.dataset,
-            scope=self.config.scope,
-        )
+        known = self.checkpoint.known_object_keys()
         fresh = select_new(found, known)
         if not fresh:
             return len(found), 0
 
-        attempt = self.checkpoint.start_run(
+        attempt = self.checkpoint.ensure_source_run(
             pipeline_name=self.config.name,
             source_name=self.config.name,
             dataset=self.config.dataset,
             scope=self.config.scope,
-            logical_key=f"discovery:{now:%Y%m%dT%H%M%SZ}",
-            scheduled_at_utc=now,
-            started_at_utc=now,
-            expected_file_count=len(fresh),
             source_uri=f"s3://{self.bucket}/{self.config.discovery.prefix}",
             collector_version=ENGINE_VERSION,
             contract_version="1",
-            run_parameters={"pattern": self.config.discovery.pattern},
+            scheduled_at_utc=now,
         )
-        for index, item in enumerate(fresh):
+        for item in fresh:
             self.checkpoint.register_file(
                 attempt_id=attempt.attempt_id,
-                batch_index=index,
                 object_key=item.object_key,
-                expected_item_count=None,
                 file_parameters={"size_bytes": item.size_bytes, "etag": item.etag},
             )
-        self.checkpoint.succeed_run(
-            attempt.attempt_id, completed_at_utc=now, require_checksums=False
-        )
         return len(found), len(fresh)
 
     # ── bước 3 + 4 + 5 ────────────────────────────────────────────────────────
@@ -158,24 +144,21 @@ class AutoLoader:
 
         Chi phí chỉ phát sinh khi có lỗi; đường thành công vẫn chạy cả lô một lần.
         """
-        if len(claimed) == 1:
-            item = claimed[0]
+        total_rows = 0
+        failures: list[str] = []
+        for item in claimed:
             try:
                 rows = self._run_transform([f"s3://{self.bucket}/{item.object_key}"])
             except Exception as error:  # noqa: BLE001
                 self.checkpoint.fail_file(
                     item.file_id, error=error, worker_id=self.worker_id
                 )
-                return 1, 0, (f"{item.object_key}: {type(error).__name__}: {error}",)
+                failures.append(
+                    f"{item.object_key}: {type(error).__name__}: {error}"
+                )
+                continue
             self._commit_all([item])
-            return 1, rows, ()
-
-        total_rows = 0
-        failures: list[str] = []
-        for item in claimed:
-            _, rows, errors = self._isolate_failures([item])
             total_rows += rows
-            failures.extend(errors)
         return len(claimed), total_rows, tuple(failures)
 
     def _commit_all(self, claimed: Sequence[Any]) -> None:

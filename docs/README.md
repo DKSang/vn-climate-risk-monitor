@@ -46,13 +46,12 @@ PostgreSQL → ingestion_runs + ingestion_files
 ```bash
 make up            # bật Postgres + MinIO + pgAdmin
 make transform     # dbt build (run + test + tự dọn file cũ)
-make clean-lake    # squash lakehouse, bỏ lịch sử snapshot
-make dbt-docs      # sinh và mở dbt docs
-make run-weather   # collect + load forecast production
-make plan-historical # dry-run yearly backfill 2000..ERA5 available date
-make run-historical-backfill # one new monthly checkpoint within free quota
-make run-historical-tail # candidate day UTC today - 5 days
-make weather-status # health/metrics ingestion
+make fetch-forecast EXEC=1   # land dự báo slot giờ hiện tại
+make load                    # autoloader nạp file mới vào Bronze
+make quality                 # Provero quét Bronze
+make backfill-archive        # fetch+load archive theo năm
+make clean-lake              # squash lakehouse, bỏ lịch sử snapshot
+make dbt-docs                # sinh và mở dbt docs
 ```
 
 ## Nguyên tắc làm việc

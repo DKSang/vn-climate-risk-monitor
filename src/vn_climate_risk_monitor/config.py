@@ -77,9 +77,6 @@ class OpenMeteoSettings:
     archive_model: str
     forecast_hours: int
     location_batch_size: int
-    request_timeout_seconds: int
-    max_attempts: int
-    max_effective_calls_per_minute: int
     max_effective_calls_per_hour: int
 
 
@@ -133,18 +130,6 @@ def load_settings() -> Settings:
             location_batch_size=_as_int(
                 "OPEN_METEO_LOCATION_BATCH_SIZE",
                 os.getenv("OPEN_METEO_LOCATION_BATCH_SIZE", "25"),
-            ),
-            request_timeout_seconds=_as_int(
-                "OPEN_METEO_REQUEST_TIMEOUT_SECONDS",
-                os.getenv("OPEN_METEO_REQUEST_TIMEOUT_SECONDS", "60"),
-            ),
-            max_attempts=_as_int(
-                "OPEN_METEO_MAX_ATTEMPTS",
-                os.getenv("OPEN_METEO_MAX_ATTEMPTS", "5"),
-            ),
-            max_effective_calls_per_minute=_as_int(
-                "OPEN_METEO_MAX_EFFECTIVE_CALLS_PER_MINUTE",
-                os.getenv("OPEN_METEO_MAX_EFFECTIVE_CALLS_PER_MINUTE", "500"),
             ),
             max_effective_calls_per_hour=_as_int(
                 "OPEN_METEO_MAX_EFFECTIVE_CALLS_PER_HOUR",

@@ -11,7 +11,7 @@ Sources
   └── Open-Meteo
             │
             ▼
-Collector: PostgreSQL control plane + MinIO source objects
+Fetch (Bento) + autoloader: MinIO source objects + PostgreSQL checkpoint
             │
             ▼
 DuckLake
@@ -87,25 +87,25 @@ ingestion.ingestion_runs
 ingestion.ingestion_files
 ```
 
-Hai bảng chỉ giữ state chung và immutable source context. Các cột lifecycle,
-retry, lease, checksum và metrics là typed relational columns; `run_parameters`
-và `file_parameters` là JSONB nhỏ được source adapter deserialize thành typed
-contract. Không lưu manifest hoặc danh sách file trong JSONB.
+Hai bảng giữ checkpoint file và một discovery run ổn định / nguồn
+(`logical_key=discovery`). File ledger: `object_key`, status, retry, lease,
+error. `file_parameters` JSONB nhỏ (etag/size lúc listing). Không checksum
+SHA-256, không mint logical run theo timestamp mỗi lần load.
 
-Collector đăng ký từng response object vào PostgreSQL. Loader chỉ claim file
-`PENDING` thuộc attempt `SUCCEEDED`, xác minh checksum rồi `MERGE` vào Bronze
-bằng deterministic row id. PostgreSQL control plane và DuckLake catalog không
-được giả định có distributed transaction: commit Bronze trước, rồi đánh dấu file
-`COMMITTED`; nếu crash ở giữa thì retry cùng deterministic id.
+Fetch land JSON lên MinIO, không đăng ký control plane. Autoloader liệt kê
+storage, gắn file mới vào run `SUCCEEDED` của nguồn, claim kèm lease, `INSERT`
+Bronze bằng SQL. PostgreSQL và DuckLake không có distributed transaction:
+commit Bronze trước, rồi `COMMITTED`; crash giữa chừng thì lease hết hạn, claim
+lại, INSERT lặp (at-least-once; Silver dedup).
 
-Pattern này học theo các thuộc tính cốt lõi của Databricks Auto Loader:
+Pattern học Auto Loader, thu gọn cho single-node:
 
-- incremental discovery qua PostgreSQL file ledger;
-- checkpoint riêng cho mỗi pipeline;
-- immutable files và không overwrite;
-- claim bằng `FOR UPDATE SKIP LOCKED` và lease recovery;
-- rescued data cho schema drift;
-- available-now micro-batch cho workload không cần streaming 24/7.
+- incremental discovery qua directory listing + file ledger;
+- một checkpoint / nguồn, không collector attempt;
+- immutable files, không overwrite;
+- lease recovery khi process chết giữa batch (`PROCESSING`);
+- `_rescued_data` trong SQL transform cho giá trị không ép kiểu được;
+- available-now micro-batch.
 
 Parser và Bronze schema không generic: mỗi source giữ contract/table riêng.
 Silver là nơi conform forecast, archive và observation về semantic dùng chung.
@@ -142,23 +142,19 @@ prefix `__dbt_tmp` rồi chỉ rename metadata.
 - ba schema medallion;
 - native PostgreSQL ingestion control plane;
 - geography Bronze/Silver/Gold;
-- package boundary cho collectors/loaders/state;
-- Open-Meteo forecast collector chỉ ghi immutable response JSON;
-- Phase 3 run/file state, logical attempt identity, claim/lease và checksum reader;
-- Phase 4 explicit Arrow parser và idempotent Bronze DuckLake loader.
-- Phase 5 deterministic schedule slot, collect→load orchestration, quota guardrail,
-  timeout/lease recovery và PostgreSQL health metrics.
-- Open-Meteo Archive monthly incremental pipeline, strict parser, idempotent
-  Bronze `MERGE`, year partition, effective-call pacing, backfill admission và
-  daily tail cron.
+- fetch Open-Meteo: missing rows + Bento Copy Data, JSON bất biến trên MinIO;
+- autoloader: directory listing, discovery run ổn định, claim/lease, SQL transform;
+- forecast hourly production 126 phường/xã;
+- archive monthly backfill + pacing theo `OPEN_METEO_MAX_EFFECTIVE_CALLS_PER_HOUR`.
 
 Chưa có:
 
 - các bảng rainfall/scenario/pressure;
 - serving.
 
-Chi tiết cây code: [03a-repo-structure.md](03a-repo-structure.md). Contract
-ingestion: [04-ingestion.md](04-ingestion.md). Phương pháp KPI:
+Chi tiết cây code: [03a-repo-structure.md](03a-repo-structure.md). Ingestion hiện hành:
+[04b-ingestion-runbook.md](04b-ingestion-runbook.md). Ghi chép thiết kế/khảo sát API cũ:
+[04-ingestion.md](04-ingestion.md). Phương pháp KPI:
 [05-kpi-methodology.md](05-kpi-methodology.md).
 
 ## Tham khảo

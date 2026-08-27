@@ -10,6 +10,9 @@
 > **Lệnh hiện hành và cách chạy backfill: xem [04b-ingestion-runbook.md](04b-ingestion-runbook.md).**
 >
 > Giữ file này làm ghi chép thiết kế và kết quả khảo sát API — phần đó vẫn đúng.
+>
+> **2026-08-27:** fetch là Bento Copy Data (không Lookup CSV / ForEach);
+> autoloader dùng một discovery run / nguồn, không checksum collector.
 
 
 **Hanoi Flood & Climate Risk Monitor** · v2.0 · 2026-08-21

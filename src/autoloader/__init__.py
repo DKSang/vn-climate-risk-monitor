@@ -11,6 +11,8 @@ Mô phỏng Databricks Auto Loader (``cloudFiles``) trên nền DuckDB + Postgre
 Package này KHÔNG phụ thuộc dự án nào. Thêm nguồn mới = thêm 1 file YAML +
 1 file SQL, không viết Python.
 
+Chiều ngược (API → file) nằm ở package ``activities``.
+
     from autoloader import AutoLoader, SourceConfig
 
     loader = AutoLoader(
@@ -25,7 +27,6 @@ Package này KHÔNG phụ thuộc dự án nào. Thêm nguồn mới = thêm 1 f
 
 from autoloader.checkpoint import (
     PostgresIngestionRepository,
-    RunAlreadySucceededError,
     connect_control_plane,
 )
 from autoloader.config import LoaderConfig, SourceConfig
@@ -39,7 +40,6 @@ __all__ = [
     "LoadResult",
     "LoaderConfig",
     "PostgresIngestionRepository",
-    "RunAlreadySucceededError",
     "SourceConfig",
     "connect_control_plane",
     "discover",

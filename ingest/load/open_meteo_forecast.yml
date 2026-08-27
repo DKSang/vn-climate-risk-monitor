@@ -1,6 +1,5 @@
 name: open_meteo_forecast
 dataset: forecast
-scope: production
 
 discovery:
   prefix: bronze/files/open_meteo/forecast
@@ -9,9 +8,3 @@ discovery:
 transform:
   sql_file: open_meteo_forecast.sql
   target: bronze_store.tables.open_meteo_forecast
-
-loader:
-  batch_size: 10       # ~ cloudFiles.maxFilesPerTrigger
-  lease_seconds: 300
-  max_retries: 3
-  max_batches: 100

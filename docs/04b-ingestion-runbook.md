@@ -1,21 +1,30 @@
 # Runbook — Ingestion
 
-**Cập nhật 2026-08-21** sau khi gộp code về package `autoloader`. Mọi lệnh dưới
-đây đã chạy thật trên máy, không phải chép từ thiết kế.
+**Cập nhật 2026-08-27** — fetch HTTP là Bento Copy Data; lookup CSV / ForEach đã cắt.
+Autoloader: một discovery run ổn định / nguồn; cột collector (sha256, rows_parsed, …) DROP.
 
 ---
 
 ## Kiến trúc hai bước, cố ý tách rời
 
 ```
-1. fetch   Python gọi Open-Meteo, ghi JSON as-is lên MinIO
+1. fetch   missing_rows() → [{url, key}] (126 phường, bỏ file đã có)
+           for row in rows, pause theo OPEN_METEO_MAX_EFFECTIVE_CALLS_PER_HOUR:
+             Copy Data = Bento: GET rồi ghi JSON as-is lên MinIO
               bronze/files/open_meteo/<dataset>/...
 2. load    autoloader liệt kê MinIO, nạp file MỚI vào bronze bằng SQL
               bronze_store.tables.open_meteo_*
 ```
 
-Tách ra vì: lỗi mạng ở bước 1 không làm mất dữ liệu đã tải; bước 2 chạy lại bao
-nhiêu lần cũng an toàn (exactly-once theo object key trong checkpoint Postgres).
+Copy Data (`src/activities/copy.py`) không biết Open-Meteo là gì. Row được đẩy
+vào Bento bằng biến môi trường `ROW_<TÊN CỘT>`, nên **thêm nguồn REST mới = 1 file
+YAML + một hàm trả về row**, không viết thêm engine. Nhịp API nằm trong
+`open_meteo.py`, không trong YAML (mỗi row một process Bento nên `rate_limit`
+trong YAML không thấy message thứ hai).
+
+Tách ra vì: lỗi mạng ở bước 1 không làm mất dữ liệu đã tải; bước 2 checkpoint
+theo object key — file đã `COMMITTED` không nạp lại. Crash sau INSERT trước
+checkpoint: lease hết hạn, INSERT lặp (at-least-once); Silver dedup.
 
 Bước 2 **không quan tâm ai ghi file** — nó dùng directory listing. File do bước 1
 ghi dở rồi tiến trình chết vẫn được nhặt ở lần chạy sau.
@@ -35,7 +44,9 @@ Bỏ `EXEC=1` thì chỉ in kế hoạch, không gọi API. Luôn chạy thử t
 
 ERA5 từ 2000-01 đến nay là **~320 tháng**, mỗi tháng **6 request** (126 phường ÷
 25 phường/request) → **~1.920 request**. Open-Meteo free tier giới hạn theo phút
-và giờ, `EffectiveCallPacer` tự giãn nhịp nên không cần tự sleep.
+và giờ. Fetch tự giãn nhịp: `3600 × đơn vị mỗi request ÷
+OPEN_METEO_MAX_EFFECTIVE_CALLS_PER_HOUR` (archive ~54 đơn vị → ~43s/request,
+forecast ~25 đơn vị → ~20s).
 
 Chạy bằng script — nó lặp từng năm, fetch xong năm nào là `make load` năm đó:
 
@@ -61,12 +72,11 @@ nên không bao giờ ghi đè object cũ — Bronze giữ cam kết immutable, 
 theo tên file nên nhận cả dữ liệu collector cũ ghi (`…/archive_…/response_NNN.json`).
 Muốn tải lại tháng đã xong thì xoá run dir đó trên MinIO rồi chạy lại fetch.
 
-Fetch tải **song song theo tháng** (mặc định 3, chỉnh `--parallel N`). Pacer đã
-thread-safe nên hạn mức/phút và/giờ vẫn được giữ nguyên bất kể số luồng — song
-song không tăng nguy cơ 429, nó chỉ che thời gian chờ chuyển tải của request
-ERA5 (vài giây tới chục giây/file). Trần tốc độ thật sự là hạn mức:
-`OPEN_METEO_MAX_EFFECTIVE_CALLS_PER_HOUR` (mặc định 4500, sát trần free tier
-5000/giờ) — muốn nhanh hơn nữa thì nâng biến này theo plan Open-Meteo đang dùng.
+Fetch chạy **tuần tự** — mỗi row một tiến trình Bento — nên Open-Meteo chỉ thấy
+một request đồng thời / IP. Muốn chậm/nhanh hơn thì chỉnh
+`OPEN_METEO_MAX_EFFECTIVE_CALLS_PER_HOUR`. Cần binary `bento` trên PATH, hoặc
+Docker (`ghcr.io/warpstreamlabs/bento:1.20.0`, `--network host` vì MinIO ở
+localhost). Dry-run (`không EXEC=1`) in kế hoạch trước khi gọi API.
 
 Kiểm tra tiến độ:
 
@@ -88,16 +98,17 @@ Backfill **không đặt lịch** — chạy tay theo từng năm như trên.
 
 ### Hết hạn mức Open-Meteo (429)
 
-Khi 429 sống sót qua toàn bộ retry (cooldown 60s/lần), fetch dừng sạch cả lô với
-thông báo "⛔ Hết hạn mức Open-Meteo" và exit code 2 — không mất dữ liệu: các
-tháng đã land xong sẽ tự bị bỏ qua khi chạy lại. Chờ quota reset (5.000/giờ lăn,
-10.000/ngày) rồi chạy lại đúng lệnh cũ; script backfill cũng chỉ cần chạy lại.
+Khi 429 sống sót qua toàn bộ retry Bento (5 lần, cooldown 60s), Copy Data **bỏ
+hẳn row** đó — payload lỗi không bao giờ bị ghi đè lên bronze — và log dòng
+`Copy Data thất bại (<key>)`. Python thấy object không tồn tại thì dừng cả lô
+với exit code 2. Không mất dữ liệu: các file đã land sẽ tự bị bỏ qua khi chạy
+lại. Chờ quota reset (5.000/giờ lăn, 10.000/ngày) rồi chạy lại đúng lệnh cũ;
+script backfill cũng chỉ cần chạy lại.
 
 Lưu ý: chi phí "~N đơn vị" mà dry-run in ra là **ước lượng theo công thức xấp xỉ**
-của Open-Meteo. Nếu 429 đến sớm hơn nhiều so với dự kiến (ví dụ dừng ở ~60%
-kế hoạch) thì hoặc hạn mức hôm đó đã bị tiêu bởi các lần chạy trước, hoặc trọng
-số thực cao hơn công thức — lúc đó hạ `OPEN_METEO_MAX_EFFECTIVE_CALLS_PER_HOUR`
-chứa hơn và chia backfill thành nhiều đợt nhỏ hơn.
+của Open-Meteo. Nhịp lúc `--execute` tính từ
+`OPEN_METEO_MAX_EFFECTIVE_CALLS_PER_HOUR`. Nếu 429 đến sớm hơn dự kiến thì chia
+nhỏ `--start`/`--end` hoặc hạ biến đó.
 
 ### Một file JSON hỏng
 
@@ -150,32 +161,36 @@ giữ 7 ngày; lệnh này là dọn mạnh tay.
 
 ## Thêm nguồn mới
 
-Không cần viết Python. Thêm hai file vào `ingestion/sources/`:
+**File đã nằm trên MinIO** — không viết Python. Thêm hai file vào `ingest/load/`:
 
 ```
-my_source.yml    khai báo discovery prefix, bảng đích, batch size
+my_source.yml    khai báo discovery prefix, bảng đích (loader knobs chỉ khi lệch default)
 my_source.sql    SELECT ... FROM read_json_auto({{ files }})
 ```
+
+**REST API** — thêm hàm trả row trong `vn_climate_risk_monitor/<tên>.py` +
+`ingest/copy/<tên>.yaml`. Copy Data tái sử dụng `src/activities`.
 
 `{{ files }}` được engine thay bằng danh sách file đã claim. Tạo bảng đích trước
 (`CREATE TABLE ... AS (<sql>) LIMIT 0`), rồi `make load`.
 
 ## ADR — các quyết định đã chốt của kiến trúc hiện tại
 
-**Integrity delegated cho MinIO (2026-08-22).** Kiến trúc cũ tính SHA-256 lúc
-ghi và verify lúc đọc. Directory-listing discovery không tải file về nên không
-băm được (băm toàn bộ chỉ để verify là mất ý nghĩa của listing); hợp đồng
-checksum đã bỏ. Cơ chế bảo toàn vẹn còn lại: MinIO bitrot protection + `etag`/
-`size_bytes` ghi trong `file_parameters` JSONB ngay tại discovery. Các cột
-`sha256`, `etag`, `content_type`, `http_status`, `request_attempt_count`,
-`expected_item_count`, `received_item_count` trong `ingestion.ingestion_files`
-là di sản của kiến trúc cũ, luôn NULL — sẽ DROP ở lần evolve schema tới, tránh
-đổi schema khi backfill đang chạy.
+**Integrity delegated cho MinIO (2026-08-22, cột collector DROP 2026-08-27).**
+Kiến trúc cũ tính SHA-256 lúc ghi và verify lúc đọc. Directory-listing discovery
+không tải file về nên không băm được; hợp đồng checksum đã bỏ. Cơ chế bảo toàn
+vẹn còn lại: MinIO bitrot protection + `etag`/`size_bytes` trong
+`file_parameters` JSONB lúc discovery. Các cột collector trên
+`ingestion.ingestion_files` (`sha256`, `http_status`, `rows_parsed`, …) đã DROP.
 
 **Metrics per-file không ghi (2026-08-22).** Engine INSERT cả lô bằng một câu SQL
-nên chỉ biết tổng; chia đều cho từng file là số giả. `rows_parsed`/
-`rows_inserted`/`rescued_rows` per-file để NULL; tổng của lượt chạy in ra ở
-stdout khi `make load` và suy ra được từ số file COMMITTED.
+nên chỉ biết tổng; chia đều cho từng file là số giả. Tổng của lượt chạy in ra ở
+stdout khi `make load`.
+
+**Discovery run ổn định (2026-08-27).** Autoloader không mint `logical_key =
+discovery:{timestamp}` mỗi lần load. Một run `SUCCEEDED` / nguồn
+(`logical_key=discovery`) nhận thêm file PENDING. Lease trên `PROCESSING` vẫn
+là crash recovery (flock chỉ chống hai process sống cùng lúc).
 
 **Bronze INSERT, dedup ở Silver (2026-08-22).** Không MERGE theo row id ở Bronze:
 forecast giữ MỌI vintage (mỗi vintage là dữ liệu phân tích, docs/04 §1), và

@@ -5,7 +5,8 @@
 # đi tiếp phần thiếu — năm đã xong chỉ tốn listing MinIO, không tốn request.
 #
 # Dùng chung lock /tmp/vn-climate-open-meteo.lock với cron forecast và tail
-# (pacer chỉ bảo vệ trong một tiến trình — các job phải loại trừ nhau bằng lock).
+# (Bento rate-limit chỉ bảo vệ trong một tiến trình — các job phải loại trừ
+# nhau bằng lock).
 #
 # Dùng:
 #   make backfill-archive              # 2001 → nay
