@@ -1,7 +1,6 @@
 from datetime import date
 from types import SimpleNamespace
 
-from activities.copy import row_env
 from vn_climate_risk_monitor import open_meteo
 from vn_climate_risk_monitor.open_meteo import Location, missing_rows
 
@@ -88,13 +87,6 @@ def test_forecast_lookup_uses_forecast_url_and_prefix() -> None:
     assert rows[0]["key"].startswith(
         "bronze/files/open_meteo/forecast/incremental/2026/08/27/09/run_fc/"
     )
-
-
-def test_row_env_exposes_every_column() -> None:
-    assert row_env({"url": "https://x", "key": "a/b.json"}) == {
-        "ROW_URL": "https://x",
-        "ROW_KEY": "a/b.json",
-    }
 
 
 def test_fetch_does_not_write_a_lookup_csv() -> None:

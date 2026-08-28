@@ -12,11 +12,10 @@ Bronze → Silver → Gold
 ```
 
 Luồng ingestion tách hai bước: `fetch-open-meteo` lập danh sách URL còn thiếu rồi
-gọi Copy Data (Bento) — một tiến trình GET→PUT mỗi row, giãn nhịp theo
-`OPEN_METEO_MAX_EFFECTIVE_CALLS_PER_HOUR` — để land JSON nguyên bản vào
-`bronze/files` trên MinIO; `autoloader` liệt kê storage, checkpoint Postgres
+GET + PUT JSON lên `bronze/files` trên MinIO (`fetch.land`, giãn nhịp theo
+`OPEN_METEO_MAX_EFFECTIVE_CALLS_PER_HOUR`); `autoloader` liệt kê storage, checkpoint Postgres
 (một discovery run / nguồn, lease khi load), micro-batch, nạp Bronze DuckLake
-bằng SQL trong `ingest/load/*.yml` + `*.sql`. Bronze là INSERT — mọi vintage
+bằng SQL trong `sources/*.yml` + `*.sql`. Bronze là INSERT — mọi vintage
 được giữ nguyên; dedup theo (ô lưới, giờ) thực hiện ở Silver. Forecast chạy
 production hằng giờ cho đủ 126 phường/xã (9.072 dòng Bronze hourly, không
 rescued row). Archive: năm 2000 đã land đủ 1.106.784 ward-hour; backfill

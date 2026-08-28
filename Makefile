@@ -17,7 +17,7 @@ down:
 logs:
 	docker compose logs -f
 
-# ==== Ingest: activities (Lookup/ForEach/Copy) -> autoloader nạp bronze (SQL) ====
+# ==== Fetch (HTTP→MinIO) rồi autoloader nạp bronze (SQL) ====
 # Mặc định chỉ IN KẾ HOẠCH; thêm EXEC=1 để chạy thật.
 EXEC ?=
 _X = $(if $(EXEC),--execute,)
@@ -37,7 +37,7 @@ backfill-archive:
 	scripts/backfill_archive.sh $(FROM) $(TO)
 
 # Phát hiện file mới trên MinIO và nạp vào bronze. Idempotent, exactly-once.
-# Không tham số = chạy mọi nguồn trong ingest/load/*.yml
+# Không tham số = chạy mọi nguồn trong sources/*.yml
 load:
 	uv run load-sources $(SOURCE)
 

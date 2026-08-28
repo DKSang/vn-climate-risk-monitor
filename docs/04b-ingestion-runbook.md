@@ -1,7 +1,6 @@
 # Runbook — Ingestion
 
-**Cập nhật 2026-08-27** — fetch HTTP là Bento Copy Data; lookup CSV / ForEach đã cắt.
-Autoloader: một discovery run ổn định / nguồn; cột collector (sha256, rows_parsed, …) DROP.
+**Cập nhật 2026-08-28** — `fetch.land` (HTTP→MinIO); `autoloader` (file→bảng); cấu hình nguồn ở `sources/`.
 
 ---
 
@@ -10,17 +9,13 @@ Autoloader: một discovery run ổn định / nguồn; cột collector (sha256,
 ```
 1. fetch   missing_rows() → [{url, key}] (126 phường, bỏ file đã có)
            for row in rows, pause theo OPEN_METEO_MAX_EFFECTIVE_CALLS_PER_HOUR:
-             Copy Data = Bento: GET rồi ghi JSON as-is lên MinIO
+             land(): GET rồi ghi JSON lên MinIO
               bronze/files/open_meteo/<dataset>/...
 2. load    autoloader liệt kê MinIO, nạp file MỚI vào bronze bằng SQL
               bronze_store.tables.open_meteo_*
 ```
 
-Copy Data (`src/activities/copy.py`) không biết Open-Meteo là gì. Row được đẩy
-vào Bento bằng biến môi trường `ROW_<TÊN CỘT>`, nên **thêm nguồn REST mới = 1 file
-YAML + một hàm trả về row**, không viết thêm engine. Nhịp API nằm trong
-`open_meteo.py`, không trong YAML (mỗi row một process Bento nên `rate_limit`
-trong YAML không thấy message thứ hai).
+`land()` nằm trong package ``fetch``. Planner Open-Meteo (URL, skip file, nhịp API) nằm trong ``open_meteo.py``. Object singleton được bọc thành array để khớp `read_json_auto` với file cũ.
 
 Tách ra vì: lỗi mạng ở bước 1 không làm mất dữ liệu đã tải; bước 2 checkpoint
 theo object key — file đã `COMMITTED` không nạp lại. Crash sau INSERT trước
@@ -72,11 +67,10 @@ nên không bao giờ ghi đè object cũ — Bronze giữ cam kết immutable, 
 theo tên file nên nhận cả dữ liệu collector cũ ghi (`…/archive_…/response_NNN.json`).
 Muốn tải lại tháng đã xong thì xoá run dir đó trên MinIO rồi chạy lại fetch.
 
-Fetch chạy **tuần tự** — mỗi row một tiến trình Bento — nên Open-Meteo chỉ thấy
+Fetch chạy **tuần tự** — một GET tại một thời điểm — nên Open-Meteo chỉ thấy
 một request đồng thời / IP. Muốn chậm/nhanh hơn thì chỉnh
-`OPEN_METEO_MAX_EFFECTIVE_CALLS_PER_HOUR`. Cần binary `bento` trên PATH, hoặc
-Docker (`ghcr.io/warpstreamlabs/bento:1.20.0`, `--network host` vì MinIO ở
-localhost). Dry-run (`không EXEC=1`) in kế hoạch trước khi gọi API.
+`OPEN_METEO_MAX_EFFECTIVE_CALLS_PER_HOUR`. Dry-run (`không EXEC=1`) in kế hoạch
+trước khi gọi API.
 
 Kiểm tra tiến độ:
 
@@ -98,12 +92,10 @@ Backfill **không đặt lịch** — chạy tay theo từng năm như trên.
 
 ### Hết hạn mức Open-Meteo (429)
 
-Khi 429 sống sót qua toàn bộ retry Bento (5 lần, cooldown 60s), Copy Data **bỏ
-hẳn row** đó — payload lỗi không bao giờ bị ghi đè lên bronze — và log dòng
-`Copy Data thất bại (<key>)`. Python thấy object không tồn tại thì dừng cả lô
-với exit code 2. Không mất dữ liệu: các file đã land sẽ tự bị bỏ qua khi chạy
-lại. Chờ quota reset (5.000/giờ lăn, 10.000/ngày) rồi chạy lại đúng lệnh cũ;
-script backfill cũng chỉ cần chạy lại.
+Khi 429 sống sót qua 5 lần GET (cooldown 60s), `land` **không ghi** payload lỗi
+và dừng cả lô với exit code 2. Không mất dữ liệu: các file đã land sẽ tự bị bỏ
+qua khi chạy lại. Chờ quota reset (5.000/giờ lăn, 10.000/ngày) rồi chạy lại đúng
+lệnh cũ; script backfill cũng chỉ cần chạy lại.
 
 Lưu ý: chi phí "~N đơn vị" mà dry-run in ra là **ước lượng theo công thức xấp xỉ**
 của Open-Meteo. Nhịp lúc `--execute` tính từ
@@ -161,15 +153,14 @@ giữ 7 ngày; lệnh này là dọn mạnh tay.
 
 ## Thêm nguồn mới
 
-**File đã nằm trên MinIO** — không viết Python. Thêm hai file vào `ingest/load/`:
+**File đã nằm trên MinIO** — không viết Python. Thêm hai file vào `sources/`:
 
 ```
 my_source.yml    khai báo discovery prefix, bảng đích (loader knobs chỉ khi lệch default)
 my_source.sql    SELECT ... FROM read_json_auto({{ files }})
 ```
 
-**REST API** — thêm hàm trả row trong `vn_climate_risk_monitor/<tên>.py` +
-`ingest/copy/<tên>.yaml`. Copy Data tái sử dụng `src/activities`.
+**REST API** — planner trong `vn_climate_risk_monitor/<tên>.py`, copy dùng `fetch.land`.
 
 `{{ files }}` được engine thay bằng danh sách file đã claim. Tạo bảng đích trước
 (`CREATE TABLE ... AS (<sql>) LIMIT 0`), rồi `make load`.

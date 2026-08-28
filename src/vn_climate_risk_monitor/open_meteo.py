@@ -1,4 +1,4 @@
-"""Nguồn Open-Meteo: row còn thiếu → Copy Data (Bento).
+"""Nguồn Open-Meteo: row còn thiếu → ``fetch.land`` lên MinIO.
 
 CLI: ``uv run fetch-open-meteo forecast|archive``. Load: ``uv run load-sources``.
 """
@@ -7,22 +7,19 @@ from __future__ import annotations
 
 import argparse
 import math
-import subprocess
 import time
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from itertools import batched
-from pathlib import Path
 from urllib.parse import urlencode, urlparse, urlunparse
 
 import duckdb
 from minio import Minio
 from minio.error import S3Error
 
-from activities.copy import Row
-from activities.copy import run as copy
-from vn_climate_risk_monitor.config import OpenMeteoSettings, Settings, load_settings
+from fetch import land
+from vn_climate_risk_monitor.config import OpenMeteoSettings, load_settings
 from vn_climate_risk_monitor.lakehouse import get_connection
 from vn_climate_risk_monitor.storage import ensure_bucket, get_minio_client
 
@@ -33,8 +30,7 @@ ARCHIVE_FIELDS = (
     "precipitation,rain,weather_code,soil_moisture_0_to_7cm,soil_moisture_7_to_28cm"
 )
 
-ROOT = Path(__file__).resolve().parents[2]
-BENTO_CONFIG = Path("ingest/copy/open_meteo.yaml")
+Row = dict[str, str]
 
 
 @dataclass(frozen=True)
@@ -165,15 +161,6 @@ def missing_rows(
     return rows
 
 
-def minio_env(settings: Settings) -> dict[str, str]:
-    return {
-        "MINIO_ACCESS_KEY": settings.minio.access_key,
-        "MINIO_SECRET_KEY": settings.minio.secret_key,
-        "MINIO_BUCKET": settings.minio.bucket,
-        "MINIO_S3_ENDPOINT": f"{settings.minio.scheme}://{settings.minio.endpoint}",
-    }
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -251,22 +238,18 @@ def main() -> None:
         locations=open_meteo.location_batch_size, days=days_each, variables=variables
     )
     pause_s = 3600 * units_each / open_meteo.max_effective_calls_per_hour
-    env = minio_env(settings)
-    print(f"Copy Data: {len(rows)} row, cách nhau {pause_s:.0f}s")
-
-    def copy_one(row: Row) -> None:
-        copy(config=BENTO_CONFIG, row=row, root=ROOT, env=env)
-        client.stat_object(settings.minio.bucket, row["key"])
+    print(f"Land: {len(rows)} row, cách nhau {pause_s:.0f}s", flush=True)
 
     landed = 0
     try:
         for row in rows:
             if landed and pause_s:
                 time.sleep(pause_s)
-            copy_one(row)
+            print(f"  [{landed + 1}/{len(rows)}] GET → {row['key']}", flush=True)
+            land(client, settings.minio.bucket, row["url"], row["key"])
             landed += 1
-    except (S3Error, subprocess.CalledProcessError) as error:
-        print("⛔ Bento Copy Data thất bại — dừng hẳn (xem log ERROR ở trên).")
+    except (S3Error, OSError, RuntimeError) as error:
+        print(f"⛔ Land thất bại — dừng hẳn ({error}).")
         print("   Không mất dữ liệu: chạy lại sau khi quota reset,")
         print("   các file đã land sẽ tự bị bỏ qua.")
         raise SystemExit(2) from error

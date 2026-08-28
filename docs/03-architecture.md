@@ -11,7 +11,7 @@ Sources
   └── Open-Meteo
             │
             ▼
-Fetch (Bento) + autoloader: MinIO source objects + PostgreSQL checkpoint
+Fetch (Python) + autoloader: MinIO source objects + PostgreSQL checkpoint
             │
             ▼
 DuckLake
@@ -142,7 +142,7 @@ prefix `__dbt_tmp` rồi chỉ rename metadata.
 - ba schema medallion;
 - native PostgreSQL ingestion control plane;
 - geography Bronze/Silver/Gold;
-- fetch Open-Meteo: missing rows + Bento Copy Data, JSON bất biến trên MinIO;
+- fetch Open-Meteo: missing rows + urllib GET/PUT JSON bất biến trên MinIO;
 - autoloader: directory listing, discovery run ổn định, claim/lease, SQL transform;
 - forecast hourly production 126 phường/xã;
 - archive monthly backfill + pacing theo `OPEN_METEO_MAX_EFFECTIVE_CALLS_PER_HOUR`.

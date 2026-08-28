@@ -42,7 +42,7 @@ make fetch-* [--execute]
   autoloader (load, unchanged)
 ```
 
-Generic (`src/activities`): Lookup CSV, ForEach, Copy Data (Bento).
+Generic (`src/ingest`): Copy Data (Bento) + Auto Loader.
 
 Source-specific (`open_meteo.py` + `ingest/copy/open_meteo.yaml`): `gold.dim_hanoi_ward`, month/hour prefixes, resume by basename `response_NNN.json`, effective-call unit estimate, JSON array normalisation.
 
