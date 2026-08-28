@@ -38,9 +38,8 @@ load-sources = "vn_climate_risk_monitor.load:main"
 ducklake = "autoloader.provero_ducklake:DuckLakeConnector"
 
 [tool.uv.build-backend]
-# Ba package trong src/: `autoloader` nạp file→bảng; `activities` Copy Data (Bento);
-# `vn_climate_risk_monitor` là code riêng của dự án này.
-module-name = ["autoloader", "activities", "vn_climate_risk_monitor"]
+# `fetch` = HTTP→MinIO; `autoloader` = file→bảng; `vn_climate_risk_monitor` = app.
+module-name = ["fetch", "autoloader", "vn_climate_risk_monitor"]
 
 [build-system]
 requires = ["uv_build>=0.12.3,<0.13.0"]

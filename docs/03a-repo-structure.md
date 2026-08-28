@@ -9,15 +9,13 @@ Repository dùng ba data layer `bronze → silver → gold`. PostgreSQL schema
 
 ```text
 vn-climate-risk-monitor/
-├── src/activities/                  # Copy Data: một row → một lần chạy Bento
-├── src/autoloader/                  # GENERIC: file mới → bảng, đúng một lần mỗi file
-├── src/vn_climate_risk_monitor/     # app: config, lakehouse, MinIO, nguồn, load CLI
-│   ├── open_meteo.py                # nguồn: missing_rows + CLI fetch
-│   └── load.py                      # nối autoloader vào ingest/load/*.yml
+├── src/fetch/                       # HTTP GET → object MinIO (tái sử dụng)
+├── src/autoloader/                  # file mới trên MinIO → INSERT bảng (tái sử dụng)
+├── src/vn_climate_risk_monitor/     # app: config, lakehouse, CLI nguồn
+│   ├── open_meteo.py                # planner Open-Meteo + fetch CLI
+│   └── load.py                      # nối autoloader vào sources/*.yml
 │
-├── ingest/
-│   ├── copy/open_meteo.yaml         # Bento: ROW_URL → PUT ROW_KEY
-│   └── load/                        # autoloader: 1 YAML + 1 SQL / nguồn
+├── sources/                         # 1 YAML + 1 SQL / nguồn file→bảng
 ├── transform/                       # dbt bronze → silver → gold
 │   ├── models/
 │   │   ├── bronze/                  # source-faithful; không hậu tố `_raw`
@@ -37,7 +35,7 @@ vn-climate-risk-monitor/
     └── fixtures/
 ```
 
-Ingestion Open-Meteo là hai lệnh: `fetch-open-meteo` (missing rows + Copy Data) và
+Ingestion Open-Meteo là hai lệnh: `fetch-open-meteo` (missing rows + GET/PUT) và
 `load-sources` (autoloader nạp vào Bronze). Nguồn geography (GSO) **không có
 collector** — cập nhật rất chậm nên nạp thủ công vào PostgreSQL nguồn, dbt đọc
 trực tiếp qua attach `pg_source`.
@@ -69,9 +67,8 @@ không overwrite file nguồn (skip theo từng file đã có).
 | Gold | Dimension/fact, rolling/forecast KPI, scenario và pressure feature |
 | Ingestion control | PostgreSQL run/file state, lease, retry, parser version và lỗi |
 
-Thêm nguồn REST mới = hàm trả `[{url, key}]` trong app + YAML Bento trong
-`ingest/copy/`. Thêm nguồn file đã có trên MinIO = 1 cặp
-`ingest/load/<tên>.yml` + `<tên>.sql`.
+Thêm nguồn REST mới = planner trong app + ``fetch.land``. Thêm nguồn file đã có trên MinIO = 1 cặp
+`sources/<tên>.yml` + `<tên>.sql`.
 
 ## Quy ước đặt tên
 

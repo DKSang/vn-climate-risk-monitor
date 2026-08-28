@@ -1,4 +1,4 @@
-"""Nối autoloader vào ``ingest/load/*.yml`` (file trên MinIO → bảng Bronze)."""
+"""Nối ``autoloader`` vào ``sources/*.yml`` (file trên MinIO → bảng)."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from vn_climate_risk_monitor.config import load_settings
 from vn_climate_risk_monitor.lakehouse import get_connection
 from vn_climate_risk_monitor.storage import get_minio_client
 
-LOAD_DIR = Path("ingest/load")
+SOURCES_DIR = Path("sources")
 
 
 def main() -> None:
@@ -30,11 +30,11 @@ def main() -> None:
 
     configs = [
         SourceConfig.from_yaml(path)
-        for path in sorted(LOAD_DIR.glob("*.yml"))
+        for path in sorted(SOURCES_DIR.glob("*.yml"))
         if not args.sources or path.stem in args.sources
     ]
     if not configs:
-        raise SystemExit(f"Không tìm thấy nguồn nào trong {LOAD_DIR}")
+        raise SystemExit(f"Không tìm thấy nguồn nào trong {SOURCES_DIR}")
 
     settings = load_settings()
     control = connect_control_plane(settings.postgres.ducklake_connection_string)

@@ -11,8 +11,7 @@
 >
 > Giữ file này làm ghi chép thiết kế và kết quả khảo sát API — phần đó vẫn đúng.
 >
-> **2026-08-27:** fetch là Bento Copy Data (không Lookup CSV / ForEach);
-> autoloader dùng một discovery run / nguồn, không checksum collector.
+> **2026-08-28:** fetch là urllib + MinIO trong `open_meteo.py` (không Bento).
 
 
 **Hanoi Flood & Climate Risk Monitor** · v2.0 · 2026-08-21
