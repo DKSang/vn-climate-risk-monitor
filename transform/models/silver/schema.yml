@@ -97,6 +97,38 @@ models:
       - name: _ingested_at
         data_type: TIMESTAMP WITH TIME ZONE
 
+  - name: archive_hourly
+    description: >
+      SILVER — lịch sử theo giờ, gộp ERA5 (trước 2017) và ECMWF IFS (từ 2017).
+      Grain (weather_model, ô lưới, giờ). Hai model không phải một chuỗi:
+      không so trung bình trước/sau mốc 2017.
+    columns:
+      - name: weather_model
+        description: "era5 hoặc ecmwf_ifs — bắt buộc trong mọi join phía sau"
+        tests: [not_null]
+      - name: grid_latitude
+        tests: [not_null]
+      - name: grid_longitude
+        tests: [not_null]
+      - name: valid_time_utc
+        tests: [not_null]
+
+  - name: ward_grid_map
+    description: >
+      SILVER — 126 phường Hà Nội → ô lưới từng model archive, lấy từ phép snap
+      của Open-Meteo (seed), không phải nearest-neighbour tự tính.
+    columns:
+      - name: weather_model
+        tests: [not_null]
+      - name: ward_code
+        tests: [not_null]
+      - name: ward_key
+        tests: [not_null]
+      - name: grid_latitude
+        tests: [not_null]
+      - name: grid_longitude
+        tests: [not_null]
+
   - name: bridge_hanoi_ward_forecast_grid
     description: >
       Map 126 centroid Hà Nội sang returned grid gần nhất trong snapshot

@@ -351,9 +351,11 @@ không thay thế ET thực tế.
 
 ## 6. Baseline khí hậu và anomaly
 
-Baseline đề xuất dùng 1991–2020, cùng grid và một historical product được pin.
-Không trộn trực tiếp phân phối ERA5/ERA5-Land với Forecast Best Match nếu chưa
-đánh giá bias.
+Baseline đề xuất dùng 2000–2016 trên ERA5 (0,25°) và 2017→nay trên ECMWF IFS
+(~9 km), **tách riêng theo `weather_model`**. IFS không có dữ liệu trước 2017,
+nên không có một historical product duy nhất cho cả cửa sổ 1991–2020.
+Không trộn phân phối ERA5 với IFS qua mốc 2017, và không trộn reanalysis với
+Forecast Best Match, nếu chưa đánh giá bias.
 
 Phân vị vận hành cho rolling rainfall:
 
@@ -590,8 +592,10 @@ Ngoài scope MVP hiện tại:
 - chưa có composite score hoặc xác suất ngập trong MVP;
 - KPI tính theo grid rồi mới projection sang phường;
 - mọi công thức và threshold đều có version.
-- historical product pin `ERA5`; H3 xác nhận đủ precipitation/rain/weather code
+- historical product: `era5` trước 2017, `ecmwf_ifs` từ 2017 (IFS không có
+  dữ liệu trước 2017). H3 xác nhận ERA5 đủ precipitation/rain/weather code
   và soil moisture, trong khi ERA5-Land trả toàn null cho ba biến mưa/weather.
+  Không gộp hai model thành một chuỗi percentile.
 
 Còn mở sau forecast MVP:
 

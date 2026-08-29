@@ -11,6 +11,9 @@ Vòng đời một lần chạy, bám sát Databricks Auto Loader::
     4. execute SQL     DuckDB đọc file và ghi bảng đích (xử lý bằng SQL)
     5. commit_file()   đánh dấu COMMITTED               (exactly-once)
 
+Bảng đích tự tạo ở lần nạp đầu tiên (xem :meth:`AutoLoader._ensure_target`), nên
+thêm nguồn mới vẫn chỉ là 1 YAML + 1 SQL.
+
 Bước 4 giao explode/ép kiểu cho DuckDB. Python chỉ điều phối.
 """
 
@@ -65,6 +68,7 @@ class AutoLoader:
         self.sql = sql
         self.bucket = bucket
         self.worker_id = worker_id or f"{socket.gethostname()}-{os.getpid()}"
+        self._target_ready = False
 
     # ── bước 1 + 2 ────────────────────────────────────────────────────────────
     def register_new_files(self, *, now: datetime) -> tuple[int, int]:
@@ -173,11 +177,36 @@ class AutoLoader:
                 parser_version=ENGINE_VERSION,
             )
 
+    def _ensure_target(self, target: str, select_sql: str) -> None:
+        """Tạo bảng đích nếu chưa có, lấy schema từ CHÍNH SQL của nguồn.
+
+        `CREATE TABLE ... AS <select> WHERE false` nên schema không bao giờ lệch
+        khỏi SELECT — không có danh sách cột thứ hai để quên cập nhật. Bảng đã có
+        thì `IF NOT EXISTS` giữ nguyên, kể cả bảng chỉnh tay.
+
+        Probe bằng `SELECT ... WHERE false` trước vì `CREATE TABLE IF NOT EXISTS
+        ... AS SELECT` vẫn BIND câu select kể cả khi bảng đã tồn tại (đo trên
+        DuckDB 1.5: nó ném IOException khi file nguồn không tồn tại). Bind nghĩa
+        là read_json_auto phải suy schema, tức đọc thật trên S3 — probe chỉ hỏi
+        catalog nên rẻ hơn hẳn.
+        """
+        if self._target_ready:
+            return
+        try:
+            self.sql.execute(f"SELECT 1 FROM {target} WHERE false")
+        except Exception:  # noqa: BLE001 — chưa có bảng; lỗi khác sẽ nổ ở CREATE
+            self.sql.execute(
+                f"CREATE TABLE IF NOT EXISTS {target} AS "
+                f"SELECT * FROM ({select_sql}) AS shape WHERE false"
+            )
+        self._target_ready = True
+
     def _run_transform(self, uris: Sequence[str]) -> int:
         """Chạy SQL của nguồn trên đúng danh sách file đã claim."""
         file_list = "[" + ", ".join(f"'{uri}'" for uri in uris) + "]"
         select_sql = self.config.sql.replace("{{ files }}", file_list)
         target = self.config.transform.target
+        self._ensure_target(target, select_sql)
         result = self.sql.execute(
             f"INSERT INTO {target} BY NAME ({select_sql})"
         ).fetchone()

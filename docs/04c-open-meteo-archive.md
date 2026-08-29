@@ -17,8 +17,17 @@
 > Silver (`ROW_NUMBER() ... rn = 1`). Lý do và đánh đổi: xem ADR cuối
 > [04b-ingestion-runbook.md](04b-ingestion-runbook.md).
 >
-> **2026-08-28:** nhịp API chỉ còn `OPEN_METEO_MAX_EFFECTIVE_CALLS_PER_HOUR`.
-> Fetch = urllib + MinIO (`open_meteo.land`).
+> **2026-08-28:** không còn pacing chủ động (đã thử token-bucket `QuotaLimiter`,
+> gỡ lại để đơn giản). Fetch = urllib + MinIO (`open_meteo.land`), song song qua
+> `fetch.pool` (`OPEN_METEO_FETCH_WORKERS`, mặc định 4), dựa vào retry phản ứng
+> của `land()` khi gặp 429 (5 lần, cooldown 60s) chứ không tự giữ nhịp dưới trần.
+> Chi tiết vận hành: xem [04b-ingestion-runbook.md](04b-ingestion-runbook.md).
+>
+> **Hợp đồng model (2026-08-28):** không còn pin một model / không còn
+> `OPEN_METEO_ARCHIVE_MODEL`. Planner chọn `era5` trước 2017 và `ecmwf_ifs` từ
+> 2017 (`open_meteo.py::model_for_month`). IFS không có dữ liệu trước 2017
+> (probe: 2016 mọi quý NULL). Canary ERA5/ERA5-Land ở §4–§H3 dưới đây vẫn đúng
+> như bằng chứng loại `era5_land`.
 
 
 **Trạng thái code:** hoàn thành collector, parser, Bronze loader, backfill và
@@ -27,8 +36,8 @@ backfill 2001–nay là workload vận hành dài hạn theo giới hạn Free A
 
 ## 1. Mục tiêu và ranh giới
 
-Pipeline tải ERA5 hourly cho 126 phường/xã Hà Nội từ năm 2000 đến ngày Archive
-thực sự cung cấp, giữ JSON nguồn để replay và tạo bảng:
+Pipeline tải lịch sử hourly cho 126 phường/xã Hà Nội từ năm 2000: ERA5 trước
+2017, ECMWF IFS từ 2017, giữ JSON nguồn để replay và tạo bảng:
 
 ```text
 bronze_store.tables.open_meteo_archive_hourly
@@ -89,11 +98,15 @@ monthly run và mặc định chỉ nhận thêm một period mới mỗi invoca
 
 ## 4. Source contract
 
-Model mặc định được pin bằng:
+Model archive chọn theo thời kỳ, không cấu hình bằng env:
 
-```dotenv
-OPEN_METEO_ARCHIVE_MODEL=era5
+```text
+trước 2017  →  models=era5        →  bronze_store.tables.open_meteo_archive
+từ 2017-01  →  models=ecmwf_ifs    →  bronze_store.tables.open_meteo_ifs
 ```
+
+`OPEN_METEO_ARCHIVE_MODEL` đã bỏ — một biến môi trường sẽ ghi đè mốc 2017 và
+trộn hai lưới vào cùng bảng.
 
 Biến hourly:
 

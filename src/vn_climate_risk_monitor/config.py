@@ -74,10 +74,9 @@ class OpenMeteoSettings:
     forecast_url: str
     archive_url: str
     forecast_model: str
-    archive_model: str
     forecast_hours: int
     location_batch_size: int
-    max_effective_calls_per_hour: int
+    fetch_workers: int
 
 
 @dataclass(frozen=True)
@@ -121,8 +120,9 @@ def load_settings() -> Settings:
                 "OPEN_METEO_ARCHIVE_URL",
                 "https://archive-api.open-meteo.com/v1/archive",
             ),
+            # Model archive KHÔNG cấu hình được: nó chọn theo thời kỳ, xem
+            # open_meteo.py::model_for_month (era5 trước 2017, ecmwf_ifs từ 2017).
             forecast_model=os.getenv("OPEN_METEO_FORECAST_MODEL", "best_match"),
-            archive_model=os.getenv("OPEN_METEO_ARCHIVE_MODEL", "era5"),
             forecast_hours=_as_int(
                 "OPEN_METEO_FORECAST_HOURS",
                 os.getenv("OPEN_METEO_FORECAST_HOURS", "72"),
@@ -131,9 +131,10 @@ def load_settings() -> Settings:
                 "OPEN_METEO_LOCATION_BATCH_SIZE",
                 os.getenv("OPEN_METEO_LOCATION_BATCH_SIZE", "25"),
             ),
-            max_effective_calls_per_hour=_as_int(
-                "OPEN_METEO_MAX_EFFECTIVE_CALLS_PER_HOUR",
-                os.getenv("OPEN_METEO_MAX_EFFECTIVE_CALLS_PER_HOUR", "4500"),
+            fetch_workers=_as_int(
+                "OPEN_METEO_FETCH_WORKERS",
+                os.getenv("OPEN_METEO_FETCH_WORKERS", "4"),
+                maximum=16,
             ),
         ),
     )

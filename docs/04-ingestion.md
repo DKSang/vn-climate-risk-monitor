@@ -12,6 +12,8 @@
 > Giữ file này làm ghi chép thiết kế và kết quả khảo sát API — phần đó vẫn đúng.
 >
 > **2026-08-28:** fetch là urllib + MinIO trong `open_meteo.py` (không Bento).
+> Archive chọn model theo thời kỳ: `era5` trước 2017, `ecmwf_ifs` từ 2017.
+> IFS không có dữ liệu trước 2017 — không pin một model duy nhất.
 
 
 **Hanoi Flood & Climate Risk Monitor** · v2.0 · 2026-08-21
@@ -480,14 +482,17 @@ Runbook chi tiết: [04b-ingestion-runbook.md](04b-ingestion-runbook.md).
 ## 18. Historical Archive từ năm 2000
 
 Thiết kế cuối và runbook đầy đủ nằm tại
-[04c-open-meteo-archive.md](04c-open-meteo-archive.md). Các mục H1–H3 bên dưới
-giữ lại quyết định và bằng chứng canary; H4–H6 đã triển khai xong. Backfill toàn
-bộ 2000–nay là tiến trình vận hành theo quota, không phải một batch chạy burst.
+[04c-open-meteo-archive.md](04c-open-meteo-archive.md) (ghi chép canary) và
+[04b-ingestion-runbook.md](04b-ingestion-runbook.md) (lệnh hiện hành).
+
+**Hợp đồng hiện hành (2026-08-28):** planner chọn `era5` trước 2017 và
+`ecmwf_ifs` từ 2017. Hai bảng bronze, Silver union qua `weather_model`. H1–H3
+dưới đây là bằng chứng canary ERA5 — không phải hợp đồng vận hành hiện tại.
 
 ### Quyết định partition
 
-Historical dùng `open_meteo_archive / historical_weather_hourly / backfill` và
-pin `models=era5`. Hai cấp thời gian có trách nhiệm khác nhau:
+Historical ERA5 nằm ở `open_meteo_archive / historical_weather_hourly / backfill`;
+IFS nằm ở `.../ifs` → `open_meteo_ifs`. Hai cấp thời gian có trách nhiệm khác nhau:
 
 ```text
 planning group + Bronze partition : 1 năm
@@ -627,7 +632,8 @@ cung cấp trực tiếp nhóm rain/precipitation cần cho KPI.
 
 Project đổi default sang `models=era5`. Model trở thành một phần của logical
 key, ví dụ `model=era5/year=2000/through=2000-01-31`, để thay đổi source contract
-không va vào successful run cũ.
+không va vào successful run cũ. (2026-08-28: planner chuyển sang era5 trước
+2017 / ecmwf_ifs từ 2017 — xem đầu mục 18.)
 
 Canary ERA5 thứ hai đạt cả transport và business contract:
 

@@ -15,6 +15,8 @@ Usage:
 
 from __future__ import annotations
 
+import os
+
 import duckdb
 
 from vn_climate_risk_monitor.config import load_settings
@@ -57,6 +59,23 @@ def get_connection(
     minio = settings.minio
     postgres = settings.postgres
     con = duckdb.connect()
+
+    # 0) Cấu hình bộ nhớ TRƯỚC mọi thứ khác.
+    #
+    # Mặc định (12 luồng, preserve_insertion_order=true) làm autoloader OOM khi
+    # nạp >= 30 file archive — đo 2026-08-28 trên máy 7GB: 10 file chạy 0,17s,
+    # 30 file ném OutOfMemoryException. UNNEST của transform bung một file 600KB
+    # thành ~16.000 dòng × 15 cột, và giữ thứ tự chèn buộc phải đệm toàn bộ kết
+    # quả đã sắp xếp.
+    #
+    # Với hai tuỳ chọn dưới: 100 file / 1,54 triệu dòng chạy 0,75s, tuyến tính.
+    # Thứ tự chèn không có ý nghĩa ngữ nghĩa ở đây — Silver dedup bằng
+    # ROW_NUMBER() với ORDER BY tường minh.
+    con.execute("SET preserve_insertion_order = false;")
+    con.execute(f"SET threads = {os.getenv('DUCKDB_THREADS', '4')};")
+    con.execute(
+        f"SET temp_directory = '{os.getenv('DUCKDB_TEMP_DIR', '/tmp/duckdb_spill')}';"
+    )
 
     # 1) S3 secret for MinIO
     con.execute(f"""

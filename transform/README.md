@@ -12,6 +12,10 @@ model Silver/Gold được lưu trong DuckLake (Postgres metadata, MinIO Parquet
 - `gold.fct_rainfall_forecast_hourly`: rolling 1/3/6/12/24/48/72 giờ.
 - `gold.fct_rainfall_forecast_summary`: totals và peaks trong horizon tương lai.
 - hai model `gold.fct_ward_*`: projection forcing từ grid sang 126 phường.
+- `silver.archive_hourly`: lịch sử theo giờ, ERA5 trước 2017 union IFS từ
+  2017; grain `(weather_model, ô lưới, giờ)` — không trộn thành một chuỗi.
+- `silver.ward_grid_map`: 126 phường → ô từng model archive (seed, không phải
+  nearest-neighbour).
 
 Baseline lịch sử, forecast-vintage backtest và calibration với nhãn ngập chưa
 thuộc MVP này. Bronze vẫn giữ source objects để triển khai về sau.

@@ -34,8 +34,8 @@ PostgreSQL → ingestion_runs + ingestion_files
 | bronze | `gso_provinces` · `gso_wards` · `gso_administrative_units` · `gso_administrative_regions` · `ward_coordinates` | 34 · 3.321 · 5 · 8 · 3.321 |
 | silver | `wards` · `ward_centroids` · `ward_locations` | 3.321 mỗi bảng (view) |
 | gold | `dim_hanoi_ward` | **126** |
-| bronze weather | `open_meteo_forecast_hourly` | **11.016 rows** *(nhiều retrieval slot; Silver chỉ chọn slot hoàn chỉnh mới nhất)* |
-| bronze archive | `open_meteo_archive_hourly` | **9.470.184 rows** *(backfill chưa hoàn tất; khoảng thời gian hiện có còn có thể có gap)* |
+| bronze weather | `open_meteo_forecast` | **11.016 rows** *(nhiều retrieval slot; Silver chỉ chọn slot hoàn chỉnh mới nhất)* |
+| bronze archive | `open_meteo_archive` (ERA5, trước 2017) · `open_meteo_ifs` (IFS, từ 2017) | backfill đang vận hành theo quota |
 | silver weather | `forecast_hourly` | **3.456 rows** *(48 grid × 72 giờ, snapshot `2026-08-21 11:00 UTC`)* |
 | silver bridge | `bridge_hanoi_ward_forecast_grid` | **126** |
 | gold forecast | `fct_rainfall_forecast_hourly` · `fct_rainfall_forecast_summary` | **3.456** · **48** |

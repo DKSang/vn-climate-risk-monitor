@@ -1,4 +1,4 @@
-.PHONY: bootstrap bootstrap-env up down logs fetch-forecast fetch-archive backfill-archive load quality seed dbt dbt-test freshness transform dbt-docs clean-lake lint
+.PHONY: bootstrap bootstrap-env up down logs map-grid fetch-forecast fetch-archive backfill-archive load quality seed dbt dbt-test freshness transform dbt-docs clean-lake lint
 
 # ==== Setup ====
 bootstrap-env:
@@ -25,6 +25,14 @@ _X = $(if $(EXEC),--execute,)
 fetch-forecast:
 	uv run fetch-open-meteo forecast $(_X)
 
+# Chốt ô lưới của từng model archive rồi ghi transform/seeds/ward_grid_map_seed.csv.
+# Chạy MỘT LẦN trước backfill (và lại khi danh sách phường đổi). ~252 đơn vị quota.
+MODEL ?=
+map-grid:
+	uv run fetch-open-meteo map-grid $(if $(MODEL),--models $(MODEL),) $(_X)
+
+# Archive tự chọn model theo thời kỳ: era5 trước 2017, ecmwf_ifs từ 2017.
+# Fetch theo Ô LƯỚI (12 ô era5 / 48 ô ifs), không theo 126 phường.
 START ?= 2000-01-01
 END   ?= $(shell date +%Y-%m-01)
 fetch-archive:

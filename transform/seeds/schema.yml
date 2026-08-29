@@ -1,6 +1,25 @@
 version: 2
 
 seeds:
+  - name: ward_grid_map_seed
+    description: >
+      Ánh xạ phường → ô lưới cho từng model archive, lấy từ CHÍNH phép snap của
+      Open-Meteo (sinh bởi `make map-grid`, không phải tính nearest-neighbour —
+      hai cách này lệch nhau).
+      Đây là thứ cho phép fetch theo ô thay vì theo phường: 126 phường Hà Nội chỉ
+      rơi vào 12 ô ERA5 với dữ liệu giống hệt nhau, nên fetch theo phường tiêu
+      quota gấp ~10 lần mà không thêm thông tin.
+    columns:
+      - name: model
+        description: "era5 (0,25°) hoặc ecmwf_ifs (~9km, từ 2017)"
+        tests: [not_null]
+      - name: ward_code
+        tests: [not_null]
+      - name: grid_latitude
+        tests: [not_null]
+      - name: grid_longitude
+        tests: [not_null]
+
   - name: ward_coordinates_seed
     description: >
       Toạ độ centroid 3.321 phường/xã Việt Nam sau sắp xếp 2025, kèm vùng địa lý

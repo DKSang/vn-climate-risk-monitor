@@ -38,18 +38,29 @@ guardrail tại [04-ingestion.md](04-ingestion.md).
 
 ### S2 — Open-Meteo Archive
 - `https://archive-api.open-meteo.com/v1/archive?start_date=...&end_date=...&hourly=precipitation`
-- Đã pin `models=era5`: hourly, độ phân giải 0,25° (~25 km), nhất quán cho chuỗi
-  nhiều thập kỷ; dữ liệu cập nhật hằng ngày với độ trễ khoảng 5 ngày. Canary H3
-  xác nhận ERA5 có đủ rain/precipitation và soil moisture. `era5_land` 0,1° đã
-  bị loại vì ba trường mưa/weather code trả toàn `null` trong canary 01/2000.
-- Backfill từ `2000-01-01`: một logical/Bronze partition theo năm, chia HTTP
-  request và checkpoint theo tháng; không dùng Best Match trôi nổi cho baseline dài hạn.
-- Dùng giai đoạn 1991–2020 để tính phân vị theo grid và mùa/tháng. Không so trực tiếp phân phối
-  reanalysis với forecast model khác nếu chưa đánh giá bias.
+- **Hai model theo thời kỳ** (`open_meteo.py::model_for_month`), không phải một
+  biến môi trường. IFS không có dữ liệu trước 2017 (probe 2026-08-28: 2016 mọi
+  quý NULL) — bỏ ERA5 là mất toàn bộ 2000–2016.
+
+  | thời kỳ | `models=` | độ phân giải | ô Hà Nội | bảng bronze |
+  |---|---|---|---|---|
+  | trước 2017 | `era5` | 0,25° (~25 km) | 12 | `open_meteo_archive` |
+  | từ 2017-01 | `ecmwf_ifs` | ~9 km | 48 | `open_meteo_ifs` |
+
+- Canary H3 xác nhận ERA5 có đủ rain/precipitation và soil moisture. `era5_land`
+  0,1° đã bị loại vì ba trường mưa/weather code trả toàn `null` trong canary
+  01/2000. `era5_seamless` bị loại vì toạ độ mịn nhưng mưa vẫn là ERA5 0,25° dán
+  lại — trùng lặp bị giấu, hỏng dedup theo ô.
+- Backfill từ `2000-01-01`, fetch theo ô lưới (không theo 126 phường). Không dùng
+  Best Match trôi nổi cho baseline dài hạn.
+- `ecmwf_ifs` là chuỗi phân tích nghiệp vụ, không phải reanalysis. Không so
+  trực tiếp trung bình trước/sau mốc 2017; `weather_model` nằm trong mọi khoá
+  join. Phân vị khí hậu tính **trong từng model**, không gộp hai phân phối.
 
 ### Độ phân giải — chấp nhận là ràng buộc, không cố giải quyết
 Đã đo thực tế (xem phụ lục): **126 phường-xã Hà Nội → 49 ô lưới mưa phân biệt được** với
-`best_match`. Đây là giới hạn của mọi nguồn mô hình dự báo số trị, không riêng Open-Meteo.
+forecast `best_match`. Archive: 12 ô ERA5 (trước 2017) và 48 ô IFS (từ 2017).
+Đây là giới hạn của mọi nguồn mô hình dự báo số trị, không riêng Open-Meteo.
 
 → **Quyết định đơn giản hóa:** không cố vá bằng nguồn thứ hai (radar/camera). Chấp nhận
 độ phân giải ô lưới, thiết kế đúng theo nó:

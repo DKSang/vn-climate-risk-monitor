@@ -1,4 +1,7 @@
-"""GET URL → PUT object. Không biết nguồn; planner gọi ``land(client, bucket, url, key)``."""
+"""GET URL → PUT object. Không biết nguồn; planner gọi ``land(client, bucket, url, key)``.
+
+Song song nằm ở :mod:`fetch.pool` — ``land`` vẫn là một thao tác đơn.
+"""
 
 from __future__ import annotations
 
@@ -9,6 +12,17 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from minio import Minio
+
+from fetch.pool import FetchTask, PoolResult, run_fetch_pool
+
+__all__ = [
+    "FetchTask",
+    "PoolResult",
+    "bronze_bytes",
+    "get_body",
+    "land",
+    "run_fetch_pool",
+]
 
 RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
 RETRIES = 5
