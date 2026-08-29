@@ -2,9 +2,16 @@ name: open_meteo_archive
 dataset: historical_weather_hourly
 
 discovery:
-  prefix: bronze/files/open_meteo/historical_weather_hourly
+  # Thu hẹp xuống `backfill/`: từ 2026-08-28 thư mục cha còn chứa `ifs/` của model
+  # ecmwf_ifs, có nguồn riêng và bảng đích riêng.
+  prefix: bronze/files/open_meteo/historical_weather_hourly/backfill
   pattern: "**/response_*.json"
 
 transform:
   sql_file: open_meteo_archive.sql
   target: bronze_store.tables.open_meteo_archive
+
+# File archive ~600KB bung thành ~16k dòng; 50 file/lô đo 0,4s. Mỗi INSERT là
+# một snapshot DuckLake, nên lô 50 giảm ~5 lần số snapshot so với mặc định 10.
+loader:
+  batch_size: 50

@@ -12,14 +12,16 @@ Bronze → Silver → Gold
 ```
 
 Luồng ingestion tách hai bước: `fetch-open-meteo` lập danh sách URL còn thiếu rồi
-GET + PUT JSON lên `bronze/files` trên MinIO (`fetch.land`, giãn nhịp theo
-`OPEN_METEO_MAX_EFFECTIVE_CALLS_PER_HOUR`); `autoloader` liệt kê storage, checkpoint Postgres
+GET + PUT JSON lên `bronze/files` trên MinIO (`fetch.land`, song song qua
+`fetch.pool` với `OPEN_METEO_FETCH_WORKERS` luồng, không pacing chủ động — dựa
+vào retry phản ứng của `land()` khi gặp 429); `autoloader` liệt kê storage, checkpoint Postgres
 (một discovery run / nguồn, lease khi load), micro-batch, nạp Bronze DuckLake
 bằng SQL trong `sources/*.yml` + `*.sql`. Bronze là INSERT — mọi vintage
 được giữ nguyên; dedup theo (ô lưới, giờ) thực hiện ở Silver. Forecast chạy
 production hằng giờ cho đủ 126 phường/xã (9.072 dòng Bronze hourly, không
-rescued row). Archive: năm 2000 đã land đủ 1.106.784 ward-hour; backfill
-2001–nay vận hành dần theo quota Free API, không chạy burst cả lịch sử.
+rescued row). Archive: ERA5 trước 2017 (12 ô) + ECMWF IFS từ 2017 (48 ô);
+năm 2000 đã land đủ 1.106.784 ward-hour; backfill 2001–nay vận hành dần theo
+quota Free API, không chạy burst cả lịch sử.
 
 ```bash
 make up            # MinIO + PostgreSQL + pgAdmin

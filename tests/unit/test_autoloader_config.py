@@ -102,9 +102,16 @@ def test_project_sources_are_all_valid() -> None:
         assert "{{ files }}" in config.sql, f"{path}: SQL thiếu placeholder"
 
 
-def test_project_sources_omit_default_loader_block() -> None:
+def test_project_sources_never_restate_a_loader_default() -> None:
+    """Khai báo lại giá trị mặc định là nhiễu — chỉ ghi knob thật sự lệch."""
     import yaml
 
+    from autoloader.config import LoaderConfig
+
+    default = LoaderConfig()
     for path in sorted(Path("sources").glob("*.yml")):
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-        assert "loader" not in raw, f"{path}: loader knobs trùng LoaderConfig default"
+        for key, value in (raw.get("loader") or {}).items():
+            assert value != getattr(default, key), (
+                f"{path}: loader.{key}={value} trùng LoaderConfig default"
+            )

@@ -112,16 +112,33 @@ class FakeResult:
 
 
 class FakeSql:
-    """DuckDB giả: file nào có `poison` trong tên thì ném lỗi."""
+    """DuckDB giả, có catalog: file nào có `poison` trong tên thì ném lỗi.
 
-    def __init__(self, rows_per_file: int = 100) -> None:
+    Truy vấn vào bảng chưa tồn tại ném lỗi giống Catalog Error thật, nếu không thì
+    đường tạo bảng đích của engine sẽ không bao giờ được test chạy tới.
+    """
+
+    def __init__(
+        self, rows_per_file: int = 100, existing_tables: set[str] | None = None
+    ) -> None:
         self.rows_per_file = rows_per_file
         self.statements: list[str] = []
+        self.tables: set[str] = set(existing_tables or ())
 
     def execute(self, query: str, parameters: object = None) -> FakeResult:
         self.statements.append(query)
+        # Trước cả CREATE: DuckDB phải suy schema từ file nguồn nên file hỏng cũng
+        # làm gãy câu CREATE ... AS SELECT, không riêng INSERT.
         if "poison" in query:
             raise ValueError("JSON transform error: unknown key")
+        if query.startswith("SELECT 1 FROM "):
+            table = query.split()[3]
+            if table not in self.tables:
+                raise ValueError(f"Catalog Error: Table {table} does not exist")
+            return FakeResult(0)
+        if query.startswith("CREATE TABLE IF NOT EXISTS "):
+            self.tables.add(query.split()[5])
+            return FakeResult(0)
         return FakeResult(query.count("s3://") * self.rows_per_file)
 
 
@@ -139,12 +156,18 @@ def build_config(tmp_path: Path, *, batch_size: int, max_retries: int = 3):
     )
 
 
-def build_loader(tmp_path: Path, keys: list[str], *, batch_size: int) -> AutoLoader:
+def build_loader(
+    tmp_path: Path,
+    keys: list[str],
+    *,
+    batch_size: int,
+    existing_tables: set[str] | None = None,
+) -> AutoLoader:
     return AutoLoader(
         config=build_config(tmp_path, batch_size=batch_size),
         checkpoint=FakeCheckpoint(),
         object_client=FakeObjectClient(keys),
-        sql=FakeSql(),
+        sql=FakeSql(existing_tables=existing_tables),
         bucket="bkt",
         worker_id="w1",
     )
@@ -252,6 +275,70 @@ def test_healthy_batch_runs_one_statement_not_per_file(tmp_path: Path) -> None:
     inserts = [s for s in loader.sql.statements if s.startswith("INSERT")]
     assert len(inserts) == 1
     assert inserts[0].count("s3://") == 3
+
+
+def test_creates_target_table_on_first_load(tmp_path: Path) -> None:
+    """Nguồn mới không cần DDL tay: bảng đích sinh từ chính SQL của nguồn."""
+    loader = build_loader(tmp_path, ["raw/a.json"], batch_size=10)
+
+    result = loader.load()
+
+    creates = [
+        s for s in loader.sql.statements if s.startswith("CREATE TABLE IF NOT EXISTS")
+    ]
+    assert len(creates) == 1
+    assert creates[0].startswith("CREATE TABLE IF NOT EXISTS db.schema.tbl AS")
+    assert "WHERE false" in creates[0], "CREATE không được nạp dòng nào"
+    assert "db.schema.tbl" in loader.sql.tables
+    assert result.committed_files == 1
+
+
+def test_create_runs_before_insert(tmp_path: Path) -> None:
+    loader = build_loader(tmp_path, ["raw/a.json"], batch_size=10)
+
+    loader.load()
+
+    kinds = [s.split()[0] for s in loader.sql.statements]
+    assert kinds.index("CREATE") < kinds.index("INSERT")
+
+
+def test_existing_target_table_is_never_recreated(tmp_path: Path) -> None:
+    """Bảng chỉnh tay (partition, constraint) phải được giữ nguyên."""
+    loader = build_loader(
+        tmp_path, ["raw/a.json"], batch_size=10, existing_tables={"db.schema.tbl"}
+    )
+
+    loader.load()
+
+    assert not [s for s in loader.sql.statements if s.startswith("CREATE")]
+
+
+def test_target_table_is_created_once_across_batches(tmp_path: Path) -> None:
+    """Probe + CREATE chỉ chạy một lần, không phải mỗi micro-batch."""
+    loader = build_loader(
+        tmp_path, ["raw/a.json", "raw/b.json", "raw/c.json"], batch_size=1
+    )
+
+    loader.load()
+    loader.load()
+
+    assert len([s for s in loader.sql.statements if s.startswith("CREATE")]) == 1
+    assert len([s for s in loader.sql.statements if s.startswith("SELECT 1 FROM")]) == 1
+
+
+def test_broken_first_file_still_lets_a_healthy_file_create_the_table(
+    tmp_path: Path,
+) -> None:
+    """CREATE gãy vì file hỏng thì lô sau vẫn tạo được bảng — không kẹt vĩnh viễn."""
+    loader = build_loader(
+        tmp_path, ["raw/poison.json", "raw/z_good.json"], batch_size=10
+    )
+
+    loader.load()
+
+    assert "db.schema.tbl" in loader.sql.tables
+    assert loader.checkpoint.files["raw/z_good.json"]["status"] == "COMMITTED"
+    assert loader.checkpoint.files["raw/poison.json"]["status"] == "FAILED"
 
 
 def test_load_reports_discovered_count_even_when_nothing_new(tmp_path: Path) -> None:

@@ -7,15 +7,35 @@
 ## Kiến trúc hai bước, cố ý tách rời
 
 ```
-1. fetch   missing_rows() → [{url, key}] (126 phường, bỏ file đã có)
-           for row in rows, pause theo OPEN_METEO_MAX_EFFECTIVE_CALLS_PER_HOUR:
-             land(): GET rồi ghi JSON lên MinIO
-              bronze/files/open_meteo/<dataset>/...
-2. load    autoloader liệt kê MinIO, nạp file MỚI vào bronze bằng SQL
-              bronze_store.tables.open_meteo_*
+0. map-grid  probe API 1 lần/model → transform/seeds/ward_grid_map_seed.csv
+             126 phường → 12 ô era5 / 48 ô ecmwf_ifs
+1. fetch     archive_tasks() → [FetchTask(url, key, units)]  (theo Ô, bỏ tháng đã đủ)
+             pool N luồng chạy song song (không pacing chủ động — xem "Nhịp và
+             song song" bên dưới)
+               land(): GET rồi ghi JSON lên MinIO
+                bronze/files/open_meteo/<dataset>/...
+2. load      autoloader liệt kê MinIO, nạp file MỚI vào bronze bằng SQL
+                bronze_store.tables.open_meteo_*
 ```
 
-`land()` nằm trong package ``fetch``. Planner Open-Meteo (URL, skip file, nhịp API) nằm trong ``open_meteo.py``. Object singleton được bọc thành array để khớp `read_json_auto` với file cũ.
+`land()` nằm trong package ``fetch``; hàng đợi song song ở `fetch/pool.py`. Planner Open-Meteo (URL, định tuyến model, skip tháng) nằm trong ``open_meteo.py``; bản đồ ô lưới ở ``grid.py``. Object singleton được bọc thành array để khớp `read_json_auto` với file cũ.
+
+### Archive: fetch theo ô lưới, hai model theo thời kỳ
+
+| thời kỳ | model | ô Hà Nội | bảng bronze |
+|---|---|---|---|
+| trước 2017 | `era5` (0,25°) | 12 | `open_meteo_archive` |
+| từ 2017-01 | `ecmwf_ifs` (~9km) | 48 | `open_meteo_ifs` |
+
+**Giữ cả hai.** IFS không có dữ liệu trước 2017 (probe 2026-08-28: 2016 mọi quý NULL) — bỏ ERA5 là mất 17 năm baseline. Fetch theo ô: 126 phường chỉ rơi vào 12 ô ERA5 và **mọi bản sao trong cùng ô giống hệt nhau** (0 cặp (ô, giờ) nào lệch), nên fetch theo phường tiêu quota gấp ~10 lần mà không thêm thông tin. Silver chiếu ngược về phường qua `ward_grid_map`.
+
+`ecmwf_ifs` cho tín hiệu khác nhau THẬT giữa các phường: cùng ngày mưa, ba phường mà ERA5 gộp thành một chuỗi 9,3mm thì IFS trả 105,0 / 137,9 / 116,2 mm. Khoảng cách phường→tâm ô giảm từ 18,9km (era5) xuống 5,5km.
+
+**Không dùng** `era5_land` (không có biến mưa nào — đã probe) và `era5_seamless` (toạ độ mịn 0,1° nhưng giá trị mưa vẫn là ERA5 0,25° dán lại, làm trùng lặp bị GIẤU thay vì lộ ra và hỏng dedup theo ô).
+
+`ecmwf_ifs` là chuỗi phân tích nghiệp vụ, **không phải reanalysis** — đồng nhất theo thời gian kém hơn era5. Đừng so trực tiếp trung bình trước/sau mốc 2017.
+
+Forecast vẫn fetch **theo phường**, cố ý: lưới `best_match` mịn hơn (48 ô/126 phường) và mesh của nó đổi khi Open-Meteo chuyển model nền, nên danh sách ô cache cứng sẽ mục.
 
 Tách ra vì: lỗi mạng ở bước 1 không làm mất dữ liệu đã tải; bước 2 checkpoint
 theo object key — file đã `COMMITTED` không nạp lại. Crash sau INSERT trước
@@ -37,40 +57,50 @@ Bỏ `EXEC=1` thì chỉ in kế hoạch, không gọi API. Luôn chạy thử t
 
 ## Backfill lịch sử
 
-ERA5 từ 2000-01 đến nay là **~320 tháng**, mỗi tháng **6 request** (126 phường ÷
-25 phường/request) → **~1.920 request**. Open-Meteo free tier giới hạn theo phút
-và giờ. Fetch tự giãn nhịp: `3600 × đơn vị mỗi request ÷
-OPEN_METEO_MAX_EFFECTIVE_CALLS_PER_HOUR` (archive ~54 đơn vị → ~43s/request,
-forecast ~25 đơn vị → ~20s).
+**Chạy `make map-grid EXEC=1` một lần trước** (≈252 đơn vị) để chốt ô lưới, rồi
+`make seed`. Bản đồ chỉ cần làm lại khi danh sách phường đổi.
 
-Chạy bằng script — nó lặp từng năm, fetch xong năm nào là `make load` năm đó:
-
-```bash
-make backfill-archive              # 2001 → nay
-make backfill-archive FROM=2003    # từ 2003
-```
-
-Resumable: fetch tự bỏ qua từng file đã có nên interrupt rồi chạy lại chỉ đi
-tiếp phần thiếu. Năm hiện tại script tự dừng ở tháng trước — 2 tháng gần nhất do
-cron tail bồi hằng ngày. Muốn tay từng bước (xem kế hoạch trước, chạy một năm):
+Còn thiếu 2014→nay = 152 tháng. Fetch theo ô nên chỉ **267 request / 13.121 đơn
+vị ≈ 1,4 ngày**, thay vì 912 request / ~42.400 đơn vị ≈ 4,2 ngày nếu fetch theo
+phường.
 
 ```bash
-make fetch-archive START=2002-01-01 END=2002-12-01   # dry-run: xem kế hoạch
-make fetch-archive EXEC=1 START=2002-01-01 END=2002-12-01
-make load SOURCE=open_meteo_archive
+make map-grid EXEC=1 && make seed        # một lần
+make fetch-archive EXEC=1                # dò kế hoạch trước khi thêm EXEC=1
+make load
 ```
 
-`fetch` **tự bỏ qua từng file đã có** (không bỏ cả tháng) — chạy lại an toàn,
-không tốn request, và crash giữa chừng tháng rồi chạy lại sẽ đi tiếp phần thiếu.
-Mỗi lần chạy ghi vào run dir riêng (`…/month=01/run_<timestamp>/response_NNN.json`)
-nên không bao giờ ghi đè object cũ — Bronze giữ cam kết immutable, và resume khớp
-theo tên file nên nhận cả dữ liệu collector cũ ghi (`…/archive_…/response_NNN.json`).
-Muốn tải lại tháng đã xong thì xoá run dir đó trên MinIO rồi chạy lại fetch.
+Bỏ `EXEC=1` để xem kế hoạch. Không cần `--start/--end`: planner tự bỏ qua tháng
+đã ĐỦ GIỜ trong bronze, nên chạy lại dải mặc định 2000→nay vẫn ra đúng 267
+request. Muốn chia nhỏ thì vẫn dùng `--start/--end` như cũ:
 
-Fetch chạy **tuần tự** — một GET tại một thời điểm — nên Open-Meteo chỉ thấy
-một request đồng thời / IP. Muốn chậm/nhanh hơn thì chỉnh
-`OPEN_METEO_MAX_EFFECTIVE_CALLS_PER_HOUR`. Dry-run (`không EXEC=1`) in kế hoạch
-trước khi gọi API.
+```bash
+make fetch-archive EXEC=1 START=2018-01-01 END=2018-12-01
+```
+
+Resumable ở hai tầng: tháng đã đủ giờ trong bronze thì bỏ hẳn; trong một tháng,
+file `response_NNN.json` đã có thì bỏ từng file. Mỗi lần chạy ghi vào run dir
+riêng nên không bao giờ ghi đè object cũ.
+
+### Nhịp và song song
+
+**Không có pacing chủ động.** `fetch.pool` chạy `OPEN_METEO_FETCH_WORKERS`
+(mặc định 4) luồng song song, mỗi luồng gọi `land()` ngay khi có việc — không
+`sleep` trước, không token bucket, không biết trần giờ/ngày của Open-Meteo. Dự
+án từng có một `QuotaLimiter` (token bucket, cửa sổ trượt, hai tầng trần, trạng
+thái ghi đĩa) nhưng đã gỡ để đơn giản hoá; nếu cần lại pacing chủ động thì viết
+mới, đừng tìm `fetch/pacing.py` — nó không còn trong cây code.
+
+Ràng buộc quota giờ hoàn toàn dựa vào retry **phản ứng** trong `land()`
+([fetch/__init__.py](../src/fetch/__init__.py)): gặp 429/500/502/503/504 thì
+sleep 60s rồi thử lại, tối đa 5 lần; hết vẫn lỗi thì cả lô dừng (chính sách của
+`fetch.pool`: một task hỏng là dừng, không đốt thêm request).
+
+Hệ quả vận hành cần biết: với backfill nhiều tháng chạy `--execute` một lèo,
+**429 có thể xảy ra thật** khi tổng request vượt trần Open-Meteo trong cùng cửa
+sổ giờ/ngày — không có gì chủ động tránh trước. Giảm `OPEN_METEO_FETCH_WORKERS`
+xuống 1 để gần với nhịp tuần tự cũ, hoặc chia nhỏ `--start`/`--end` từng đợt và
+chờ giữa các đợt.
 
 Kiểm tra tiến độ:
 
@@ -86,21 +116,28 @@ mc ls -r m/vn-climate/bronze/files/open_meteo/historical_weather_hourly/" \
 Mẫu cron ở `orchestration/cron/*.cron.example`. Cả hai job dùng **chung một
 `flock`** vì cùng tiêu vào một hạn mức rate limit của Open-Meteo.
 
-Backfill **không đặt lịch** — chạy tay theo từng năm như trên.
+Backfill **không đặt lịch** — chạy tay như trên. `scripts/backfill_archive.sh`
+(lặp từng năm) vẫn chạy được nhưng không còn cần thiết: planner đã tự bỏ qua
+tháng đã đủ, nên một lệnh `make fetch-archive EXEC=1` xử lý cả dải.
 
 ## Xử lý sự cố
 
 ### Hết hạn mức Open-Meteo (429)
 
-Khi 429 sống sót qua 5 lần GET (cooldown 60s), `land` **không ghi** payload lỗi
-và dừng cả lô với exit code 2. Không mất dữ liệu: các file đã land sẽ tự bị bỏ
-qua khi chạy lại. Chờ quota reset (5.000/giờ lăn, 10.000/ngày) rồi chạy lại đúng
-lệnh cũ; script backfill cũng chỉ cần chạy lại.
+Không có pacing chủ động (xem "Nhịp và song song" ở trên) nên 429 là chuyện có
+thể gặp thật, đặc biệt khi backfill nhiều tháng liền với `OPEN_METEO_FETCH_WORKERS`
+cao. `land()` tự retry 5 lần, cooldown 60s giữa mỗi lần. Sống sót qua cả 5 lần
+thì **không ghi** payload lỗi và cả lô dừng với exit code 2 (chính sách
+`fetch.pool`: một task hỏng là dừng cả lô, tránh đốt thêm request vào một hạn
+mức đã cạn). Không mất dữ liệu: file đã land tự bị bỏ qua khi chạy lại đúng lệnh
+cũ.
+
+Gặp 429 dồn dập thì hạ `OPEN_METEO_FETCH_WORKERS` (về 1 là tuần tự hoàn toàn)
+hoặc chia nhỏ `--start`/`--end` và chờ giữa các đợt — không có biến môi trường
+nào tự làm việc này thay bạn.
 
 Lưu ý: chi phí "~N đơn vị" mà dry-run in ra là **ước lượng theo công thức xấp xỉ**
-của Open-Meteo. Nhịp lúc `--execute` tính từ
-`OPEN_METEO_MAX_EFFECTIVE_CALLS_PER_HOUR`. Nếu 429 đến sớm hơn dự kiến thì chia
-nhỏ `--start`/`--end` hoặc hạ biến đó.
+của Open-Meteo, có thể lệch với cách API tính thật.
 
 ### Một file JSON hỏng
 
@@ -162,8 +199,10 @@ my_source.sql    SELECT ... FROM read_json_auto({{ files }})
 
 **REST API** — planner trong `vn_climate_risk_monitor/<tên>.py`, copy dùng `fetch.land`.
 
-`{{ files }}` được engine thay bằng danh sách file đã claim. Tạo bảng đích trước
-(`CREATE TABLE ... AS (<sql>) LIMIT 0`), rồi `make load`.
+`{{ files }}` được engine thay bằng danh sách file đã claim. Không cần DDL tay:
+lần `make load` đầu tiên tự `CREATE TABLE IF NOT EXISTS <target> AS (<sql>) WHERE
+false`, nên schema bảng luôn khớp SELECT. Bảng đã có thì engine không đụng vào —
+muốn partition/constraint riêng thì cứ tạo tay trước.
 
 ## ADR — các quyết định đã chốt của kiến trúc hiện tại
 
@@ -173,6 +212,37 @@ không tải file về nên không băm được; hợp đồng checksum đã b�
 vẹn còn lại: MinIO bitrot protection + `etag`/`size_bytes` trong
 `file_parameters` JSONB lúc discovery. Các cột collector trên
 `ingestion.ingestion_files` (`sha256`, `http_status`, `rows_parsed`, …) đã DROP.
+
+**Archive fetch theo ô lưới, hai model theo thời kỳ (2026-08-28).** Trước đó
+fetch 126 phường cho mọi tháng. Đo trên chính bronze: 126 phường rơi vào 12 ô
+ERA5 (seed; nearest-neighbour từng lệch 12 vs 13) và 0 cặp (ô, giờ) nào có
+giá trị lệch nhau — tức trả quota gấp ~10 lần cho dữ liệu nhân bản. Nay fetch
+theo ô, Silver chiếu ngược qua `ward_grid_map`. **Giữ cả hai model:** IFS
+không có dữ liệu trước 2017 (probe 2026-08-28: 2016 mọi quý NULL), nên ERA5
+là chuỗi lịch sử sâu duy nhất; từ 2017 dùng `ecmwf_ifs` ~9km cho tín hiệu
+khác nhau thật giữa các phường. Backfill còn lại: 267 request / 13.121 đơn vị
+thay vì 912 / ~42.400. Đánh đổi: `ecmwf_ifs` không phải reanalysis nên có bước
+nhảy ở mốc 2017, và `weather_model` phải nằm trong mọi khoá join phía sau.
+
+**Song song thay pacing chủ động, retry phản ứng gánh quota (2026-08-28).**
+Nhịp tuần tự cũ `sleep(3600 × units / per_hour)` chỉ biết trần giờ: chạy đều
+4.500/giờ thì cạn ngân sách NGÀY sau ~2,2 giờ rồi 429 hàng loạt và chết. Từng
+thay bằng `QuotaLimiter` (token bucket, cửa sổ trượt, trần giờ VÀ ngày, state
+ghi đĩa) nhưng đã **gỡ lại** để đơn giản hoá — `fetch.pool` giờ chỉ chạy
+`OPEN_METEO_FETCH_WORKERS` luồng song song, không giữ nhịp dưới trần nào cả.
+Quota hoàn toàn dựa vào retry phản ứng của `land()` (429 → sleep 60s, tối đa 5
+lần) cộng chính sách dừng-cả-lô của pool. Đánh đổi: 429 có thể xảy ra thật khi
+backfill nhiều tháng liền; giảm nhẹ bằng cách hạ `OPEN_METEO_FETCH_WORKERS`
+hoặc chia nhỏ `--start`/`--end`.
+
+**Bảng đích do engine tạo (2026-08-28).** Trước đó thêm nguồn mới phải chạy DDL
+tay, và quên thì `make load` chết ở INSERT vào bảng không tồn tại — `bootstrap.py`
+chỉ tạo *schema* `bronze_store.tables`, không tạo table. Nay engine tự
+`CREATE TABLE IF NOT EXISTS ... AS (<sql>) WHERE false`, lấy schema từ chính SQL
+của nguồn nên không có danh sách cột thứ hai để lệch. Probe `SELECT 1 FROM
+<target> WHERE false` chạy trước vì `CREATE TABLE IF NOT EXISTS ... AS SELECT`
+vẫn bind câu select kể cả khi bảng đã có, tức bắt `read_json_auto` đọc S3 để suy
+schema; probe chỉ hỏi catalog. Cả hai chỉ chạy một lần cho mỗi tiến trình.
 
 **Metrics per-file không ghi (2026-08-22).** Engine INSERT cả lô bằng một câu SQL
 nên chỉ biết tổng; chia đều cho từng file là số giả. Tổng của lượt chạy in ra ở

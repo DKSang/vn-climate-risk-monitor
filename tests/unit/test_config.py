@@ -10,25 +10,28 @@ def test_pyarrow_is_not_a_direct_dependency() -> None:
     assert "pyarrow" not in text
 
 
-def test_default_archive_model_is_era5(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("OPEN_METEO_ARCHIVE_MODEL", raising=False)
+def test_archive_model_is_not_configurable(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Model archive chọn theo thời kỳ (era5 <2017, ecmwf_ifs >=2017).
+
+    Một biến môi trường sẽ âm thầm ghi đè logic đó và trộn hai lưới vào cùng bảng.
+    """
+    monkeypatch.setenv("OPEN_METEO_ARCHIVE_MODEL", "era5_land")
     load_settings.cache_clear()
 
-    assert load_settings().open_meteo.archive_model == "era5"
+    assert not hasattr(load_settings().open_meteo, "archive_model")
 
     load_settings.cache_clear()
 
 
-def test_default_open_meteo_hourly_budget(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("OPEN_METEO_MAX_EFFECTIVE_CALLS_PER_HOUR", raising=False)
+def test_default_fetch_workers(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("OPEN_METEO_FETCH_WORKERS", raising=False)
     load_settings.cache_clear()
 
     settings = load_settings().open_meteo
 
-    assert settings.max_effective_calls_per_hour == 4500
-    assert not hasattr(settings, "max_effective_calls_per_minute")
-    assert not hasattr(settings, "request_timeout_seconds")
-    assert not hasattr(settings, "max_attempts")
+    assert settings.fetch_workers == 4
+    assert not hasattr(settings, "max_effective_calls_per_hour")
+    assert not hasattr(settings, "max_effective_calls_per_day")
     load_settings.cache_clear()
 
 
@@ -37,10 +40,9 @@ def test_open_meteo_settings_are_loaded_from_environment(
 ) -> None:
     values = {
         "OPEN_METEO_FORECAST_URL": "https://forecast.example/v1/forecast",
-        "OPEN_METEO_ARCHIVE_MODEL": "era5_land",
         "OPEN_METEO_FORECAST_HOURS": "72",
         "OPEN_METEO_LOCATION_BATCH_SIZE": "25",
-        "OPEN_METEO_MAX_EFFECTIVE_CALLS_PER_HOUR": "1200",
+        "OPEN_METEO_FETCH_WORKERS": "8",
     }
     for name, value in values.items():
         monkeypatch.setenv(name, value)
@@ -49,10 +51,9 @@ def test_open_meteo_settings_are_loaded_from_environment(
     settings = load_settings().open_meteo
 
     assert settings.forecast_url == values["OPEN_METEO_FORECAST_URL"]
-    assert settings.archive_model == "era5_land"
     assert settings.forecast_hours == 72
     assert settings.location_batch_size == 25
-    assert settings.max_effective_calls_per_hour == 1200
+    assert settings.fetch_workers == 8
     load_settings.cache_clear()
 
 

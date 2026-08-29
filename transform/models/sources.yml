@@ -31,7 +31,7 @@ sources:
             description: "WMO weather code"
 
       - name: open_meteo_archive
-        description: "Lịch sử ERA5 theo giờ, grain (ô lưới model, giờ hợp lệ)"
+        description: "Lịch sử ERA5 theo giờ (trước 2017), grain (ô lưới, giờ hợp lệ)"
         # Archive là dữ liệu lịch sử, không cần freshness theo giờ
         freshness: null
         columns:
@@ -43,6 +43,13 @@ sources:
             tests: [not_null]
           - name: soil_moisture_0_to_7cm
             description: "m³/m³"
+
+      - name: open_meteo_ifs
+        description: >
+          Lịch sử ECMWF IFS theo giờ (từ 2017, ~9km), grain (ô lưới, giờ hợp lệ).
+          Bảng do autoloader tạo ở lần nạp IFS đầu tiên; không gắn test nguồn ở
+          đây vì `dbt build` phải chạy được trước lần fetch IFS nào.
+        freshness: null
 
   # ── Nguồn 1: Postgres (danh mục hành chính GSO) ─────────────────────────────
   # DuckDB ATTACH thẳng Postgres (read_only) trong profiles.yml -> dbt đọc trực

@@ -145,7 +145,8 @@ prefix `__dbt_tmp` rồi chỉ rename metadata.
 - fetch Open-Meteo: missing rows + urllib GET/PUT JSON bất biến trên MinIO;
 - autoloader: directory listing, discovery run ổn định, claim/lease, SQL transform;
 - forecast hourly production 126 phường/xã;
-- archive monthly backfill + pacing theo `OPEN_METEO_MAX_EFFECTIVE_CALLS_PER_HOUR`.
+- archive monthly backfill, fetch theo ô lưới (ERA5 trước 2017, ECMWF IFS từ
+  2017), song song qua `fetch.pool` (`OPEN_METEO_FETCH_WORKERS`).
 
 Chưa có:
 

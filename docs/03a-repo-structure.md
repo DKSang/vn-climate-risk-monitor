@@ -46,7 +46,9 @@ trực tiếp qua attach `pg_source`.
 s3://vn-climate/
 ├── bronze/
 │   ├── files/                       # payload nguyên bản, fetch quản lý
-│   │   └── open_meteo/<dataset>/{incremental/YYYY/MM/DD/HH, backfill/year=YYYY/month=MM}/
+│   │   └── open_meteo/<dataset>/{incremental/YYYY/MM/DD/HH,
+│   │                             backfill/year=YYYY/month=MM,   # era5
+│   │                             ifs/year=YYYY/month=MM}/        # ecmwf_ifs
 │   └── tables/                      # Parquet do DuckLake quản lý
 │       └── <table>/
 ├── silver/<ducklake-table>/
@@ -74,7 +76,7 @@ Thêm nguồn REST mới = planner trong app + ``fetch.land``. Thêm nguồn fil
 
 - Schema đã biểu đạt layer nên không dùng `_raw` hoặc `_cleaned`.
 - Bronze ưu tiên `<source>_<entity>` khi cần tránh trùng tên, ví dụ
-  `gso_wards`, `open_meteo_forecast_hourly`.
+  `gso_wards`, `open_meteo_forecast`, `open_meteo_archive`, `open_meteo_ifs`.
 - Silver dùng tên entity đã chuẩn hóa, ví dụ `wards`, `ward_centroids`,
   `rainfall_forecast_hourly`.
 - Gold dùng `dim_`, `fct_` hoặc tên aggregate nghiệp vụ.
