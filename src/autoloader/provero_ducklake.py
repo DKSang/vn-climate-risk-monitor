@@ -25,7 +25,7 @@ Rồi trong ``provero.yaml``::
     source:
       type: ducklake
       connection: "ducklake:postgres:dbname=... host=..."
-      table: bronze_store.tables.open_meteo_forecast
+      table: catalog1.silver.stg_weather_forecast
 
 Cấu hình đọc từ biến môi trường (DUCKLAKE_*, MINIO_*) để không lộ secret trong
 file YAML. Module này KHÔNG import provero — chỉ dùng duck typing theo đúng
@@ -75,9 +75,9 @@ class DuckLakeConnector:
         # `connection` như tên trường trong YAML.
         self.database = database
         self.catalog_dsn = connection_string or os.getenv("DUCKLAKE_DSN", "")
-        self.alias = os.getenv("DUCKLAKE_ALIAS", "bronze_store")
+        self.alias = os.getenv("DUCKLAKE_ALIAS", "catalog1")
         self.data_path = os.getenv("DUCKLAKE_DATA_PATH", "")
-        self.metadata_schema = os.getenv("DUCKLAKE_METADATA_SCHEMA", "ducklake_bronze")
+        self.metadata_schema = os.getenv("DUCKLAKE_METADATA_SCHEMA", "ducklake")
 
     def connect(self) -> DuckLakeConnection:
         conn = duckdb.connect(

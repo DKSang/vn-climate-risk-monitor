@@ -60,19 +60,20 @@ class ArchiveModel:
 
     name: str
     prefix: str
-    bronze_table: str
 
+
+# Hai model chia CHUNG một bảng staging, phân biệt bằng cột `weather_model`.
+# Trước 2026-09-03 mỗi model một bảng, dù schema y hệt nhau.
+STAGING_HOURLY = "catalog1.silver.stg_weather_hourly"
 
 ERA5 = ArchiveModel(
     name="era5",
     # Giữ nguyên prefix cũ: dữ liệu ward-based 2000–2013 đã nằm đây và cùng schema.
     prefix="bronze/files/open_meteo/historical_weather_hourly/backfill",
-    bronze_table="bronze_store.tables.open_meteo_archive",
 )
 IFS = ArchiveModel(
     name="ecmwf_ifs",
     prefix="bronze/files/open_meteo/historical_weather_hourly/ifs",
-    bronze_table="bronze_store.tables.open_meteo_ifs",
 )
 ARCHIVE_MODELS = (ERA5, IFS)
 
@@ -117,24 +118,33 @@ def days_in_month(month: date) -> int:
 
 
 def covered_months(
-    connection: duckdb.DuckDBPyConnection, table: str
+    connection: duckdb.DuckDBPyConnection,
+    table: str = STAGING_HOURLY,
+    *,
+    weather_model: str | None = None,
 ) -> frozenset[date]:
-    """Tháng đã ĐỦ giờ trong bronze — bỏ qua khi lập kế hoạch.
+    """Tháng đã ĐỦ giờ trong staging — bỏ qua khi lập kế hoạch.
 
-    Cố ý hỏi bronze chứ không đếm object trên MinIO. Cách fetch đã đổi từ
+    Cố ý hỏi bảng staging chứ không đếm object trên MinIO. Cách fetch đã đổi từ
     theo-phường (6 file/tháng) sang theo-ô (1–2 file/tháng), nên so khớp
     ``response_NNN.json`` sẽ hiểu sai: một tháng ward-based đủ 6 file trông giống
     một tháng grid-based đã xong, và ngược lại một tháng grid-based đủ dữ liệu
     lại trông như thiếu file. Số giờ có thật trong bảng thì không mơ hồ.
     """
     try:
+        # Lọc theo model là BẮT BUỘC từ khi hai model dùng chung một bảng:
+        # không lọc thì tháng của era5 làm ecmwf_ifs trông như đã phủ đủ.
+        predicate = "" if weather_model is None else "WHERE weather_model = ?"
+        parameters = [] if weather_model is None else [weather_model]
         rows = connection.execute(
             f"""
             SELECT date_trunc('month', valid_time_utc) AS month_start,
                    count(DISTINCT valid_time_utc)      AS hours
             FROM {table}
+            {predicate}
             GROUP BY 1
-            """
+            """,
+            parameters,
         ).fetchall()
     except duckdb.Error:
         return frozenset()  # bảng chưa tồn tại: chưa có gì được phủ
@@ -348,7 +358,10 @@ def _cmd_archive(args, settings) -> int:
     months = list(months_between(args.start, args.end))
     connection = get_connection()
     try:
-        covered = {m.name: covered_months(connection, m.bronze_table) for m in ARCHIVE_MODELS}
+        covered = {
+            m.name: covered_months(connection, weather_model=m.name)
+            for m in ARCHIVE_MODELS
+        }
     finally:
         connection.close()
     client = get_minio_client(settings.minio)

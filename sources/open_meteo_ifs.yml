@@ -11,7 +11,7 @@ parameters:
 transform:
   # Dùng CHUNG contract với open_meteo_archive — cùng bộ cột, chỉ khác model.
   sql_file: open_meteo_hourly.sql
-  target: bronze_store.tables.open_meteo_hourly
+  target: catalog1.silver.stg_weather_hourly
 
 loader:
   batch_size: 50

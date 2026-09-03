@@ -1,4 +1,4 @@
-.PHONY: bootstrap bootstrap-env bootstrap-geography up down logs backup-metadata restore-metadata map-grid fetch-forecast fetch-archive backfill-archive load forecast-pipeline archive-pipeline quality quality-forecast quality-archive health health-alert seed dbt dbt-test freshness transform transform-forecast transform-archive dbt-docs serve-api clean-lake lint
+.PHONY: bootstrap bootstrap-env bootstrap-geography up down logs backup-metadata restore-metadata map-grid fetch-forecast fetch-archive backfill-archive load forecast-pipeline archive-pipeline quality quality-forecast quality-archive health health-alert seed dbt dbt-test freshness transform dbt-docs serve-api clean-lake lint
 
 # ==== Setup ====
 bootstrap-env:
@@ -65,23 +65,24 @@ load:
 
 # Pipeline production tuần tự. Make dừng ngay nếu một bước lỗi, nên quality fail
 # sẽ chặn dbt build và không publish Silver/Gold từ Bronze không đạt chuẩn.
+# Forecast dừng ở Bronze: phase này chưa có Gold forecast (xem
+# docs/superpowers/plans/2026-09-03-lean-medallion.md §8). Vẫn fetch + nạp đều
+# để khi thêm nhánh Gold thì đã có sẵn lịch sử, không phải backfill lại.
 forecast-pipeline:
 	$(MAKE) fetch-forecast EXEC=1
 	$(MAKE) load SOURCE=open_meteo_forecast
 	$(MAKE) quality-forecast
-	$(MAKE) transform-forecast
-	$(MAKE) health SCOPE=forecast REQUIRE_GOLD=1
 
 # Bồi đuôi cả ERA5/IFS, chặn transform khi Bronze/control plane không đạt chuẩn.
 archive-pipeline:
 	$(MAKE) fetch-archive EXEC=1 START=$(START) END=$(END)
 	$(MAKE) load SOURCE="open_meteo_archive open_meteo_ifs"
 	$(MAKE) quality-archive
-	$(MAKE) transform-archive
+	$(MAKE) transform
 	$(MAKE) health SCOPE=archive REQUIRE_GOLD=1
 
 # ==== Data quality: Provero quét bronze NGAY SAU load ====
-# dbt không với tới bronze vì autoloader ghi ngoài đồ thị dbt.
+# dbt không với tới staging vì autoloader ghi ngoài đồ thị dbt.
 # Đọc QUA catalog DuckLake (không glob Parquet — glob thấy cả dòng đã xoá).
 #
 # --no-store: BẮT BUỘC. Provero v0.2.1 crash khi check `range` FAIL trên bảng có
@@ -90,7 +91,7 @@ archive-pipeline:
 # --no-optimize: chạy từng check riêng thay vì gộp một query.
 #
 # Trả exit code 1 khi có check fail -> dùng làm cổng chặn trong CI được.
-_PROVERO_FORECAST = DUCKLAKE_ALIAS=bronze_store DUCKLAKE_DATA_PATH=s3://$(or $(MINIO_BUCKET),vn-climate)/bronze DUCKLAKE_METADATA_SCHEMA=ducklake_bronze uv run provero run -c quality/provero.yaml --no-optimize --no-store
+_PROVERO_FORECAST = DUCKLAKE_ALIAS=catalog1 DUCKLAKE_DATA_PATH=s3://$(or $(MINIO_BUCKET),vn-climate) DUCKLAKE_METADATA_SCHEMA=ducklake uv run provero run -c quality/provero.yaml --no-optimize --no-store
 
 # Gate đầy đủ cho vận hành tay: Provero forecast + mọi nguồn + Gold/control/disk.
 quality:
@@ -134,19 +135,10 @@ freshness:
 # Chạy qua processing framework: nó chốt run_started_at TRƯỚC khi dbt đọc gì, và
 # chỉ ghi mốc đó vào checkpoint khi dbt exit 0.
 transform:
-	uv run python scripts/run_processing.py run rainfall_historical_hourly --full-graph
-
-# Forecast chạy mỗi giờ: chỉ build graph forecast, không rebuild toàn bộ lịch sử.
-transform-forecast:
-	cd transform && uv run dbt build --profiles-dir . --select +fct_ward_rainfall_forecast_hourly +fct_ward_rainfall_forecast_summary +dim_grid
-
-# Archive chạy hằng ngày/backfill: build các model historical và dependency của chúng.
-# Selector nằm trong processing/rainfall_historical_hourly.yml (runner.select).
-transform-archive:
-	uv run python scripts/run_processing.py run rainfall_historical_hourly
+	uv run python scripts/run_processing.py run rain_hourly
 
 # Tiến độ + lịch sử run của một process.
-PROCESS ?= rainfall_historical_hourly
+PROCESS ?= rain_hourly
 processing-status:
 	uv run python scripts/run_processing.py status $(PROCESS)
 

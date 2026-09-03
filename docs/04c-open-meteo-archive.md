@@ -1,5 +1,13 @@
 # Ingestion Open-Meteo Historical Archive
 
+> **Đã thay thế một phần (2026-09-03).** Kiến trúc chốt hiện tại ở
+> [plan lean medallion](superpowers/plans/2026-09-03-lean-medallion.md) và
+> [plan Silver Layer Flow](superpowers/plans/2026-09-03-silver-layer-flow.md):
+> MỘT catalog DuckLake (`catalog1`), Bronze chỉ còn là landing zone raw file,
+> bảng append-only của autoloader nay là `silver.stg_*`.
+> Phần mô tả `bronze_store` / hai catalog / các model gold cũ trong tài liệu
+> này KHÔNG còn đúng.
+
 > ## ⚠️ TÀI LIỆU CŨ — kiến trúc đã thay đổi 2026-08-21
 >
 > Mọi lệnh `collect-open-meteo-*`, `load-open-meteo-*`, `run-open-meteo-*`,
@@ -13,7 +21,7 @@
 >
 > **Thêm nữa (2026-08-22):** Bronze loader giờ là **INSERT**, không còn
 > `bronze_row_id` + `MERGE INTO` như mô tả ở §6 — bảng đích là
-> `bronze_store.tables.open_meteo_archive` và dedup theo (ô lưới, giờ) làm ở
+> `catalog1.silver.stg_weather_hourly` và dedup theo (ô lưới, giờ) làm ở
 > Silver (`ROW_NUMBER() ... rn = 1`). Lý do và đánh đổi: xem ADR cuối
 > [04b-ingestion-runbook.md](04b-ingestion-runbook.md).
 >
@@ -40,7 +48,7 @@ Pipeline tải lịch sử hourly cho 126 phường/xã Hà Nội từ năm 2000
 2017, ECMWF IFS từ 2017, giữ JSON nguồn để replay và tạo bảng:
 
 ```text
-bronze_store.tables.open_meteo_archive_hourly
+catalog1.silver.stg_weather_hourly
 ```
 
 Bronze chỉ parse payload theo source contract. Dedup semantic, hợp nhất Archive
@@ -101,8 +109,8 @@ monthly run và mặc định chỉ nhận thêm một period mới mỗi invoca
 Model archive chọn theo thời kỳ, không cấu hình bằng env:
 
 ```text
-trước 2017  →  models=era5        →  bronze_store.tables.open_meteo_archive
-từ 2017-01  →  models=ecmwf_ifs    →  bronze_store.tables.open_meteo_ifs
+trước 2017  →  models=era5        →  catalog1.silver.stg_weather_hourly
+từ 2017-01  →  models=ecmwf_ifs    →  catalog1.silver.stg_weather_hourly
 ```
 
 `OPEN_METEO_ARCHIVE_MODEL` đã bỏ — một biến môi trường sẽ ghi đè mốc 2017 và
@@ -169,7 +177,7 @@ Khóa không chứa attempt/file, vì vậy recollect cùng model/ward/hour sẽ
 lineage và giá trị mới thay vì tạo duplicate. Loader chạy transaction:
 
 ```sql
-MERGE INTO bronze_store.tables.open_meteo_archive_hourly AS target
+MERGE INTO catalog1.silver.stg_weather_hourly AS target
 USING staging AS source
 ON target.bronze_row_id = source.bronze_row_id
 WHEN MATCHED THEN UPDATE
@@ -179,7 +187,7 @@ WHEN NOT MATCHED THEN INSERT BY NAME;
 DuckLake table được cấu hình một lần bằng:
 
 ```sql
-ALTER TABLE bronze_store.tables.open_meteo_archive_hourly
+ALTER TABLE catalog1.silver.stg_weather_hourly
 SET PARTITIONED BY (year(observed_time_utc));
 ```
 

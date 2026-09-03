@@ -1,0 +1,100 @@
+version: 2
+
+models:
+  - name: dim_grid
+    description: "Ô lưới thời tiết — nơi DUY NHẤT giữ lat/lon của ô"
+    columns:
+      - name: grid_cell_id
+        tests: [unique, not_null]
+      - name: weather_model
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['era5', 'ecmwf_ifs']
+      - name: grid_latitude
+        tests: [not_null]
+      - name: grid_longitude
+        tests: [not_null]
+
+  - name: dim_ward
+    description: "126 phường/xã Hà Nội. KHÔNG mang grid_cell_id — xem bridge"
+    columns:
+      - name: ward_code
+        tests: [unique, not_null]
+      - name: ward_name
+        tests: [not_null]
+
+  - name: bridge_ward_grid
+    description: "Phường ↔ ô lưới theo model. 252 dòng, đủ để join lúc query"
+    columns:
+      - name: ward_code
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_ward')
+              field: ward_code
+      - name: grid_cell_id
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_grid')
+              field: grid_cell_id
+      - name: ward_count_on_grid
+        description: "Số phường dùng chung ô này — để xếp hạng không nhân trọng số"
+        tests: [not_null]
+
+  - name: fct_rain_hourly
+    description: >
+      Mưa theo ô lưới × giờ + cửa sổ trượt 1/3/6/12/24h + dải kịch bản.
+      `rain_{N}h_mm` NULL = cửa sổ thiếu giờ.
+    columns:
+      - name: rain_hourly_key
+        tests: [unique, not_null]
+      - name: grid_cell_id
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_grid')
+              field: grid_cell_id
+      - name: valid_time_utc
+        tests: [not_null]
+      - name: rain_date
+        tests: [not_null]
+      - name: hanoi_rain_scenario_band
+        tests:
+          - accepted_values:
+              values: ['below_50', 'from_50_to_under_70', 'from_70_to_100', 'over_100']
+      - name: vn_rain_band_24h
+        tests:
+          - accepted_values:
+              values: ['below_100', 'from_100_to_200', 'over_200_to_400', 'over_400']
+
+  - name: fct_rain_daily
+    description: "Mưa theo ô lưới × ngày (UTC). Full refresh từ fct_rain_hourly"
+    columns:
+      - name: rain_daily_key
+        tests: [unique, not_null]
+      - name: grid_cell_id
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_grid')
+              field: grid_cell_id
+      - name: rain_date
+        tests: [not_null]
+      - name: observed_hours
+        tests: [not_null]
+
+  - name: fct_ward_rain_daily
+    description: "Mưa theo phường × ngày. Chiếu fct_rain_daily qua bridge"
+    columns:
+      - name: ward_rain_daily_key
+        tests: [unique, not_null]
+      - name: ward_code
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_ward')
+              field: ward_code
+      - name: rain_date
+        tests: [not_null]

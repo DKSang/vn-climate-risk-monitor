@@ -1,5 +1,13 @@
 # Runbook — Ingestion
 
+> **Đã thay thế một phần (2026-09-03).** Kiến trúc chốt hiện tại ở
+> [plan lean medallion](superpowers/plans/2026-09-03-lean-medallion.md) và
+> [plan Silver Layer Flow](superpowers/plans/2026-09-03-silver-layer-flow.md):
+> MỘT catalog DuckLake (`catalog1`), Bronze chỉ còn là landing zone raw file,
+> bảng append-only của autoloader nay là `silver.stg_*`.
+> Phần mô tả `bronze_store` / hai catalog / các model gold cũ trong tài liệu
+> này KHÔNG còn đúng.
+
 **Cập nhật 2026-08-28** — `fetch.land` (HTTP→MinIO); `autoloader` (file→bảng); cấu hình nguồn ở `sources/`.
 
 ---
@@ -15,7 +23,7 @@
                land(): GET rồi ghi JSON lên MinIO
                 bronze/files/open_meteo/<dataset>/...
 2. load      autoloader liệt kê MinIO, nạp file MỚI vào bronze bằng SQL
-                bronze_store.tables.open_meteo_*
+                catalog1.silver.open_meteo_*
 ```
 
 `land()` nằm trong package ``fetch``; hàng đợi song song ở `fetch/pool.py`. Planner Open-Meteo (URL, định tuyến model, skip tháng) nằm trong ``open_meteo.py``; bản đồ ô lưới ở ``grid.py``. Object singleton được bọc thành array để khớp `read_json_auto` với file cũ.
@@ -140,7 +148,7 @@ tháng đã đủ, nên một lệnh `make fetch-archive EXEC=1` xử lý cả d
 
 PostgreSQL chứa metadata DuckLake, ingestion checkpoint và dữ liệu tham chiếu.
 Script mặc định backup toàn database bằng custom archive; có thể giới hạn bằng
-`POSTGRES_SCHEMAS="ducklake ducklake_bronze ingestion"`. Cài PostgreSQL client
+`POSTGRES_SCHEMAS="ducklake ducklake ingestion"`. Cài PostgreSQL client
 (`pg_dump`, `pg_restore`) trên máy chạy lệnh và truyền cấu hình bằng môi trường:
 
 ```bash
@@ -288,7 +296,7 @@ hoặc chia nhỏ `--start`/`--end`.
 
 **Bảng đích do engine tạo (2026-08-28).** Trước đó thêm nguồn mới phải chạy DDL
 tay, và quên thì `make load` chết ở INSERT vào bảng không tồn tại — `bootstrap.py`
-chỉ tạo *schema* `bronze_store.tables`, không tạo table. Nay engine tự
+chỉ tạo *schema* `catalog1.silver`, không tạo table. Nay engine tự
 `CREATE TABLE IF NOT EXISTS ... AS (<sql>) WHERE false`, lấy schema từ chính SQL
 của nguồn nên không có danh sách cột thứ hai để lệch. Probe `SELECT 1 FROM
 <target> WHERE false` chạy trước vì `CREATE TABLE IF NOT EXISTS ... AS SELECT`

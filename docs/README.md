@@ -20,40 +20,40 @@ Theo dõi rủi ro **ngập úng / lũ / hạn hán** cho Hà Nội, chi tiết 
 | 8 | Make it accessible | `08-serving-bi.md` | ⬜ |
 | 9 | Governance & Continuous Improvement | `09-governance.md` | ⬜ |
 
-## Trạng thái hệ thống (2026-08-31)
+## Trạng thái hệ thống (2026-09-03)
 
 ```
-dbt build  → PASS=237  WARN=0  ERROR=0
-PostgreSQL → ingestion_runs + ingestion_files
-             processing_state + processing_runs
+PostgreSQL → ingestion_runs + ingestion_files      (file checkpoint)
+             processing_state + processing_runs    (processing checkpoint)
+DuckLake   → MỘT catalog `catalog1`
+MinIO      → bronze/files (raw)  ·  silver/  ·  gold/
 ```
+
+Medallion đã dựng lại gọn (xem
+[plan lean medallion](superpowers/plans/2026-09-03-lean-medallion.md) và
+[plan Silver Layer Flow](superpowers/plans/2026-09-03-silver-layer-flow.md)).
 
 | Layer | Bảng | Dòng |
 |---|---|---|
-| seed | `ward_coordinates_seed` *(input artifact, ngoài medallion)* | 3.321 |
-| bronze | `gso_provinces` · `gso_wards` · `gso_administrative_units` · `gso_administrative_regions` · `ward_coordinates` | 34 · 3.321 · 5 · 8 · 3.321 |
-| silver | `wards` · `ward_centroids` · `ward_locations` | 3.321 mỗi bảng (view) |
-| gold | `dim_hanoi_ward` · `dim_grid` | **126** · **109** *(48 IFS archive + 48 IFS forecast + 13 ERA5 archive)* |
-| bronze weather | `open_meteo_forecast` | **20.160** *(nhiều retrieval run; Silver chọn một run hoàn chỉnh)* |
-| bronze archive | `open_meteo_archive` (ERA5) · `open_meteo_ifs` (IFS) | **20.032.800** · **4.030.848** *(Bronze giữ mọi ingest; Silver dedup)* |
-| silver weather | `forecast_hourly` | **3.456** *(48 grid × 72 giờ, snapshot `2026-08-27 15:00 UTC`)* |
-| silver archive | `archive_hourly` | **5.819.352** *(ERA5 2000-01→2026-08, 13 ô; IFS 2017-01→2026-07, 48 ô)* |
-| silver bridge | `bridge_hanoi_ward_forecast_grid` · `ward_grid_map` | **126** · **252** *(126 phường × 2 model)* |
-| gold forecast | `fct_rainfall_forecast_hourly` · `fct_rainfall_forecast_summary` | **3.456** · **48** |
-| gold ward forecast | `fct_ward_rainfall_forecast_hourly` · `fct_ward_rainfall_forecast_summary` | **9.072** · **126** |
-| gold historical | `fct_rainfall_historical_hourly` · `fct_rainfall_historical_daily` · `fct_rainfall_climatology_monthly` | **5.819.352** · **242.473** · **5.040** |
-| gold climate | `fct_rainfall_historical_anomaly_hourly` · `fct_rainfall_drought_daily` · `fct_rainfall_historical_event` | **5.819.352** · **242.473** · **124.830** |
-| gold ward historical | `fct_ward_rainfall_drought_daily` · `fct_ward_historical_replay_hourly` · `dim_historical_replay_window` | **1.223.363** · **54.432** · **4** |
+| landing | `bronze/files/**.json` *(raw bất biến, ngoài catalog)* | 1.302 file · 790 MB |
+| seed | `ward_coordinates_seed` · `ward_grid_map_seed` *(input artifact)* | 3.321 · 252 |
+| silver staging | `stg_weather_hourly` · `stg_weather_forecast` | **19.895.304** · **20.160** |
+| silver curated | `weather_hourly` · `ward` · `ward_grid` | **5.818.584** · 126 · 252 |
+| gold dim | `dim_grid` · `dim_ward` · `bridge_ward_grid` | 60 · 126 · 252 |
+| gold fact | `fct_rain_hourly` · `fct_rain_daily` · `fct_ward_rain_daily` | **5.818.584** · **242.441** · **1.223.303** |
+
+Staging giữ 70% dòng "trùng" một cách CÓ CHỦ Ý: đó là change log của mọi lần
+fetch. Dedup xảy ra ở `silver.weather_hourly`.
 
 ## Lệnh thường dùng
 
 ```bash
-make up            # bật Postgres + MinIO + pgAdmin
-make transform     # dbt build (run + test + tự dọn file cũ)
-make transform-archive           # chỉ DAG historical/climate
+make up                      # bật Postgres + MinIO + pgAdmin
 make fetch-forecast EXEC=1   # land dự báo slot giờ hiện tại
-make load                    # autoloader nạp file mới vào Bronze
-make quality                 # Provero quét Bronze
+make load                    # autoloader nạp file raw vào silver.stg_*
+make transform               # dbt build qua processing framework
+make processing-status       # checkpoint + lịch sử run
+make quality                 # Provero quét silver staging
 make backfill-archive        # fetch+load archive theo năm
 make clean-lake              # squash lakehouse, bỏ lịch sử snapshot
 make dbt-docs                # sinh và mở dbt docs
@@ -66,4 +66,6 @@ make dbt-docs                # sinh và mở dbt docs
 - **Test dựa trên metadata không chứng minh được dữ liệu tồn tại** — bài học từ sự cố bảng ma
   20/08/2026. Test quan trọng phải buộc engine đọc file thật (xem `assert_gold_is_readable`).
 - Mọi giả định ghi rõ dạng `A1`, `A2`… và rủi ro dạng `R1`, `R2`… để trace ngược.
-- Medallion dùng ba layer; Bronze chứa source object và source-faithful table — xem [03-architecture.md](03-architecture.md).
+- Bronze CHỈ là landing zone raw file. Bảng append-only đầu tiên là `silver.stg_*`
+  (staging), dedup ở `silver.*` (curated) — xem
+  [plan Silver Layer Flow](superpowers/plans/2026-09-03-silver-layer-flow.md).

@@ -15,7 +15,7 @@ discovery:
   prefix: bronze/files/my_source
 transform:
   sql_file: my_source.sql
-  target: bronze_store.tables.my_source
+  target: catalog1.silver.stg_my_source
 """
 
 

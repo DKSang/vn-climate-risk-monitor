@@ -1,0 +1,22 @@
+process_key: rain_hourly
+target: gold.fct_rain_hourly
+scope: production
+
+sources:
+  # `weather_hourly` là view trên Bronze, nên `_ingested_at` đi thẳng từ Bronze
+  # lên — đúng timestamp do PLATFORM sinh, không phải business time của
+  # Open-Meteo. Giờ của hệ nguồn có thể backdated, null, sai timezone; giờ
+  # ingest thì không.
+  - ref: weather_hourly
+    change_column: _ingested_at
+
+checkpoint:
+  # Bù khoảng cách giữa lúc `_ingested_at` được đóng dấu (lúc lô bắt đầu ghi)
+  # và lúc row thật sự visible sau COMMIT. Lô 50 file đo 0,4s nên 15 phút là
+  # biên rất rộng; chi phí chỉ là rescan 15 phút Bronze.
+  safety_lag: 15 minutes
+
+runner:
+  # Cả graph gold đều phụ thuộc fct_rain_hourly, nên build toàn bộ là đúng và
+  # rẻ: hai fact còn lại full refresh và nhỏ.
+  select: null

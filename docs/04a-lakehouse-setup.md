@@ -1,5 +1,13 @@
 # Setup Lakehouse
 
+> **Đã thay thế một phần (2026-09-03).** Kiến trúc chốt hiện tại ở
+> [plan lean medallion](superpowers/plans/2026-09-03-lean-medallion.md) và
+> [plan Silver Layer Flow](superpowers/plans/2026-09-03-silver-layer-flow.md):
+> MỘT catalog DuckLake (`catalog1`), Bronze chỉ còn là landing zone raw file,
+> bảng append-only của autoloader nay là `silver.stg_*`.
+> Phần mô tả `bronze_store` / hai catalog / các model gold cũ trong tài liệu
+> này KHÔNG còn đúng.
+
 **DuckLake + PostgreSQL catalog + MinIO storage + DuckDB compute**
 
 ## Thành phần
@@ -7,7 +15,6 @@
 ```text
 DuckDB/dbt
    ├── catalog1 metadata      → PostgreSQL schema ducklake
-   ├── bronze_store metadata → PostgreSQL schema ducklake_bronze
    ├── ingestion control     → PostgreSQL schema ingestion
    └── Files + Parquet       → s3://vn-climate trên MinIO
 ```
@@ -42,7 +49,7 @@ chạy liên tục: bootstrap step 4 (schema), dbt build + `assert_gold_is_reada
 
 1. Tạo bucket MinIO nếu chưa có.
 2. Attach catalog chính và catalog Bronze, cùng backed by PostgreSQL.
-3. Tạo `bronze_store.tables`, `catalog1.silver`, `catalog1.gold`.
+3. Tạo `catalog1.silver`, `catalog1.silver`, `catalog1.gold`.
 4. Tạo `ingestion.ingestion_runs` và `ingestion.ingestion_files` trực tiếp trong PostgreSQL.
 
 ## Storage ownership
@@ -50,14 +57,14 @@ chạy liên tục: bootstrap step 4 (schema), dbt build + `assert_gold_is_reada
 | Prefix/schema | Owner | Chính sách |
 |---|---|---|
 | `bronze/files` | fetch | immutable, append-only, không DuckLake cleanup |
-| `bronze/tables/<table>` | `bronze_store.tables` | snapshot/maintenance qua catalog |
+| `bronze/tables/<table>` | `catalog1.silver` | snapshot/maintenance qua catalog |
 | `silver/<table>` | DuckLake | validated/conformed |
 | `gold/<table>` | DuckLake | business-ready |
 | `ingestion.*` | ingestion runtime | checkpoint và audit |
 
-Phase 5 đã tạo và vận hành `bronze_store.tables.open_meteo_forecast_hourly` cho
+Phase 5 đã tạo và vận hành `catalog1.silver.stg_weather_forecast` cho
 126 phường/xã; catalog của bảng
-nằm trong PostgreSQL `ducklake_bronze`, còn Parquet nằm đúng prefix
+nằm trong PostgreSQL `ducklake`, còn Parquet nằm đúng prefix
 `bronze/tables/open_meteo_forecast_hourly/`.
 
 Không dùng prefix `raw/` hoặc `landing/`.
