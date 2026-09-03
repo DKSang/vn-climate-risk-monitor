@@ -59,6 +59,18 @@ def test_incremental_vars_carry_lower_bound() -> None:
     )
 
 
+def test_vars_carry_run_start_for_updated_at() -> None:
+    """`_updated_at` của lớp mutable phải dùng đồng hồ Postgres, không phải DuckDB.
+
+    Bơm xuống ngay cả khi full refresh: model vẫn cần đóng dấu dòng nó ghi.
+    """
+    incremental = build_vars(bounds(lower=at(9, 45)))
+    full = build_vars(bounds(lower=None))
+
+    assert incremental["processing_run_started_at"].startswith("2026-09-03 11:00:00")
+    assert full["processing_run_started_at"].startswith("2026-09-03 11:00:00")
+
+
 def test_full_refresh_vars_omit_bounds() -> None:
     variables = build_vars(bounds(lower=None))
 
