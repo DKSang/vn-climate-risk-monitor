@@ -25,6 +25,12 @@ from processing.runner import (
     run_process,
 )
 from processing.schema import ensure_processing_state
+from processing.softdelete import (
+    SoftDeleteConfig,
+    SoftDeleteError,
+    SoftDeleteResult,
+    apply_soft_delete,
+)
 from processing.state import ProcessingRepository, ProcessingStateError
 
 __all__ = [
@@ -36,8 +42,12 @@ __all__ = [
     "ProcessingResult",
     "ProcessingStateError",
     "RunnerConfig",
+    "SoftDeleteConfig",
+    "SoftDeleteError",
+    "SoftDeleteResult",
     "SourceBinding",
     "SourceBounds",
+    "apply_soft_delete",
     "build_vars",
     "compute_bounds",
     "ensure_processing_state",

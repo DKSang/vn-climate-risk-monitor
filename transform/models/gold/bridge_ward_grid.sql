@@ -10,18 +10,27 @@
     nhiều phường dùng chung một ô (Q4).
 */
 
+{#
+    INCREMENTAL cùng lý do với `dim_ward`: giữ dòng của phường đã giải thể để
+    `fct_ward_rain_daily` không mất lịch sử khi INNER JOIN.
+#}
 {{ config(
-    materialized = 'table',
+    materialized = 'incremental',
+    unique_key = 'ward_grid_key',
     tags = ['gold', 'bridge']
 ) }}
 
 SELECT
+    MD5(CONCAT_WS('|', map.ward_code, map.weather_model)) AS ward_grid_key,
     map.ward_code,
     map.weather_model,
     map.grid_cell_id,
     map.grid_elevation_m,
     COUNT(*) OVER (PARTITION BY map.weather_model, map.grid_cell_id)
-        AS ward_count_on_grid
+        AS ward_count_on_grid,
+    TRUE AS is_active,
+    CAST(NULL AS TIMESTAMPTZ) AS _deactivated_at,
+    {{ processing_updated_at() }} AS _updated_at
 FROM {{ ref('ward_grid') }} AS map
 -- INNER JOIN: một dòng ánh xạ trỏ tới ô không tồn tại trong dữ liệu là lỗi
 -- ánh xạ, và test relationships sẽ chỉ ra ngay thay vì để nó lặng lẽ sinh
