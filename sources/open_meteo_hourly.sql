@@ -1,12 +1,19 @@
--- Transform cho nguồn open_meteo_archive.
--- Chạy bởi autoloader engine, thay hai placeholder:
---   {{ files }}        danh sách file đã claim trong lô này
---   {{ ingested_at }}  giờ từ Postgres control plane — KHÔNG dùng
---                      CURRENT_TIMESTAMP của DuckDB (giờ máy worker), vì
---                      checkpoint downstream so mốc này với giờ Postgres.
+-- Transform cho dữ liệu hourly của Open-Meteo archive API.
 --
--- Thay thế archive_parser.py (401 dòng Python + pyarrow). Toàn bộ explode và ép kiểu
--- do DuckDB làm.
+-- MỘT file cho NHIỀU model thời tiết (era5, ecmwf_ifs...). Chúng là các endpoint
+-- khác nhau nhưng trả đúng một bộ cột, nên tách thành hai file SQL lệch nhau
+-- đúng một dòng chỉ tạo ra hai thứ sẽ trôi khỏi nhau. Model đến từ
+-- `parameters.weather_model` trong YAML của từng nguồn.
+-- Chạy bởi autoloader engine, thay các placeholder:
+--   {{ files }}          danh sách file đã claim trong lô này
+--   {{ weather_model }}  từ `parameters` trong YAML của nguồn
+--   {{ ingested_at }}    giờ từ Postgres control plane — KHÔNG dùng
+--                        CURRENT_TIMESTAMP của DuckDB (giờ máy worker), vì
+--                        checkpoint downstream so mốc này với giờ Postgres.
+--
+-- Probe 2026-08-28: era5 và ecmwf_ifs đều có đủ 5 biến đang dùng, nên một bảng
+-- Bronze duy nhất phân biệt bằng cột `weather_model` là đủ — Silver không còn
+-- phải union hai bảng có schema y hệt nhau.
 --
 -- Rescue (tinh thần _rescued_data của Auto Loader): dùng TRY_CAST thay CAST, giá
 -- trị hỏng thành NULL và được ghi lại trong _rescued_data thay vì làm gãy cả lô.
@@ -42,6 +49,7 @@ exploded AS (
 )
 
 SELECT
+    '{{ weather_model }}'                             AS weather_model,
     TRY_CAST(latitude  AS DOUBLE)                     AS grid_latitude,
     TRY_CAST(longitude AS DOUBLE)                     AS grid_longitude,
     TRY_CAST(elevation AS DOUBLE)                     AS elevation_m,

@@ -160,13 +160,16 @@ def test_predicate_starts_with_where(macro: str) -> None:
 
 
 # ── model thật ───────────────────────────────────────────────────────────────
-def test_gold_model_has_no_hardcoded_lookback() -> None:
-    """Hồi quy: `INTERVAL '71 hours'` từng lặp 3 lần trong model, lệch nhau là
-    ra số sai mà test schema vẫn xanh."""
-    model = Path(
-        "transform/models/gold/fct_rainfall_historical_hourly.sql"
-    ).read_text(encoding="utf-8")
+def test_models_declare_lookback_once() -> None:
+    """Mọi model dùng rolling window phải khai báo lookback MỘT lần rồi truyền
+    vào macro, không viết `INTERVAL '<n> hours'` rải rác.
 
-    assert model.count("INTERVAL '71 hours'") == 0
-    assert model.count("{% set lookback = '71 hours' %}") == 1
-    assert "gold_historical_watermark" not in model
+    Hồi quy: bản cũ lặp `INTERVAL '71 hours'` ba chỗ; lệch nhau là ra số SAI mà
+    mọi test not_null/unique vẫn xanh.
+    """
+    for model_path in Path("transform/models").rglob("*.sql"):
+        body = model_path.read_text(encoding="utf-8")
+        if "incremental_input_scope" not in body:
+            continue
+        assert not re.search(r"INTERVAL '\d+ hours'", body), model_path
+        assert body.count("{% set lookback") == 1, model_path

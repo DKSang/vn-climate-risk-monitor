@@ -15,15 +15,30 @@ Ví dụ ``sources/open_meteo_forecast.yml``::
     transform:
       sql_file: open_meteo_forecast.sql
       target: bronze_store.tables.open_meteo_forecast
+
+``parameters`` cho phép NHIỀU NGUỒN DÙNG CHUNG MỘT FILE SQL. Ví dụ ERA5 và
+ECMWF IFS là hai endpoint khác nhau nhưng trả đúng một bộ cột; thay vì hai file
+SQL lệch nhau đúng một dòng (chúng SẼ trôi khỏi nhau), viết một contract::
+
+    parameters:
+      weather_model: era5
+
+rồi trong SQL: ``'{{ weather_model }}' AS weather_model``. Giá trị được chèn
+thẳng dạng text — YAML là config tin cậy, cùng mức tin cậy với file SQL — nên
+tác giả SQL tự quyết định có bọc nháy hay không.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+# Engine tự cấp hai placeholder này; nguồn không được ghi đè.
+RESERVED_PLACEHOLDERS = frozenset({"files", "ingested_at"})
 
 
 @dataclass(frozen=True)
@@ -68,7 +83,18 @@ class SourceConfig:
     transform: TransformConfig
     scope: str = "production"
     loader: LoaderConfig = field(default_factory=LoaderConfig)
+    parameters: Mapping[str, str] = field(default_factory=dict)
     base_dir: Path = field(default=Path("."))
+
+    def __post_init__(self) -> None:
+        for key, value in self.parameters.items():
+            if key in RESERVED_PLACEHOLDERS:
+                raise ValueError(f"{self.name}: parameter {key!r} trùng placeholder engine")
+            if "'" in str(value):
+                raise ValueError(
+                    f"{self.name}: parameter {key!r} chứa dấu nháy đơn — "
+                    "giá trị được chèn thẳng vào SQL nên sẽ làm hỏng câu lệnh"
+                )
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> SourceConfig:
@@ -84,6 +110,9 @@ class SourceConfig:
             discovery=DiscoveryConfig(**raw["discovery"]),
             transform=TransformConfig(**raw["transform"]),
             loader=LoaderConfig(**raw.get("loader", {})),
+            parameters={
+                key: str(value) for key, value in (raw.get("parameters") or {}).items()
+            },
             base_dir=config_path.parent,
         )
 

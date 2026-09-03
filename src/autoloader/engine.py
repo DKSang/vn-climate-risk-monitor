@@ -230,12 +230,26 @@ class AutoLoader:
         stamp = moment.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S.%f+00")
         return f"TIMESTAMPTZ '{stamp}'"
 
+    def _render(self, uris: Sequence[str]) -> str:
+        """Thay placeholder trong SQL của nguồn.
+
+        Hai placeholder do engine cấp (``files``, ``ingested_at``) cộng với
+        ``parameters`` trong YAML. Nhờ ``parameters``, nhiều nguồn cùng schema
+        dùng chung MỘT file SQL thay vì nhân bản file rồi để chúng trôi khỏi nhau.
+        """
+        values = {
+            "files": "[" + ", ".join(f"'{uri}'" for uri in uris) + "]",
+            "ingested_at": self._ingested_at_literal(),
+            **self.config.parameters,
+        }
+        sql = self.config.sql
+        for key, value in values.items():
+            sql = sql.replace(f"{{{{ {key} }}}}", value)
+        return sql
+
     def _run_transform(self, uris: Sequence[str]) -> int:
         """Chạy SQL của nguồn trên đúng danh sách file đã claim."""
-        file_list = "[" + ", ".join(f"'{uri}'" for uri in uris) + "]"
-        select_sql = self.config.sql.replace("{{ files }}", file_list).replace(
-            "{{ ingested_at }}", self._ingested_at_literal()
-        )
+        select_sql = self._render(uris)
         target = self.config.transform.target
         self._ensure_target(target, select_sql)
         result = self.sql.execute(
