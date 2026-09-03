@@ -80,14 +80,25 @@ Gold tiếp tục dùng `dim_`/`fct_` theo dimensional modeling.
 
 ## Incremental ingestion
 
-`ingestion` là native PostgreSQL control-plane schema, không phải data layer:
+`ingestion` và `processing` là native PostgreSQL control-plane schema, không phải
+data layer. Hai schema TÁCH BIỆT vì trả lời hai câu hỏi khác nhau:
 
 ```text
-ingestion.ingestion_runs
-ingestion.ingestion_files
+ingestion.ingestion_runs      ┐  File này đã vào Bronze chưa?
+ingestion.ingestion_files     ┘  (file checkpoint)
+
+processing.processing_state   ┐  Process này đã xử lý Bronze tới mốc nào?
+processing.processing_runs    ┘  (processing checkpoint)
 ```
 
-Hai bảng giữ checkpoint file và một discovery run ổn định / nguồn
+Trộn chúng là cách chắc chắn nhất để một trong hai câu trả lời sai: cùng một bảng
+Bronze có thể nuôi nhiều process với tiến độ hoàn toàn khác nhau, nên checkpoint
+xử lý thuộc về PROCESS chứ không thuộc về source.
+
+`ingestion.gold_watermarks` deprecated 2026-09-03 — xem
+[06-storage-modeling](06-storage-modeling.md#43-control-table-gold--schema-processing).
+
+Hai bảng `ingestion` giữ checkpoint file và một discovery run ổn định / nguồn
 (`logical_key=discovery`). File ledger: `object_key`, status, retry, lease,
 error. `file_parameters` JSONB nhỏ (etag/size lúc listing). Không checksum
 SHA-256, không mint logical run theo timestamp mỗi lần load.
@@ -150,8 +161,8 @@ prefix `__dbt_tmp` rồi chỉ rename metadata.
 
 Chưa có:
 
-- các bảng rainfall/scenario/pressure;
-- serving.
+- serving / dashboard người dùng (Bước 8);
+- hiệu chỉnh xác suất ngập với nhãn sự kiện (K5).
 
 Chi tiết cây code: [03a-repo-structure.md](03a-repo-structure.md). Ingestion hiện hành:
 [04b-ingestion-runbook.md](04b-ingestion-runbook.md). Ghi chép thiết kế/khảo sát API cũ:

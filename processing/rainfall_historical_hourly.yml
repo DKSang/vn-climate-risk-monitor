@@ -1,0 +1,20 @@
+process_key: rainfall_historical_hourly
+target: gold.fct_rainfall_historical_hourly
+scope: production
+
+sources:
+  # `archive_hourly` là view trên Bronze, nên `_ingested_at` đi thẳng từ Bronze
+  # lên — đúng timestamp do PLATFORM sinh, không phải business time của
+  # Open-Meteo. Đây là điểm mấu chốt: giờ của hệ nguồn có thể backdated, null,
+  # sai timezone; giờ ingest thì không.
+  - ref: archive_hourly
+    change_column: _ingested_at
+
+checkpoint:
+  # Bù khoảng cách giữa lúc `_ingested_at` được đóng dấu (transaction START của
+  # DuckDB) và lúc row thật sự visible sau COMMIT. Lô 50 file archive đo 0,4s,
+  # nên 15 phút là biên rất rộng; chi phí chỉ là rescan 15 phút Bronze.
+  safety_lag: 15 minutes
+
+runner:
+  select: "+tag:historical"

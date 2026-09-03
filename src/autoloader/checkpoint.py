@@ -46,6 +46,18 @@ class PostgresIngestionRepository:
     def __init__(self, connection: psycopg.Connection[Any]) -> None:
         self.connection = connection
 
+    def control_now(self) -> datetime:
+        """Đồng hồ quyền uy của platform — dùng cho ``_ingested_at`` của Bronze.
+
+        KHÔNG dùng ``CURRENT_TIMESTAMP`` của DuckDB: nó là giờ của MÁY WORKER,
+        trong khi processing framework so sánh ``_ingested_at`` với start time
+        lấy từ Postgres. Hai đồng hồ lệch vài giây là đủ để một cửa sổ
+        incremental bỏ sót row, và lỗi đó không tái hiện được.
+        """
+        row = self.connection.execute("SELECT CURRENT_TIMESTAMP").fetchone()
+        assert row is not None
+        return row[0]
+
     def ensure_source_run(
         self,
         *,

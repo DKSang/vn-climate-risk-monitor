@@ -1,16 +1,9 @@
 # Dự báo Open-Meteo — chạy hằng giờ.
 #
 # Thay /path/to/vn-climate-risk-monitor bằng đường dẫn thật rồi cài bằng `crontab -e`.
-# Lock file PHẢI trùng với archive (/tmp/vn-climate-open-meteo.lock): hai luồng
-# tiêu chung một hạn mức rate limit của Open-Meteo, pacer chỉ bảo vệ trong
-# một tiến trình nên phải loại trừ nhau bằng lock.
+# Lock file phải trùng với archive để hai job Open-Meteo không chạy đồng thời.
 #
-# Hai bước tách rời, cố ý:
-#   fetch-open-meteo : gọi API, land JSON as-is lên MinIO
-#   load-sources     : autoloader phát hiện file mới, nạp vào bronze (exactly-once)
-# Tách ra để lỗi mạng không làm mất dữ liệu đã tải, và load chạy lại được an toàn.
+# forecast-pipeline chạy tuần tự fetch -> load forecast -> quality Bronze -> dbt
+# build. Chuỗi dừng ngay ở bước lỗi; quality fail luôn chặn transform.
 
-15 * * * * /usr/bin/flock -n /tmp/vn-climate-open-meteo.lock -c 'cd /path/to/vn-climate-risk-monitor && /usr/bin/env make fetch-forecast EXEC=1 && /usr/bin/env make load SOURCE=open_meteo_forecast' >> /path/to/vn-climate-risk-monitor/logs/open_meteo_forecast.log 2>&1
-
-# Kiểm tra chất lượng bronze sau khi nạp (exit code 1 khi có check fail).
-25 * * * * cd /path/to/vn-climate-risk-monitor && /usr/bin/env make quality >> /path/to/vn-climate-risk-monitor/logs/quality.log 2>&1
+15 * * * * /usr/bin/flock -n /tmp/vn-climate-open-meteo.lock -c 'cd /path/to/vn-climate-risk-monitor && /usr/bin/env make forecast-pipeline' >> /path/to/vn-climate-risk-monitor/logs/open_meteo_forecast.log 2>&1

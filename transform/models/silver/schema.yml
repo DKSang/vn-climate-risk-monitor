@@ -69,6 +69,12 @@ models:
       - name: as_of_utc
         data_type: TIMESTAMP WITH TIME ZONE
         constraints: [{type: not_null}]
+      - name: weather_model
+        data_type: VARCHAR
+        constraints: [{type: not_null}]
+      - name: weather_product
+        data_type: VARCHAR
+        constraints: [{type: not_null}]
       - name: grid_cell_id
         data_type: VARCHAR
         constraints: [{type: not_null}]
@@ -106,6 +112,14 @@ models:
       - name: weather_model
         description: "era5 hoặc ecmwf_ifs — bắt buộc trong mọi join phía sau"
         tests: [not_null]
+      - name: weather_product
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['archive']
+      - name: grid_cell_id
+        tests: [not_null]
       - name: grid_latitude
         tests: [not_null]
       - name: grid_longitude
@@ -120,6 +134,12 @@ models:
     columns:
       - name: weather_model
         tests: [not_null]
+      - name: weather_product
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['archive']
       - name: ward_code
         tests: [not_null]
       - name: ward_key

@@ -49,6 +49,14 @@ class LoadResult:
     failures: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class _BatchResult:
+    claimed_files: int
+    committed_files: int
+    rows_inserted: int
+    failures: tuple[str, ...]
+
+
 class AutoLoader:
     """Nạp file mới từ object storage vào bảng đích, đúng một lần cho mỗi file."""
 
@@ -117,15 +125,16 @@ class AutoLoader:
 
     def process_batch(
         self, claimed: Sequence[Any] | None = None
-    ) -> tuple[int, int, tuple[str, ...], set[Any]]:
+    ) -> _BatchResult:
         """Chạy SQL cho một lô đã claim rồi commit.
 
-        Trả (số file, số dòng, lỗi, tập file_id đã xử lý).
+        Phân biệt số file đã claim với số file commit thành công để đường cô lập
+        không báo file FAILED là đã commit.
         """
         if claimed is None:
             claimed = self.claim_batch()
         if not claimed:
-            return 0, 0, (), set()
+            return _BatchResult(0, 0, 0, ())
 
         uris = [f"s3://{self.bucket}/{item.object_key}" for item in claimed]
         try:
@@ -135,19 +144,17 @@ class AutoLoader:
             # lành đi cùng lô: đo 2026-08-21 với batch_size=10, 2 file lành + 1 file
             # hỏng -> 0 dòng vào bảng, cả 3 kẹt FAILED sau khi hết retry.
             # Đó chính là thứ control plane sinh ra để tránh, nên phải cô lập.
-            count, isolated_rows, errors = self._isolate_failures(claimed)
-            return count, isolated_rows, errors, {i.file_id for i in claimed}
+            return self._isolate_failures(claimed)
 
         self._commit_all(claimed)
-        return len(claimed), rows, (), {i.file_id for i in claimed}
+        return _BatchResult(len(claimed), len(claimed), rows, ())
 
-    def _isolate_failures(
-        self, claimed: Sequence[Any]
-    ) -> tuple[int, int, tuple[str, ...]]:
+    def _isolate_failures(self, claimed: Sequence[Any]) -> _BatchResult:
         """Chạy lại từng file một để tìm đúng file hỏng.
 
         Chi phí chỉ phát sinh khi có lỗi; đường thành công vẫn chạy cả lô một lần.
         """
+        committed_files = 0
         total_rows = 0
         failures: list[str] = []
         for item in claimed:
@@ -162,8 +169,14 @@ class AutoLoader:
                 )
                 continue
             self._commit_all([item])
+            committed_files += 1
             total_rows += rows
-        return len(claimed), total_rows, tuple(failures)
+        return _BatchResult(
+            claimed_files=len(claimed),
+            committed_files=committed_files,
+            rows_inserted=total_rows,
+            failures=tuple(failures),
+        )
 
     def _commit_all(self, claimed: Sequence[Any]) -> None:
         # Không ghi rows per-file: INSERT chạy cả lô nên chỉ biết tổng, chia đều
@@ -201,10 +214,28 @@ class AutoLoader:
             )
         self._target_ready = True
 
+    def _ingested_at_literal(self) -> str:
+        """Timestamp cho ``_ingested_at``, lấy từ control plane chứ không từ DuckDB.
+
+        ``CURRENT_TIMESTAMP`` của DuckDB là giờ máy worker; downstream lại so nó
+        với checkpoint lấy giờ Postgres. Một đồng hồ, một hệ quy chiếu.
+
+        Dấu thời gian này là lúc lô BẮT ĐẦU ghi, nên luôn SỚM HƠN lúc row visible.
+        Đó là hướng an toàn: consumer bù bằng safety lag ở chặn dưới. Nếu đóng dấu
+        muộn hơn commit thì không có cách nào bù được.
+        """
+        moment = self.checkpoint.control_now()
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=UTC)
+        stamp = moment.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S.%f+00")
+        return f"TIMESTAMPTZ '{stamp}'"
+
     def _run_transform(self, uris: Sequence[str]) -> int:
         """Chạy SQL của nguồn trên đúng danh sách file đã claim."""
         file_list = "[" + ", ".join(f"'{uri}'" for uri in uris) + "]"
-        select_sql = self.config.sql.replace("{{ files }}", file_list)
+        select_sql = self.config.sql.replace("{{ files }}", file_list).replace(
+            "{{ ingested_at }}", self._ingested_at_literal()
+        )
         target = self.config.transform.target
         self._ensure_target(target, select_sql)
         result = self.sql.execute(
@@ -231,13 +262,13 @@ class AutoLoader:
             # sau không bao giờ tới lượt.
             # `max_retries` đã chặn sẵn: một file hỏng bị claim tối đa max_retries
             # lần rồi bị loại khỏi truy vấn, sau đó lô mới lấy được file lành.
-            count, inserted, errors, _ = self.process_batch()
-            if count == 0:
+            batch = self.process_batch()
+            if batch.claimed_files == 0:
                 break
             batches += 1
-            committed += count
-            rows += inserted
-            failures.extend(errors)
+            committed += batch.committed_files
+            rows += batch.rows_inserted
+            failures.extend(batch.failures)
         return LoadResult(
             source=self.config.name,
             discovered=discovered,

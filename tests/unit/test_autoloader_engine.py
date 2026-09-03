@@ -55,11 +55,17 @@ class FakeAttempt:
 class FakeCheckpoint:
     """Bản ghi nhớ trong RAM, đủ hình dạng cho engine."""
 
-    def __init__(self) -> None:
+    def __init__(self, now: datetime | None = None) -> None:
         self.files: dict[str, dict[str, Any]] = {}
         self.committed: list[UUID] = []
         self.failed: list[UUID] = []
         self.source_attempt = FakeAttempt(attempt_id=uuid4())
+        self.now = now or datetime(2026, 9, 3, 10, 0, tzinfo=UTC)
+        self.clock_calls = 0
+
+    def control_now(self) -> datetime:
+        self.clock_calls += 1
+        return self.now
 
     def known_object_keys(self, **_: Any) -> set[str]:
         return set(self.files)
@@ -210,9 +216,11 @@ def test_later_discovery_keeps_the_same_attempt(tmp_path: Path) -> None:
     assert len(attempt_ids) == 1
 
 
-@pytest.mark.parametrize("batch_size", [1, 3, 10])
+@pytest.mark.parametrize(
+    ("batch_size", "expected_batches"), [(1, 5), (3, 3), (10, 3)]
+)
 def test_poison_file_does_not_block_healthy_files(
-    tmp_path: Path, batch_size: int
+    tmp_path: Path, batch_size: int, expected_batches: int
 ) -> None:
     """Hồi quy: file hỏng chỉ được làm hỏng chính nó.
 
@@ -228,6 +236,10 @@ def test_poison_file_does_not_block_healthy_files(
     result = loader.load()
 
     checkpoint = loader.checkpoint
+    assert result.committed_files == 2
+    assert result.committed_files == len(checkpoint.committed)
+    assert result.rows_inserted == 200
+    assert result.batches == expected_batches
     committed_keys = {
         key
         for key, meta in checkpoint.files.items()
@@ -250,7 +262,11 @@ def test_retry_is_bounded_by_max_retries_not_max_batches(tmp_path: Path) -> None
     result = loader.load()
 
     assert loader.checkpoint.files["raw/poison.json"]["retry_count"] == 3
-    assert result.batches <= 3, "không được lặp tới max_batches"
+    assert result.committed_files == 0
+    assert result.committed_files == len(loader.checkpoint.committed)
+    assert result.rows_inserted == 0
+    assert result.batches == 3, "mỗi lần claim file hỏng vẫn là một batch đã xử lý"
+    assert len(result.failures) == 3
 
 
 def test_retry_stops_at_max_retries(tmp_path: Path) -> None:
@@ -358,6 +374,50 @@ def test_run_timestamp_is_timezone_aware(tmp_path: Path) -> None:
     result = loader.load(now=moment)
 
     assert result.source == "src"
+
+
+def test_ingested_at_comes_from_control_plane_not_duckdb(tmp_path: Path) -> None:
+    """`_ingested_at` phải là giờ Postgres, không phải CURRENT_TIMESTAMP của DuckDB.
+
+    Downstream so mốc này với checkpoint lấy từ Postgres. Nếu Bronze đóng dấu
+    bằng giờ máy worker thì clock skew vài giây đủ để một cửa sổ incremental bỏ
+    sót row — và lỗi đó không tái hiện được.
+    """
+    loader = build_loader(tmp_path, ["raw/a.json"], batch_size=10)
+    (tmp_path / "t.sql").write_text(
+        "SELECT {{ ingested_at }} AS _ingested_at FROM read_json_auto({{ files }})",
+        encoding="utf-8",
+    )
+
+    loader.load()
+
+    inserts = [s for s in loader.sql.statements if s.startswith("INSERT")]
+    assert "2026-09-03 10:00:00.000000+00" in inserts[0]
+    assert "{{ ingested_at }}" not in inserts[0]
+    assert "CURRENT_TIMESTAMP" not in inserts[0]
+    assert loader.checkpoint.clock_calls > 0
+
+
+def test_ingested_at_literal_is_timestamptz(tmp_path: Path) -> None:
+    """Literal trần bị DuckDB suy thành TIMESTAMP (không tz) — mất offset."""
+    loader = build_loader(tmp_path, ["raw/a.json"], batch_size=10)
+
+    assert loader._ingested_at_literal().startswith("TIMESTAMPTZ '")
+
+
+def test_sources_do_not_use_duckdb_clock_for_ingested_at() -> None:
+    """Bảo vệ 3 file SQL nguồn thật khỏi việc lặng lẽ quay lại CURRENT_TIMESTAMP."""
+    for path in sorted(Path("sources").glob("*.sql")):
+        body = path.read_text(encoding="utf-8")
+        if "_ingested_at" not in body:
+            continue
+        # Bỏ comment: header của chính các file này GIẢI THÍCH vì sao không dùng
+        # CURRENT_TIMESTAMP, nên khớp trên nguyên văn sẽ luôn false-positive.
+        code = "\n".join(
+            line for line in body.splitlines() if not line.lstrip().startswith("--")
+        )
+        assert "{{ ingested_at }}" in code, path
+        assert "CURRENT_TIMESTAMP" not in code, path
 
 
 def test_repository_drops_collector_run_lifecycle() -> None:

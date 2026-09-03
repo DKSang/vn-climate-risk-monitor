@@ -1,0 +1,85 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: uv sync --locked --all-groups
+
+      - name: Ruff
+        run: uv run ruff check .
+
+      - name: Pytest
+        run: uv run pytest
+
+      - name: Resolve dbt dependencies
+        working-directory: transform
+        run: uv run dbt deps --profiles-dir .
+
+      - name: Parse the complete dbt project
+        working-directory: transform
+        run: uv run dbt parse --profiles-dir . --no-partial-parse
+
+      # dbt compile primes the adapter cache and therefore opens every attachment
+      # before applying node selection. Local empty catalogs preserve the production
+      # aliases while keeping compilation independent of PostgreSQL and MinIO.
+      - name: Prepare service-free dbt catalogs
+        run: |
+          mkdir -p /tmp/vn-climate-dbt-ci
+          uv run python - <<'PY'
+          import duckdb
+
+          catalogs = {
+              "/tmp/vn-climate-dbt-ci/catalog1.duckdb": ("seed", "silver", "gold"),
+              "/tmp/vn-climate-dbt-ci/bronze_store.duckdb": ("tables",),
+              "/tmp/vn-climate-dbt-ci/pg_source.duckdb": ("public",),
+          }
+          for path, schemas in catalogs.items():
+              connection = duckdb.connect(path)
+              for schema in schemas:
+                  connection.execute(f"CREATE SCHEMA IF NOT EXISTS {schema}")
+              connection.close()
+          PY
+          cat > /tmp/vn-climate-dbt-ci/profiles.yml <<'YAML'
+          transform:
+            target: ci
+            outputs:
+              ci:
+                type: duckdb
+                path: /tmp/vn-climate-dbt-ci/main.duckdb
+                attach:
+                  - path: /tmp/vn-climate-dbt-ci/catalog1.duckdb
+                    alias: catalog1
+                  - path: /tmp/vn-climate-dbt-ci/bronze_store.duckdb
+                    alias: bronze_store
+                  - path: /tmp/vn-climate-dbt-ci/pg_source.duckdb
+                    alias: pg_source
+          YAML
+
+      # Compile validates SQL/Jinja for the full project. Fixture-backed dbt tests
+      # are intentionally not run against these empty catalogs: model execution uses
+      # DuckLake materializations/hooks and belongs to the service-backed build.
+      - name: Compile the complete dbt project
+        working-directory: transform
+        run: uv run dbt compile --profiles-dir /tmp/vn-climate-dbt-ci --target ci

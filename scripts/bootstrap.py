@@ -24,6 +24,7 @@ from autoloader import (
     connect_control_plane,
     ensure_ingestion_state,
 )
+from processing import ensure_processing_state
 from vn_climate_risk_monitor.config import load_settings
 from vn_climate_risk_monitor.lakehouse import (
     BRONZE_CATALOG,
@@ -131,14 +132,21 @@ def step_2_setup_ducklake_catalog() -> None:
 
 
 def step_3_setup_control_plane() -> None:
-    """Create ingestion state as native PostgreSQL tables."""
-    print("\n── Step 3: Setup ingestion control plane ──")
+    """Create ingestion + processing state as native PostgreSQL tables.
+
+    Hai control plane TÁCH BIỆT: `ingestion` trả lời "file đã vào Bronze chưa",
+    `processing` trả lời "process đã xử lý tới mốc nào". Trộn chúng là cách chắc
+    chắn nhất để một trong hai câu trả lời sai.
+    """
+    print("\n── Step 3: Setup ingestion + processing control plane ──")
     connection = connect_control_plane(SETTINGS.postgres.ducklake_connection_string)
     try:
         ensure_ingestion_state(connection)
+        ensure_processing_state(connection)
     finally:
         connection.close()
-    print("  ✓ ingestion.ingestion_runs and ingestion.ingestion_files ready")
+    print("  ✓ ingestion.ingestion_runs, ingestion_files")
+    print("  ✓ processing.processing_state, processing_runs")
 
 
 def step_4_verify() -> None:
@@ -155,16 +163,33 @@ def step_4_verify() -> None:
                 AND table_name LIKE 'ducklake_%'
             ) OR (
                 table_schema = 'ingestion'
-                AND table_name IN ('ingestion_runs', 'ingestion_files')
+                AND table_name IN (
+                    'ingestion_runs', 'ingestion_files', 'gold_watermarks'
+                )
+            ) OR (
+                table_schema = 'processing'
+                AND table_name IN ('processing_state', 'processing_runs')
             )
             ORDER BY table_schema, table_name
             """
         ).fetchall()
     finally:
         connection.close()
-    ingestion_tables = {table for schema, table in rows if schema == "ingestion"}
-    if ingestion_tables != {"ingestion_runs", "ingestion_files"}:
-        print("  ✗ Ingestion control-plane tables missing", file=sys.stderr)
+    control_tables = {
+        (schema, table)
+        for schema, table in rows
+        if schema in {"ingestion", "processing"}
+    }
+    # `gold_watermarks` CỐ Ý không nằm trong danh sách bắt buộc: nó deprecated,
+    # chỉ còn để migrate đọc, và sẽ biến mất mà bootstrap không được gãy theo.
+    required = {
+        ("ingestion", "ingestion_runs"),
+        ("ingestion", "ingestion_files"),
+        ("processing", "processing_state"),
+        ("processing", "processing_runs"),
+    }
+    if missing := required - control_tables:
+        print(f"  ✗ Control-plane tables missing: {sorted(missing)}", file=sys.stderr)
         sys.exit(1)
     print(f"  ✓ Found {len(rows)} PostgreSQL metadata/control tables")
 

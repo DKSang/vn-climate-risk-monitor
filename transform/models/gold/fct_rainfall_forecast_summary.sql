@@ -7,8 +7,6 @@ WITH aggregated AS (
         forecast_snapshot_id,
         as_of_utc,
         grid_cell_id,
-        grid_latitude,
-        grid_longitude,
         {% for hours in [3, 6, 12, 24, 48] %}
         SUM(precipitation_mm) FILTER (
             WHERE valid_time_utc > as_of_utc
@@ -43,17 +41,13 @@ WITH aggregated AS (
     GROUP BY
         forecast_snapshot_id,
         as_of_utc,
-        grid_cell_id,
-        grid_latitude,
-        grid_longitude
+        grid_cell_id
 )
 
 SELECT
     forecast_snapshot_id,
     as_of_utc,
     grid_cell_id,
-    grid_latitude,
-    grid_longitude,
     {% for hours in [3, 6, 12, 24, 48] %}
     CASE WHEN rain_next_{{ hours }}h_count = {{ hours }}
          THEN rain_next_{{ hours }}h_sum END AS forecast_rain_next_{{ hours }}h_mm,
@@ -69,12 +63,14 @@ SELECT
     CASE WHEN rain_next_24h_count = 24
          THEN time_of_max_rain_1h_utc END AS time_of_max_rain_1h_utc,
     CASE
+        WHEN rain_next_6h_count <> 6 OR max_rain_1h_next_6h_raw IS NULL THEN NULL
         WHEN max_rain_1h_next_6h_raw > 100 THEN 'over_100'
         WHEN max_rain_1h_next_6h_raw >= 70 THEN 'from_70_to_100'
         WHEN max_rain_1h_next_6h_raw >= 50 THEN 'from_50_to_under_70'
         WHEN max_rain_1h_next_6h_raw >= 0 THEN 'below_50'
     END AS hanoi_rain_scenario_band_next_6h,
     CASE
+        WHEN rain_next_24h_count <> 24 OR max_rain_1h_next_24h_raw IS NULL THEN NULL
         WHEN max_rain_1h_next_24h_raw > 100 THEN 'over_100'
         WHEN max_rain_1h_next_24h_raw >= 70 THEN 'from_70_to_100'
         WHEN max_rain_1h_next_24h_raw >= 50 THEN 'from_50_to_under_70'

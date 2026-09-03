@@ -4,23 +4,8 @@
 ) }}
 
 /*
-    GOLD — Dimensional modeling (chuẩn Microsoft medallion).
-
-    Nhiệm vụ lớp gold theo tài liệu Microsoft:
-      "Dimensional modeling and aggregation"
-      "often highly aggregated and filtered for specific time periods or
-       geographic regions"
-      "contains semantically meaningful datasets that map to business functions"
-
-    Model này là **chiều** (dimension) cho toàn bộ phân tích rủi ro khí hậu:
-    126 phường/xã Hà Nội sau sắp xếp 2025 (NQ 1656/NQ-UBTVQH15).
-
-    Việc làm sạch và JOIN đã xong ở silver.ward_locations -> lớp này chỉ còn:
-      - lọc phạm vi địa lý (Hà Nội)
-      - đặt khoá chiều và thuộc tính nghiệp vụ
-
-    Fact table tương lai (fct_rainfall_hourly, fct_flood_risk_hourly) sẽ join
-    vào ward_key của bảng này.
+    GOLD — 126 phường/xã Hà Nội. SCD2 từ 2025-07-01 (NQ 1656) → tương lai.
+    Không reconstruct ranh giới trước 2025.
 */
 
 SELECT
@@ -35,7 +20,9 @@ SELECT
     longitude,
     region,
     climate_zone,
+    TIMESTAMPTZ '2025-07-01 00:00:00+00' AS valid_from_utc,
+    CAST(NULL AS TIMESTAMPTZ) AS valid_to_utc,
+    TRUE AS is_current,
     bronze_ingested_at
 FROM {{ ref('ward_locations') }}
 WHERE province_code = '01'
-ORDER BY location_key

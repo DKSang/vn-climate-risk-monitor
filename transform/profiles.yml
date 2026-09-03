@@ -4,6 +4,10 @@ transform:
     dev:
       type: duckdb
       path: ':memory:'
+      settings:
+        preserve_insertion_order: false
+        threads: 4
+        memory_limit: '6GB'
       extensions:
         - httpfs      # đọc file trên MinIO (S3)
         - ducklake    # lakehouse catalog
