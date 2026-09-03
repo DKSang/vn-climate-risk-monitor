@@ -12,8 +12,6 @@ WITH windowed AS (
         forecast_snapshot_id,
         as_of_utc,
         grid_cell_id,
-        grid_latitude,
-        grid_longitude,
         valid_time_utc,
         precipitation_mm,
         {% for hours in [1, 3, 6, 12, 24, 48, 72] %}
@@ -35,8 +33,6 @@ SELECT
     forecast_snapshot_id,
     as_of_utc,
     grid_cell_id,
-    grid_latitude,
-    grid_longitude,
     valid_time_utc,
     precipitation_mm,
     {% for hours in [1, 3, 6, 12, 24, 48, 72] %}
@@ -49,5 +45,23 @@ SELECT
         WHEN rain_1h_sum >= 70 THEN 'from_70_to_100'
         WHEN rain_1h_sum >= 50 THEN 'from_50_to_under_70'
         WHEN rain_1h_sum >= 0 THEN 'below_50'
-    END AS hanoi_rain_scenario_band
+    END AS hanoi_rain_scenario_band,
+    CASE
+        WHEN rain_12h_count <> 12 THEN NULL
+        WHEN rain_12h_sum > 100 THEN 'over_100'
+        WHEN rain_12h_sum >= 50 THEN 'from_50_to_100'
+        WHEN rain_12h_sum >= 0 THEN 'below_50'
+    END AS vn_rain_band_12h,
+    CASE
+        WHEN rain_24h_count <> 24 THEN NULL
+        WHEN rain_24h_sum > 400 THEN 'over_400'
+        WHEN rain_24h_sum > 200 THEN 'over_200_to_400'
+        WHEN rain_24h_sum >= 100 THEN 'from_100_to_200'
+        WHEN rain_24h_sum >= 0 THEN 'below_100'
+    END AS vn_rain_band_24h,
+    CASE
+        WHEN rain_12h_count = 12 AND rain_12h_sum >= 50 THEN TRUE
+        WHEN rain_24h_count = 24 AND rain_24h_sum >= 100 THEN TRUE
+        WHEN rain_12h_count = 12 AND rain_24h_count = 24 THEN FALSE
+    END AS vn_rain_threshold_exceeded
 FROM windowed

@@ -27,11 +27,39 @@ models:
         tests: [not_null]
       - name: longitude
         tests: [not_null]
+      - name: valid_from_utc
+        tests: [not_null]
+      - name: is_current
+        tests: [not_null]
+
+  - name: dim_grid
+    description: >
+      GOLD — ô lưới canonicalize (weather_model, weather_product, lat6, lon6).
+    columns:
+      - name: grid_cell_id
+        tests: [unique, not_null]
+      - name: weather_model
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['era5', 'ecmwf_ifs']
+      - name: weather_product
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['archive', 'forecast']
+      - name: grid_latitude
+        tests: [not_null]
+      - name: grid_longitude
+        tests: [not_null]
 
   - name: fct_rainfall_forecast_hourly
     description: >
       GOLD — rolling rainfall 1/3/6/12/24/48/72 giờ theo returned model grid,
-      chỉ công bố giá trị khi đủ coverage.
+      chỉ công bố giá trị khi đủ coverage. Band QĐ 2280 và dải mưa QĐ 18 là
+      feature lượng mưa, không phải xác suất ngập hay cấp độ pháp lý.
     columns:
       - name: forecast_snapshot_id
         tests: [not_null]
@@ -39,6 +67,24 @@ models:
         tests: [not_null]
       - name: valid_time_utc
         tests: [not_null]
+      - name: hanoi_rain_scenario_band
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['below_50', 'from_50_to_under_70', 'from_70_to_100', 'over_100']
+                quote: true
+      - name: vn_rain_band_12h
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['below_50', 'from_50_to_100', 'over_100']
+                quote: true
+      - name: vn_rain_band_24h
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['below_100', 'from_100_to_200', 'over_200_to_400', 'over_400']
+                quote: true
 
   - name: fct_rainfall_forecast_summary
     description: >
@@ -72,3 +118,234 @@ models:
         tests: [unique, not_null]
       - name: grid_cell_id
         tests: [not_null]
+
+  - name: fct_rainfall_historical_hourly
+    description: >
+      GOLD — rainfall lịch sử và rolling 1/3/6/12/24/48/72h tại grain
+      (weather_model, grid, valid_time_utc). Mỗi cửa sổ có coverage và completeness;
+      tổng rolling là NULL khi thiếu bất kỳ giờ nào.
+    columns:
+      - name: historical_hourly_key
+        tests: [unique, not_null]
+      - name: grid_cell_id
+        tests: [not_null]
+      - name: weather_model
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['era5', 'ecmwf_ifs']
+      - name: weather_product
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['archive']
+      - name: valid_time_utc
+        tests: [not_null]
+      - name: calendar_month
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+      - name: hanoi_rain_scenario_band
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['below_50', 'from_50_to_under_70', 'from_70_to_100', 'over_100']
+                quote: true
+      - name: vn_rain_band_12h
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['below_50', 'from_50_to_100', 'over_100']
+                quote: true
+      - name: vn_rain_band_24h
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['below_100', 'from_100_to_200', 'over_200_to_400', 'over_400']
+                quote: true
+
+  - name: fct_rainfall_historical_daily
+    description: "GOLD — tổng mưa theo ngày UTC; ngày thiếu giờ không công bố tổng."
+    columns:
+      - name: historical_daily_key
+        tests: [unique, not_null]
+      - name: grid_cell_id
+        tests: [not_null]
+      - name: weather_model
+        tests: [not_null]
+      - name: rainfall_date
+        tests: [not_null]
+      - name: coverage_ratio
+        tests: [not_null]
+      - name: is_complete
+        tests: [not_null]
+
+  - name: fct_rainfall_climatology_monthly
+    description: >
+      GOLD — baseline thực nghiệm theo weather_model + grid + tháng lịch + rolling
+      window trên toàn archive sẵn có của riêng model. Không phải WMO normal và
+      không trộn ERA5 với ECMWF IFS.
+    columns:
+      - name: climatology_key
+        tests: [unique, not_null]
+      - name: grid_cell_id
+        tests: [not_null]
+      - name: weather_model
+        tests: [not_null]
+      - name: calendar_month
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+      - name: window_hours
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [1, 3, 6, 12, 24, 48, 72]
+      - name: observation_count
+        tests: [not_null]
+      - name: p95_rainfall_mm
+        tests: [not_null]
+      - name: p99_rainfall_mm
+        tests: [not_null]
+      - name: climatology_window_id
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['all_available_by_model_v1']
+      - name: climatology_start_year
+        tests: [not_null]
+      - name: climatology_end_year
+        tests: [not_null]
+
+  - name: fct_rainfall_historical_anomaly_hourly
+    description: >
+      GOLD — anomaly so với median tháng và cờ vượt p95/p99 cho cùng model/grid.
+      Cờ NULL khi rolling incomplete hoặc baseline có dưới 100 quan sát.
+    columns:
+      - name: historical_hourly_key
+        tests: [unique, not_null]
+      - name: grid_cell_id
+        tests: [not_null]
+      - name: weather_model
+        tests: [not_null]
+      - name: climatology_window_id
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['all_available_by_model_v1']
+      - name: valid_time_utc
+        tests: [not_null]
+
+  - name: fct_rainfall_drought_daily
+    description: >
+      GOLD — tích lũy mưa 30/60/90 ngày làm input theo dõi drought; không phải
+      phân loại hay xác suất hạn hán. Cửa sổ thiếu ngày có tổng NULL.
+    columns:
+      - name: drought_daily_key
+        tests: [unique, not_null]
+      - name: grid_cell_id
+        tests: [not_null]
+      - name: weather_model
+        tests: [not_null]
+      - name: rainfall_date
+        tests: [not_null]
+
+  - name: fct_ward_rainfall_drought_daily
+    description: >
+      GOLD — projection tích lũy mưa drought 30/60/90 ngày từ archive grid sang
+      phường; các phường dùng chung grid nhận cùng forcing.
+    columns:
+      - name: ward_drought_daily_key
+        tests: [unique, not_null]
+      - name: ward_key
+        tests: [not_null]
+      - name: ward_code
+        tests: [not_null]
+      - name: drought_daily_key
+        tests: [not_null]
+      - name: weather_model
+        tests: [not_null]
+      - name: rainfall_date
+        tests: [not_null]
+
+  - name: fct_rainfall_historical_event
+    description: >
+      GOLD — event mưa tại grid: wet > 0.1 mm, event mới sau ít nhất 6 giờ khô
+      liên tiếp có quan sát. Gap/NULL tách run và được phản ánh bằng censor flags.
+    columns:
+      - name: rainfall_event_id
+        tests: [unique, not_null]
+      - name: grid_cell_id
+        tests: [not_null]
+      - name: weather_model
+        tests: [not_null]
+      - name: event_start_utc
+        tests: [not_null]
+      - name: event_end_utc
+        tests: [not_null]
+      - name: event_duration_hours
+        tests: [not_null]
+      - name: event_total_mm
+        tests: [not_null]
+      - name: event_peak_1h_mm
+        tests: [not_null]
+      - name: event_definition_version
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['wet_gt_0_1mm_six_dry_hours_v1']
+
+  - name: dim_historical_replay_window
+    description: >
+      GOLD — các cửa sổ UTC [start, end) khai báo bằng code để replay case lịch sử;
+      scenario context không phải bộ nhãn ngập đầy đủ.
+    columns:
+      - name: replay_window_id
+        tests: [unique, not_null]
+      - name: window_start_utc
+        tests: [not_null]
+      - name: window_end_utc
+        tests: [not_null]
+      - name: scenario_name
+        tests: [not_null]
+      - name: declaration_source
+        tests: [not_null]
+      - name: replay_definition_version
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['historical_replay_windows_v1']
+
+  - name: fct_ward_historical_replay_hourly
+    description: >
+      GOLD — rolling historical KPI trong các replay window, projection từ archive
+      grid sang ward; không suy ra flood_probability, flood_depth hoặc ground truth.
+    columns:
+      - name: ward_replay_hourly_key
+        tests: [unique, not_null]
+      - name: replay_window_id
+        tests: [not_null]
+      - name: ward_key
+        tests: [not_null]
+      - name: ward_code
+        tests: [not_null]
+      - name: historical_hourly_key
+        tests: [not_null]
+      - name: weather_model
+        tests: [not_null]
+      - name: valid_time_utc
+        tests: [not_null]
+      - name: as_of_boundary_version
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['nq_1656_2025']

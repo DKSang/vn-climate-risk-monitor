@@ -16,14 +16,18 @@ dependencies = [
     # ── Transform (dbt + DuckDB) ──
     "dbt-duckdb>=1.11.0",
 
-    # ── Runtime configuration ──
+    # ── Runtime configuration + read-only operational API ──
     "python-dotenv>=1.1.0",
+    "fastapi>=0.116.0",
+    "uvicorn>=0.35.0",
 ]
 
 [dependency-groups]
 dev = [
     "provero>=0.2.1",
     "pytest>=8.3.0",
+    # Render macro dbt trong unit test, không cần DuckDB/Postgres chạy thật.
+    "jinja2>=3.1.0",
     "responses>=0.25.0",
     "ruff>=0.11.0",
 ]
@@ -38,8 +42,9 @@ load-sources = "vn_climate_risk_monitor.load:main"
 ducklake = "autoloader.provero_ducklake:DuckLakeConnector"
 
 [tool.uv.build-backend]
-# `fetch` = HTTP→MinIO; `autoloader` = file→bảng; `vn_climate_risk_monitor` = app.
-module-name = ["fetch", "autoloader", "vn_climate_risk_monitor"]
+# `fetch` = HTTP→MinIO; `autoloader` = file→bảng; `processing` = incremental
+# transform có checkpoint; `vn_climate_risk_monitor` = app.
+module-name = ["fetch", "autoloader", "processing", "vn_climate_risk_monitor"]
 
 [build-system]
 requires = ["uv_build>=0.12.3,<0.13.0"]

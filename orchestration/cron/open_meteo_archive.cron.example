@@ -1,16 +1,12 @@
-# Lịch sử Open-Meteo (ERA5) — backfill và bồi đuôi.
+# Lịch sử Open-Meteo (ERA5 + ECMWF IFS) — bồi đuôi hằng ngày.
 #
 # Thay /path/to/vn-climate-risk-monitor bằng đường dẫn thật rồi cài bằng `crontab -e`.
-# Dùng CHUNG lock với forecast: cả hai tiêu vào một hạn mức rate limit của Open-Meteo.
+# Dùng chung lock với forecast để hai job Open-Meteo không chạy đồng thời.
 
-# Bồi đuôi: ERA5 trễ khoảng 5 ngày, nên lấy lại 2 tháng gần nhất mỗi ngày.
-# fetch tự bỏ qua từng file đã có, trừ khi thêm --overwrite.
-# Lock file PHẢI trùng với forecast (/tmp/vn-climate-open-meteo.lock): hai luồng
-# tiêu chung một hạn mức rate limit của Open-Meteo, pacer chỉ bảo vệ trong
-# một tiến trình nên phải loại trừ nhau bằng lock.
-35 2 * * * /usr/bin/flock -n /tmp/vn-climate-open-meteo.lock -c 'cd /path/to/vn-climate-risk-monitor && /usr/bin/env make fetch-archive EXEC=1 START=$(date -d "-2 month" +\%Y-\%m-01) END=$(date +\%Y-\%m-01) && /usr/bin/env make load SOURCE=open_meteo_archive' >> /path/to/vn-climate-risk-monitor/logs/open_meteo_archive.log 2>&1
+# Pipeline fetch và load cả hai nguồn, kiểm tra quality rồi refresh historical Gold.
+# Loader tự bỏ qua nguồn không có file mới.
+35 2 * * * /usr/bin/flock -n /tmp/vn-climate-open-meteo.lock -c 'cd /path/to/vn-climate-risk-monitor && /usr/bin/env make archive-pipeline START=$(date -d "-2 month" +\%Y-\%m-01) END=$(date +\%Y-\%m-01)' >> /path/to/vn-climate-risk-monitor/logs/open_meteo_archive.log 2>&1
 
-# Backfill lịch sử: chạy TAY, không đặt lịch.
-# Mỗi tháng tốn 6 request; 2000-01 → nay là ~320 tháng ≈ 1.920 request.
-# Chạy từng năm để không chiếm hết hạn mức ngày:
-#   make fetch-archive EXEC=1 START=2002-01-01 END=2002-12-01 && make load
+# Backfill lịch sử chạy tay theo dải mong muốn:
+#   make fetch-archive EXEC=1 START=2002-01-01 END=2002-12-01
+#   make load SOURCE="open_meteo_archive open_meteo_ifs"

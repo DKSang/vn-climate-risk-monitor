@@ -1,4 +1,4 @@
-.PHONY: bootstrap bootstrap-env up down logs map-grid fetch-forecast fetch-archive backfill-archive load quality seed dbt dbt-test freshness transform dbt-docs clean-lake lint
+.PHONY: bootstrap bootstrap-env bootstrap-geography up down logs backup-metadata restore-metadata map-grid fetch-forecast fetch-archive backfill-archive load forecast-pipeline archive-pipeline quality quality-forecast quality-archive health health-alert seed dbt dbt-test freshness transform transform-forecast transform-archive dbt-docs serve-api clean-lake lint
 
 # ==== Setup ====
 bootstrap-env:
@@ -6,6 +6,12 @@ bootstrap-env:
 
 bootstrap: bootstrap-env
 	uv run python scripts/bootstrap.py
+
+# Chỉ seed và build graph địa lý cần để tạo gold.dim_hanoi_ward.
+# Tách khỏi bootstrap hạ tầng để không tạo vòng phụ thuộc bootstrap <-> dbt.
+bootstrap-geography:
+	cd transform && uv run dbt seed --profiles-dir . --select +dim_hanoi_ward
+	cd transform && uv run dbt build --profiles-dir . --select +dim_hanoi_ward --exclude resource_type:seed
 
 # ==== Infrastructure (Docker Compose: MinIO + Postgres + pgAdmin) ====
 up:
@@ -16,6 +22,14 @@ down:
 
 logs:
 	docker compose logs -f
+
+# PostgreSQL chứa metadata DuckLake, ingestion checkpoint và dữ liệu tham chiếu.
+# Mọi tham số kết nối/đường dẫn được scripts đọc từ biến môi trường.
+backup-metadata:
+	scripts/backup_metadata.sh
+
+restore-metadata:
+	scripts/restore_metadata.sh
 
 # ==== Fetch (HTTP→MinIO) rồi autoloader nạp bronze (SQL) ====
 # Mặc định chỉ IN KẾ HOẠCH; thêm EXEC=1 để chạy thật.
@@ -49,6 +63,23 @@ backfill-archive:
 load:
 	uv run load-sources $(SOURCE)
 
+# Pipeline production tuần tự. Make dừng ngay nếu một bước lỗi, nên quality fail
+# sẽ chặn dbt build và không publish Silver/Gold từ Bronze không đạt chuẩn.
+forecast-pipeline:
+	$(MAKE) fetch-forecast EXEC=1
+	$(MAKE) load SOURCE=open_meteo_forecast
+	$(MAKE) quality-forecast
+	$(MAKE) transform-forecast
+	$(MAKE) health SCOPE=forecast REQUIRE_GOLD=1
+
+# Bồi đuôi cả ERA5/IFS, chặn transform khi Bronze/control plane không đạt chuẩn.
+archive-pipeline:
+	$(MAKE) fetch-archive EXEC=1 START=$(START) END=$(END)
+	$(MAKE) load SOURCE="open_meteo_archive open_meteo_ifs"
+	$(MAKE) quality-archive
+	$(MAKE) transform-archive
+	$(MAKE) health SCOPE=archive REQUIRE_GOLD=1
+
 # ==== Data quality: Provero quét bronze NGAY SAU load ====
 # dbt không với tới bronze vì autoloader ghi ngoài đồ thị dbt.
 # Đọc QUA catalog DuckLake (không glob Parquet — glob thấy cả dòng đã xoá).
@@ -59,11 +90,30 @@ load:
 # --no-optimize: chạy từng check riêng thay vì gộp một query.
 #
 # Trả exit code 1 khi có check fail -> dùng làm cổng chặn trong CI được.
+_PROVERO_FORECAST = DUCKLAKE_ALIAS=bronze_store DUCKLAKE_DATA_PATH=s3://$(or $(MINIO_BUCKET),vn-climate)/bronze DUCKLAKE_METADATA_SCHEMA=ducklake_bronze uv run provero run -c quality/provero.yaml --no-optimize --no-store
+
+# Gate đầy đủ cho vận hành tay: Provero forecast + mọi nguồn + Gold/control/disk.
 quality:
-	DUCKLAKE_ALIAS=bronze_store \
-	DUCKLAKE_DATA_PATH=s3://$(or $(MINIO_BUCKET),vn-climate)/bronze \
-	DUCKLAKE_METADATA_SCHEMA=ducklake_bronze \
-	uv run provero run -c quality/provero.yaml --no-optimize --no-store
+	$(_PROVERO_FORECAST)
+	uv run python scripts/healthcheck.py --scope all --require-gold
+
+# Gate trước transform trong pipeline forecast: không phụ thuộc backfill archive.
+quality-forecast:
+	$(_PROVERO_FORECAST)
+	uv run python scripts/healthcheck.py --scope forecast
+
+# Gate Bronze archive/IFS và checkpoint. Silver là view nên phản ánh Bronze mới ngay.
+quality-archive:
+	uv run python scripts/healthcheck.py --scope archive
+
+SCOPE ?= all
+REQUIRE_GOLD ?=
+_GOLD = $(if $(REQUIRE_GOLD),--require-gold,)
+health:
+	uv run python scripts/healthcheck.py --scope $(SCOPE) $(_GOLD) --output logs/health.json
+
+health-alert:
+	uv run python scripts/alert_health.py --scope $(SCOPE) $(_GOLD)
 
 # ==== Transform (dbt + DuckDB + DuckLake) ====
 # dbt project ở transform/, không phải transform/dbt/
@@ -81,14 +131,36 @@ freshness:
 	cd transform && uv run dbt source freshness --profiles-dir .
 
 # build = run + test, và tự dọn file cũ qua on-run-end
+# Chạy qua processing framework: nó chốt run_started_at TRƯỚC khi dbt đọc gì, và
+# chỉ ghi mốc đó vào checkpoint khi dbt exit 0.
 transform:
-	cd transform && uv run dbt build --profiles-dir .
+	uv run python scripts/run_processing.py run rainfall_historical_hourly --full-graph
+
+# Forecast chạy mỗi giờ: chỉ build graph forecast, không rebuild toàn bộ lịch sử.
+transform-forecast:
+	cd transform && uv run dbt build --profiles-dir . --select +fct_ward_rainfall_forecast_hourly +fct_ward_rainfall_forecast_summary +dim_grid
+
+# Archive chạy hằng ngày/backfill: build các model historical và dependency của chúng.
+# Selector nằm trong processing/rainfall_historical_hourly.yml (runner.select).
+transform-archive:
+	uv run python scripts/run_processing.py run rainfall_historical_hourly
+
+# Tiến độ + lịch sử run của một process.
+PROCESS ?= rainfall_historical_hourly
+processing-status:
+	uv run python scripts/run_processing.py status $(PROCESS)
+
+# Tính lại từ một mốc: make processing-rewind FROM=2026-08-25 REASON="bug X"
+processing-rewind:
+	uv run python scripts/run_processing.py reprocess-from $(PROCESS) \
+		--from "$(FROM)" --reason "$(REASON)"
 
 dbt-docs:
 	cd transform && uv run dbt docs generate --profiles-dir . && uv run dbt docs serve --profiles-dir .
 
-# ==== Serve (CHƯA CÀI ĐẶT — Bước 8) ====
-# serving/api và serving/dashboard hiện là thư mục rỗng.
+# ==== Operational serving (read-only health API + /ops dashboard) ====
+serve-api:
+	uv run uvicorn serving.api.app.main:app --host 0.0.0.0 --port $${PORT:-8000}
 
 # ==== Bảo trì lakehouse ====
 # on-run-end trong dbt_project.yml đã tự dọn sau mỗi lần build, NHƯNG giữ lại

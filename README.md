@@ -24,14 +24,31 @@ năm 2000 đã land đủ 1.106.784 ward-hour; backfill 2001–nay vận hành d
 quota Free API, không chạy burst cả lịch sử.
 
 ```bash
-make up            # MinIO + PostgreSQL + pgAdmin
-make bootstrap     # bucket, DuckLake catalog, control plane schema
-make transform     # dbt build Silver/Gold
-make fetch-forecast                # dry-run; EXEC=1 để chạy thật
-make fetch-archive START=… END=…   # dry-run; EXEC=1 để chạy thật
-make load SOURCE=open_meteo_forecast   # autoloader nạp file mới vào Bronze
-make quality       # Provero quét Bronze (exit 1 khi có check fail)
+make up                    # MinIO + PostgreSQL + pgAdmin
+make bootstrap             # bucket, DuckLake catalog, control plane schema
+make bootstrap-geography   # seed/build graph tối thiểu cho gold.dim_hanoi_ward
+make forecast-pipeline     # fetch -> load -> quality gate -> dbt build
+make fetch-forecast                    # dry-run; EXEC=1 để chạy thật
+make fetch-archive START=… END=…       # dry-run; EXEC=1 để chạy thật
+make load SOURCE="open_meteo_archive open_meteo_ifs"
+make quality               # Provero quét Bronze (exit 1 khi có check fail)
 ```
+
+`bootstrap-geography` chạy sau `bootstrap` và sau khi bảng tham chiếu
+`public.wards` đã có trong PostgreSQL. Target này chỉ seed tổ tiên cần thiết và
+build graph `+dim_hanoi_ward`, không kéo các fact thời tiết vào bootstrap.
+
+Backup PostgreSQL dùng custom archive + SHA-256; thông tin kết nối và mật khẩu
+chỉ nhận qua biến môi trường, không ghi vào artifact:
+
+```bash
+BACKUP_DIR=/secure/backups make backup-metadata
+BACKUP_FILE=/secure/backups/vnclimate_metadata_….dump \
+  RESTORE_CONFIRM=vnclimate make restore-metadata
+```
+
+Restore có tính phá huỷ đối với object hiện tại trong database đích. Hãy dừng
+cron/writer trước khi chạy; xem quy trình đầy đủ trong runbook ingestion.
 
 Xem [tài liệu kiến trúc](docs/03-architecture.md),
 [cấu trúc repository](docs/03a-repo-structure.md),

@@ -1,11 +1,12 @@
 {{ config(materialized = 'view') }}
 
 /*
-    SILVER — snapshot forecast production mới nhất đã land đủ 6 location batch.
+    SILVER — run forecast production mới nhất có đủ ward và đủ horizon.
 
-    Không chọn "mới nhất theo từng grid × valid_time": cách đó ghép nhiều lần
-    retrieval và có thể lấy một slot canary/partial. Lịch sử vintage vẫn còn ở
-    Bronze qua _source_file; MVP chỉ cần một snapshot nhất quán để tính KPI.
+    Object path mang run identity (`run_YYYYMMDDTHHMMSS`). Chọn toàn bộ một run
+    thay vì chọn file theo hourly slot để không ghép response từ nhiều lần chạy.
+    Bronze không giữ requested ward identity; do đó completeness được kiểm tra
+    bằng tổng row, số row ở từng valid hour và horizon đồng nhất ở từng file.
 */
 
 WITH source_rows AS (
@@ -13,55 +14,131 @@ WITH source_rows AS (
         *,
         REGEXP_EXTRACT(
             _source_file,
-            '/incremental/([0-9]{4}/[0-9]{2}/[0-9]{2}/[0-9]{2})/',
+            '/incremental/([0-9]{4}/[0-9]{2}/[0-9]{2}/[0-9]{2})/(run_[0-9]{8}T[0-9]{6})/',
             1
         ) AS slot_key,
         REGEXP_EXTRACT(
             _source_file,
-            '(response_[0-9]{3}[.]json)$',
-            1
-        ) AS batch_name
+            '/incremental/([0-9]{4}/[0-9]{2}/[0-9]{2}/[0-9]{2})/(run_[0-9]{8}T[0-9]{6})/',
+            2
+        ) AS run_name
     FROM {{ source('bronze_weather', 'open_meteo_forecast') }}
 ),
 
-file_inventory AS (
-    SELECT DISTINCT slot_key, batch_name, _source_file, _ingested_at
+-- Autoloader có thể reinsert cùng object. Giữ lần ingest mới nhất của object,
+-- nhưng không DISTINCT row vì nhiều ward có thể được trả về cùng một grid.
+latest_file_ingests AS (
+    SELECT *
     FROM source_rows
-    WHERE slot_key <> '' AND batch_name <> ''
+    WHERE slot_key <> '' AND run_name <> ''
+    QUALIFY _ingested_at = MAX(_ingested_at) OVER (PARTITION BY _source_file)
 ),
 
--- Slot mới nhất có đủ đúng 6 location batch; nếu một batch được retry trong
--- cùng logical slot, chỉ dùng object mới nhất.
-selected_files AS (
-    SELECT slot_key, batch_name, _source_file
-    FROM file_inventory
-    WHERE slot_key = (
-        SELECT MAX(slot_key)
-        FROM file_inventory
-        GROUP BY slot_key
-        HAVING COUNT(DISTINCT batch_name) = 6
-    )
-    QUALIFY ROW_NUMBER() OVER (
-        PARTITION BY slot_key, batch_name
-        ORDER BY _ingested_at DESC, _source_file DESC
-    ) = 1
+ward_count AS (
+    SELECT COUNT(*) AS expected_ward_count
+    FROM {{ ref('dim_hanoi_ward') }}
+),
+
+run_stats AS (
+    SELECT
+        slot_key,
+        run_name,
+        COUNT(*) AS row_count,
+        COUNT(DISTINCT valid_time_utc) AS horizon_hour_count
+    FROM latest_file_ingests
+    GROUP BY slot_key, run_name
+),
+
+run_hour_counts AS (
+    SELECT
+        slot_key,
+        run_name,
+        valid_time_utc,
+        COUNT(*) AS location_count
+    FROM latest_file_ingests
+    GROUP BY slot_key, run_name, valid_time_utc
+),
+
+run_hour_consistency AS (
+    SELECT
+        slot_key,
+        run_name,
+        MIN(location_count) AS min_location_count,
+        MAX(location_count) AS max_location_count
+    FROM run_hour_counts
+    GROUP BY slot_key, run_name
+),
+
+file_hour_counts AS (
+    SELECT
+        slot_key,
+        run_name,
+        _source_file,
+        valid_time_utc,
+        COUNT(*) AS location_count
+    FROM latest_file_ingests
+    GROUP BY slot_key, run_name, _source_file, valid_time_utc
+),
+
+file_consistency AS (
+    SELECT
+        slot_key,
+        run_name,
+        _source_file,
+        COUNT(*) AS observed_hour_count,
+        MIN(location_count) AS min_location_count,
+        MAX(location_count) AS max_location_count
+    FROM file_hour_counts
+    GROUP BY slot_key, run_name, _source_file
+),
+
+complete_runs AS (
+    SELECT stats.slot_key, stats.run_name
+    FROM run_stats AS stats
+    INNER JOIN run_hour_consistency AS hourly
+        ON stats.slot_key = hourly.slot_key
+       AND stats.run_name = hourly.run_name
+    CROSS JOIN ward_count AS wards
+    WHERE stats.horizon_hour_count > 0
+      AND stats.row_count = wards.expected_ward_count * stats.horizon_hour_count
+      AND hourly.min_location_count = wards.expected_ward_count
+      AND hourly.max_location_count = wards.expected_ward_count
+      AND NOT EXISTS (
+          SELECT 1
+          FROM file_consistency AS file
+          WHERE file.slot_key = stats.slot_key
+            AND file.run_name = stats.run_name
+            AND (
+                file.observed_hour_count <> stats.horizon_hour_count
+                OR file.min_location_count <> file.max_location_count
+            )
+      )
+),
+
+selected_run AS (
+    SELECT slot_key, run_name
+    FROM complete_runs
+    ORDER BY run_name DESC, slot_key DESC
+    LIMIT 1
 ),
 
 selected_rows AS (
     SELECT source.*
-    FROM source_rows AS source
-    INNER JOIN selected_files AS file
-        ON source.slot_key = file.slot_key
-       AND source.batch_name = file.batch_name
-       AND source._source_file = file._source_file
+    FROM latest_file_ingests AS source
+    INNER JOIN selected_run AS selected
+        ON source.slot_key = selected.slot_key
+       AND source.run_name = selected.run_name
 )
 
 SELECT
-    'forecast_' || REPLACE(slot_key, '/', '') AS forecast_snapshot_id,
+    'forecast_' || REPLACE(run_name, 'run_', '') AS forecast_snapshot_id,
     STRPTIME(slot_key, '%Y/%m/%d/%H') AT TIME ZONE 'UTC' AS as_of_utc,
-    PRINTF('forecast_%.6f_%.6f', grid_latitude, grid_longitude) AS grid_cell_id,
-    grid_latitude,
-    grid_longitude,
+    'ecmwf_ifs' AS weather_model,
+    'forecast' AS weather_product,
+    {{ grid_cell_id("'ecmwf_ifs'", "'forecast'", 'ROUND(grid_latitude, 6)', 'ROUND(grid_longitude, 6)') }}
+        AS grid_cell_id,
+    ROUND(grid_latitude, 6) AS grid_latitude,
+    ROUND(grid_longitude, 6) AS grid_longitude,
     valid_time_utc,
     MAX(precipitation_mm) AS precipitation_mm,
     MAX(rain_mm) AS rain_mm,
@@ -73,4 +150,9 @@ SELECT
     STRING_AGG(DISTINCT _source_file, '|' ORDER BY _source_file) AS source_object_keys,
     MAX(_ingested_at) AS _ingested_at
 FROM selected_rows
-GROUP BY slot_key, grid_latitude, grid_longitude, valid_time_utc
+GROUP BY
+    slot_key,
+    run_name,
+    ROUND(grid_latitude, 6),
+    ROUND(grid_longitude, 6),
+    valid_time_utc

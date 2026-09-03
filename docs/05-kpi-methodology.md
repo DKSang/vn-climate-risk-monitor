@@ -2,19 +2,24 @@
 
 **Hanoi Flood & Climate Risk Monitor** · MVP v1.0 · 2026-08-22
 
-**Trạng thái:** logic forecast MVP đã được triển khai và kiểm thử trong dbt.
-Baseline khí hậu, event rainfall và hiệu chỉnh với nhãn ngập vẫn chờ backfill
-lịch sử đầy đủ; vì vậy sản phẩm hiện chỉ công bố feature áp lực mưa, không công
-bố xác suất ngập.
+**Trạng thái:** Gold forecast và Gold lịch sử đã được triển khai và kiểm thử
+(`dbt build` 2026-08-31: PASS=212). Baseline là empirical theo từng
+`weather_model` + tháng lịch trên archive sẵn có, không phải WMO 1991–2020.
+Replay bốn cửa sổ §9 là scenario case, không phải nhãn ngập. Sản phẩm vẫn
+chỉ công bố feature áp lực mưa, không công bố xác suất ngập.
 
 Phạm vi đã triển khai:
 
-- Silver chọn đúng một forecast snapshot mới nhất có đủ 6 batch nguồn;
+- Silver chọn đúng một forecast run hoàn chỉnh mới nhất;
 - bridge 126 phường sang returned forecast grid;
 - rolling 1/3/6/12/24/48/72 giờ (`rain_*h_mm` NULL khi incomplete);
 - tổng mưa/peak forecast horizon 3/6/12/24/48 giờ;
 - scenario band 50/70/100 bằng CASE trên `rain_1h_mm`;
-- projection KPI grid sang 126 phường và fixture test các boundary quan trọng.
+- dải mưa QĐ 18/2021 12h/24h (`vn_rain_band_*`, không suy ra cấp độ pháp lý);
+- projection KPI grid sang 126 phường và fixture test các boundary quan trọng;
+- historical rolling/daily, climatology theo model+tháng, anomaly p95/p99;
+- drought input 30/60/90 ngày và event rainfall `wet_gt_0_1mm_six_dry_hours_v1`;
+- replay bốn cửa sổ lịch sử chiếu xuống 126 phường.
 
 ## 1. Mục tiêu
 
@@ -262,8 +267,7 @@ hanoi_310mm_48h_reference_ratio
 hanoi_310mm_48h_exceeded
 ```
 
-Chưa triển khai trong MVP: ratio là phép chia R48/310, bổ sung cột khi có
-consumer thật.
+Chưa triển khai: ratio là phép chia R48/310, bổ sung cột khi có consumer thật.
 
 Không gọi đây là `drainage_capacity_utilization`: năng lực thực tế phụ thuộc lưu
 vực, mực nước đệm, cống, hồ và vận hành trạm bơm.
@@ -287,7 +291,9 @@ vn_rain_band_24h
 vn_rain_threshold_exceeded
 ```
 
-Không suy ra `official_disaster_risk_level` từ một ô lưới hoặc centroid phường.
+Đã triển khai trên `fct_rainfall_forecast_hourly` và
+`fct_rainfall_historical_hourly`. Không suy ra `official_disaster_risk_level`
+từ một ô lưới hoặc centroid phường.
 Cấp độ pháp lý chỉ được bổ sung khi toàn bộ điều kiện của văn bản được mô hình
 hóa và kiểm chứng.
 
@@ -365,14 +371,15 @@ Percentile_H(t)=100\frac{
 }{N+1}
 \]
 
-Baseline phải cùng location/grid và cùng mùa hoặc tháng. Công bố:
+Baseline phải cùng location/grid và cùng mùa hoặc tháng. Công bố trên Gold:
 
 ```text
-rolling_Hh_percentile
-rolling_Hh_exceeds_p95
-rolling_Hh_exceeds_p99
+rain_*h_exceeds_p95
+rain_*h_exceeds_p99
+rain_*h_anomaly_from_monthly_median_mm
 ```
 
+Không lưu `rolling_Hh_percentile` từng giờ: cờ vượt p95/p99 đủ cho vận hành.
 Mưa có nhiều giá trị 0 và phân phối lệch phải; không mặc định dùng z-score. Nếu
 cần anomaly bền vững cho nghiên cứu:
 
@@ -558,7 +565,7 @@ lặp trên từng grid-hour.
   tolerance, không phải công thức tái tạo tổng.
 - KPI phường là projection từ model grid; không suy ra độ phân giải phường.
 
-## 13. Definition of Done cho KPI MVP
+## 13. Definition of Done cho KPI
 
 - Có Silver hourly giữ một snapshot hoàn chỉnh, returned grid và source-object
   lineage; không trộn logical slot.
@@ -568,17 +575,26 @@ lặp trên từng grid-hour.
 - `hanoi_rain_scenario_band` khớp boundary test tại 50, 70, 100 mm và ngay sau
   100 mm; đúng 100 vẫn thuộc band `from_70_to_100`.
 - Band `over_100` không tự tuyên bố điều kiện “kéo dài nhiều giờ” đã thỏa.
+- `vn_rain_band_12h` / `vn_rain_band_24h` khớp boundary QĐ 18; không suy ra
+  `official_disaster_risk_level`.
 - Không sinh `official_disaster_risk_level`, `flood_probability` hoặc
   `flood_depth`.
 - Ward cùng grid nhận cùng forcing và UI hiển thị giới hạn độ phân giải.
-- 126 phường đều map được vào returned forecast grid.
+- 126 phường đều map được vào returned forecast grid và archive grid từng model.
 - Gold summary có lineage về các Bronze source object.
+- Historical rolling/daily/climatology/anomaly/event tách theo `weather_model`;
+  không trộn ERA5 với IFS.
+- Bốn cửa sổ replay §9 có hourly rows sau khi archive phủ thời kỳ tương ứng.
+- Climatology công bố `observation_count`, khoảng thời gian và
+  `climatology_window_id=all_available_by_model_v1`.
 
-Ngoài scope MVP hiện tại:
+Ngoài scope bước 5:
 
 - bảng Silver cho lịch sử forecast vintage và backtest theo model run;
 - source checksum/model/endpoint ở row-level ingestion contract;
-- baseline 1991–2020, event rainfall và hiệu chỉnh với nhãn ngập.
+- chuẩn WMO 1991–2020 (IFS không có trước 2017);
+- API/SMI/IDF, ensemble, composite score;
+- hiệu chỉnh POD/FAR/CSI với nhãn ngập (K5).
 
 ## 14. Quyết định và điểm còn mở
 
@@ -597,11 +613,12 @@ Ngoài scope MVP hiện tại:
   và soil moisture, trong khi ERA5-Land trả toàn null cho ba biến mưa/weather.
   Không gộp hai model thành một chuỗi percentile.
 
-Còn mở sau forecast MVP:
+Còn mở:
 
 - **K1:** định nghĩa định lượng cho “trên 100 mm/h kéo dài nhiều giờ”;
-- **K3:** quy tắc event dùng 6 giờ khô có phù hợp với các trận mưa Hà Nội;
-- **K4:** có ingest ET/soil moisture ngay MVP hay chỉ ingest precipitation trước;
+- **K3:** quy tắc event 6 giờ khô đã gắn version `wet_gt_0_1mm_six_dry_hours_v1`,
+  chưa hiệu chỉnh với trận mưa Hà Nội;
+- **K4:** archive đã có soil moisture ERA5/IFS; SMI và ET vẫn chưa thành KPI;
 - **K5:** nguồn nhãn sự kiện để hiệu chỉnh POD/FAR/CSI;
 - **K6:** có pin forecast model để tăng tính tái lập hay tiếp tục Best Match và
   quản lý thay đổi bằng vintage/metadata.

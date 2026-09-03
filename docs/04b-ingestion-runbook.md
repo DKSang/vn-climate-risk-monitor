@@ -44,16 +44,32 @@ checkpoint: lease hết hạn, INSERT lặp (at-least-once); Silver dedup.
 Bước 2 **không quan tâm ai ghi file** — nó dùng directory listing. File do bước 1
 ghi dở rồi tiến trình chết vẫn được nhặt ở lần chạy sau.
 
+## Bootstrap dữ liệu địa lý
+
+Sau `make up && make bootstrap`, bảo đảm nguồn tham chiếu `public.wards` đã có
+trong PostgreSQL rồi chạy:
+
+```bash
+make bootstrap-geography
+```
+
+Target seed `ward_coordinates_seed` và build đúng graph tổ tiên của
+`gold.dim_hanoi_ward`. Nó tách khỏi bootstrap hạ tầng để không tạo vòng phụ
+thuộc, đồng thời không build các fact thời tiết chưa có Bronze source.
+
 ## Lệnh hằng ngày
 
 ```bash
-make fetch-forecast EXEC=1              # dự báo cho slot giờ hiện tại
-make load                               # nạp mọi nguồn có file mới
-make quality                            # kiểm tra bronze (exit 1 nếu fail)
-make transform                          # dbt: silver + gold
+make forecast-pipeline
 ```
 
-Bỏ `EXEC=1` thì chỉ in kế hoạch, không gọi API. Luôn chạy thử trước.
+Target production chạy cố định `fetch forecast -> load open_meteo_forecast ->
+quality Bronze -> dbt build`. Mỗi bước phải thành công trước khi sang bước kế;
+đặc biệt Provero trả lỗi sẽ chặn transform. Cron chỉ gọi target này một lần nên
+không có quality job chạy trùng.
+
+Các lệnh thành phần vẫn dùng được khi xử lý sự cố. Với fetch riêng, bỏ `EXEC=1`
+thì chỉ in kế hoạch, không gọi API.
 
 ## Backfill lịch sử
 
@@ -67,7 +83,7 @@ phường.
 ```bash
 make map-grid EXEC=1 && make seed        # một lần
 make fetch-archive EXEC=1                # dò kế hoạch trước khi thêm EXEC=1
-make load
+make load SOURCE="open_meteo_archive open_meteo_ifs"
 ```
 
 Bỏ `EXEC=1` để xem kế hoạch. Không cần `--start/--end`: planner tự bỏ qua tháng
@@ -119,6 +135,41 @@ Mẫu cron ở `orchestration/cron/*.cron.example`. Cả hai job dùng **chung m
 Backfill **không đặt lịch** — chạy tay như trên. `scripts/backfill_archive.sh`
 (lặp từng năm) vẫn chạy được nhưng không còn cần thiết: planner đã tự bỏ qua
 tháng đã đủ, nên một lệnh `make fetch-archive EXEC=1` xử lý cả dải.
+
+## Backup và restore metadata PostgreSQL
+
+PostgreSQL chứa metadata DuckLake, ingestion checkpoint và dữ liệu tham chiếu.
+Script mặc định backup toàn database bằng custom archive; có thể giới hạn bằng
+`POSTGRES_SCHEMAS="ducklake ducklake_bronze ingestion"`. Cài PostgreSQL client
+(`pg_dump`, `pg_restore`) trên máy chạy lệnh và truyền cấu hình bằng môi trường:
+
+```bash
+export POSTGRES_HOST=127.0.0.1
+export POSTGRES_PORT=5432
+export POSTGRES_DB=vnclimate
+export POSTGRES_USER=vnclimate
+export POSTGRES_PASSWORD='…'  # chỉ ở môi trường tiến trình, không vào dump
+BACKUP_DIR=/secure/backups make backup-metadata
+```
+
+Backup được ghi qua file tạm với `umask 077`, kiểm tra bằng `pg_restore --list`,
+rồi mới rename atomically và tạo sidecar `.sha256`. Mặc định không ghi đè file
+đã có; chỉ đặt `BACKUP_OVERWRITE=1` khi thực sự muốn thay thế một đường dẫn cố
+định.
+
+Restore sẽ `--clean` object hiện có trong một transaction. Dừng cron và mọi
+writer dbt/autoloader trước, giữ PostgreSQL đang chạy, rồi xác nhận bằng đúng tên
+database đích:
+
+```bash
+BACKUP_FILE=/secure/backups/vnclimate_metadata_20260830T010203Z.dump \
+RESTORE_CONFIRM=vnclimate \
+make restore-metadata
+```
+
+Sidecar SHA-256 là bắt buộc mặc định. Chỉ dùng `RESTORE_VERIFY_CHECKSUM=0` cho
+archive tin cậy được tạo ngoài script này. Có thể dùng `PGPASSFILE` thay cho
+`POSTGRES_PASSWORD`; không đưa mật khẩu vào tên file, command line hay artifact.
 
 ## Xử lý sự cố
 

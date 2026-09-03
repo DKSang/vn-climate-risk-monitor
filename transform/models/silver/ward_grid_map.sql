@@ -13,21 +13,26 @@
 
 SELECT
     seed.model                       AS weather_model,
+    'archive'                        AS weather_product,
     seed.ward_code,
     ward.ward_key,
     ward.ward_name,
     seed.ward_latitude               AS requested_latitude,
     seed.ward_longitude              AS requested_longitude,
-    seed.grid_latitude,
-    seed.grid_longitude,
+    ROUND(seed.grid_latitude, 6)    AS grid_latitude,
+    ROUND(seed.grid_longitude, 6)    AS grid_longitude,
+    {{ grid_cell_id(
+        'seed.model', "'archive'",
+        'ROUND(seed.grid_latitude, 6)', 'ROUND(seed.grid_longitude, 6)'
+    ) }}                             AS grid_cell_id,
     seed.elevation_m                 AS grid_elevation_m,
     -- Khoảng cách phường → tâm ô: dùng để cảnh báo khi ánh xạ quá xa, và để
     -- Gold biết mức "thô" của tín hiệu cho từng phường.
     111.32 * SQRT(
-        POWER(seed.ward_latitude - seed.grid_latitude, 2)
+        POWER(seed.ward_latitude - ROUND(seed.grid_latitude, 6), 2)
         + POWER(
             COS(RADIANS(seed.ward_latitude))
-            * (seed.ward_longitude - seed.grid_longitude),
+            * (seed.ward_longitude - ROUND(seed.grid_longitude, 6)),
             2
         )
     )                                AS mapping_distance_km

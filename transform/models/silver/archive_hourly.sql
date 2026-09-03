@@ -14,8 +14,7 @@
     nghiệp vụ chứ không phải reanalysis, nên đồng nhất theo thời gian kém hơn
     era5; so trực tiếp trung bình trước/sau mốc 2017 là sai.
 
-    Backfill từng chạy lại nhiều lần cho cùng một tháng nên bronze trùng lặp rất
-    lớn (đo 2026-08-21: 3.062.736 dòng thô). Dedup theo (model, ô lưới, giờ).
+    Tọa độ ROUND 6 chữ số trước khóa và mapping. weather_product = archive.
 */
 
 {%- set ifs_relation = adapter.get_relation(
@@ -24,8 +23,9 @@
 WITH unioned AS (
     SELECT
         'era5' AS weather_model,
-        grid_latitude,
-        grid_longitude,
+        'archive' AS weather_product,
+        ROUND(grid_latitude, 6) AS grid_latitude,
+        ROUND(grid_longitude, 6) AS grid_longitude,
         valid_time_utc,
         precipitation_mm,
         rain_mm,
@@ -37,14 +37,13 @@ WITH unioned AS (
     FROM {{ source('bronze_weather', 'open_meteo_archive') }}
 
     {%- if ifs_relation %}
-    -- Chỉ union khi bảng đã tồn tại: autoloader tạo nó ở lần nạp IFS đầu tiên,
-    -- nên `make transform` chạy trước lần fetch IFS nào vẫn phải hoạt động.
     UNION ALL
 
     SELECT
         weather_model,
-        grid_latitude,
-        grid_longitude,
+        'archive' AS weather_product,
+        ROUND(grid_latitude, 6) AS grid_latitude,
+        ROUND(grid_longitude, 6) AS grid_longitude,
         valid_time_utc,
         precipitation_mm,
         rain_mm,
@@ -55,16 +54,19 @@ WITH unioned AS (
         _ingested_at
     FROM {{ ifs_relation }}
     {%- endif %}
+),
+
+deduped AS (
+    SELECT *
+    FROM unioned
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY weather_model, grid_latitude, grid_longitude, valid_time_utc
+        ORDER BY _ingested_at DESC, _source_file DESC
+    ) = 1
 )
 
-SELECT * EXCLUDE (rn)
-FROM (
-    SELECT
-        *,
-        ROW_NUMBER() OVER (
-            PARTITION BY weather_model, grid_latitude, grid_longitude, valid_time_utc
-            ORDER BY _ingested_at DESC, _source_file DESC
-        ) AS rn
-    FROM unioned
-)
-WHERE rn = 1
+SELECT
+    {{ grid_cell_id('weather_model', "'archive'", 'grid_latitude', 'grid_longitude') }}
+        AS grid_cell_id,
+    *
+FROM deduped

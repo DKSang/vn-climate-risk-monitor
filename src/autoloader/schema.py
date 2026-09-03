@@ -108,6 +108,20 @@ SCHEMA_STATEMENTS = (
     CREATE INDEX IF NOT EXISTS ingestion_files_checkpoint_idx
         ON ingestion.ingestion_files (status, created_at_utc)
     """,
+    # DEPRECATED 2026-09-03 — thay bằng processing.processing_state.
+    # Không ai ghi vào bảng này nữa; giữ DDL để `run_processing.py migrate` còn đọc
+    # được giá trị cũ. Xóa sau khi mọi process đã migrate.
+    #
+    # Vì sao bỏ: giá trị của nó là MAX(_ingested_at) đọc SAU khi dbt xong, nên
+    # row nào được autoloader commit TRONG LÚC dbt chạy sẽ bị checkpoint nhảy
+    # qua và không bao giờ vào Gold.
+    """
+    CREATE TABLE IF NOT EXISTS ingestion.gold_watermarks (
+        pipeline_name TEXT PRIMARY KEY,
+        last_successful_ingestion_watermark TIMESTAMPTZ NOT NULL,
+        updated_at_utc TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
 )
 
 

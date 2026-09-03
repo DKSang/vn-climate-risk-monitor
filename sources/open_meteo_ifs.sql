@@ -1,5 +1,9 @@
 -- Transform cho nguồn open_meteo_ifs (ECMWF IFS, ~9km, 2017→nay).
--- Chạy bởi autoloader engine; {{ files }} được thay bằng danh sách file đã claim.
+-- Chạy bởi autoloader engine, thay hai placeholder:
+--   {{ files }}        danh sách file đã claim trong lô này
+--   {{ ingested_at }}  giờ từ Postgres control plane — KHÔNG dùng
+--                      CURRENT_TIMESTAMP của DuckDB (giờ máy worker), vì
+--                      checkpoint downstream so mốc này với giờ Postgres.
 --
 -- Cùng bộ cột với open_meteo_archive.sql — hai model tương thích schema, đã probe
 -- 2026-08-28: ecmwf_ifs có đủ 5 biến đang dùng. Khác biệt duy nhất là cột
@@ -53,7 +57,7 @@ SELECT
     TRY_CAST(utc_offset_seconds AS INTEGER)           AS utc_offset_seconds,
     CAST(hourly_units AS VARCHAR)                     AS hourly_units_json,
     filename                                          AS _source_file,
-    CURRENT_TIMESTAMP                                 AS _ingested_at,
+    {{ ingested_at }}                                 AS _ingested_at,
     -- _rescued_data: ghi lại giá trị KHÔNG ép kiểu được, thay vì fail cả lô
     NULLIF(
         TRIM(
