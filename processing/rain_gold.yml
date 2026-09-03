@@ -14,3 +14,20 @@ checkpoint:
 
 runner:
   select: "tag:gold"
+
+# Danh mục phường CÓ THỂ bị xoá ở nguồn (sáp nhập/giải thể theo nghị quyết), và
+# seed liệt kê được toàn bộ key nên anti-join chạy được. Weather thì không:
+# Open-Meteo là REST không liệt kê được key, và quan trắc không bao giờ bị xoá.
+soft_delete:
+  - target: gold.dim_ward
+    business_key: [ward_code]
+    key_source_sql: |
+      SELECT commune_code AS ward_code
+      FROM catalog1.seed.ward_coordinates_seed
+      WHERE province_code = '01'
+
+  - target: gold.bridge_ward_grid
+    business_key: [ward_code, weather_model]
+    key_source_sql: |
+      SELECT ward_code, model AS weather_model
+      FROM catalog1.seed.ward_grid_map_seed

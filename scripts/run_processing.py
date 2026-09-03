@@ -21,12 +21,15 @@ from types import FrameType
 from processing import (
     ProcessConfig,
     ProcessingRepository,
+    apply_soft_delete,
     ensure_processing_state,
     run_dbt,
     run_process,
 )
+from processing.softdelete import SoftDeleteResult
 from processing.state import connect_control_plane
 from vn_climate_risk_monitor.config import load_settings
+from vn_climate_risk_monitor.lakehouse import get_connection
 
 PROCESSING_DIR = Path("processing")
 TRANSFORM_DIR = Path("transform")
@@ -84,13 +87,34 @@ def cmd_run(args: argparse.Namespace) -> int:
     select = None if args.full_graph else (args.select or config.runner.select)
     install_signal_handlers()
     repository, connection = open_repository()
+    deletions: list[SoftDeleteResult] = []
+
+    def execute(bounds: object) -> None:
+        """dbt rồi soft delete, TRONG CÙNG một run.
+
+        Thứ tự bắt buộc: soft delete đọc bảng mà dbt vừa ghi. Và vì nó nằm trong
+        `execute`, lỗi ở đây làm run FAILED nên checkpoint KHÔNG nhích — lần sau
+        chạy lại đúng cửa sổ đó.
+        """
+        run_dbt(bounds, project_dir=TRANSFORM_DIR, select=select)  # type: ignore[arg-type]
+        if not config.soft_delete:
+            return
+        lakehouse = get_connection()
+        try:
+            for rule in config.soft_delete:
+                deletions.append(
+                    apply_soft_delete(
+                        lakehouse,
+                        rule,
+                        now=bounds.run_started_at,  # type: ignore[attr-defined]
+                    )
+                )
+        finally:
+            lakehouse.close()
+
     try:
         result = run_process(
-            config=config,
-            repository=repository,
-            execute=lambda bounds: run_dbt(
-                bounds, project_dir=TRANSFORM_DIR, select=select
-            ),
+            config=config, repository=repository, execute=execute
         )
     finally:
         connection.close()  # type: ignore[attr-defined]
@@ -99,6 +123,12 @@ def cmd_run(args: argparse.Namespace) -> int:
     print(f"{result.process_key}: {result.status} ({mode}) run={result.run_id}")
     for source in result.bounds.sources:
         print(f"  {source.source_ref}: lower_bound={source.lower_bound}")
+    for deletion in deletions:
+        print(
+            f"  soft delete {deletion.target}: "
+            f"{deletion.source_keys} key nguồn, "
+            f"tắt {deletion.deactivated}, bật lại {deletion.reactivated}"
+        )
     print(f"  checkpoint → {result.bounds.run_started_at} (run start, not end)")
     return 0
 

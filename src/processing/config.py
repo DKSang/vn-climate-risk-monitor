@@ -19,6 +19,9 @@ CỐ Ý không có ``recompute_scope`` ở đây. Độ rộng cửa sổ (lookb
 của TỪNG MODEL, không phải của process: `+tag:historical` build nhiều model có
 window khác nhau (hourly 72h, daily khác). Khai báo nó trong chính model qua
 macro ``incremental_input_scope`` — versioned cùng SQL sinh ra nó.
+
+``soft_delete`` khai báo các bảng cần đồng bộ cờ active với nguồn sau khi
+transform xong — xem :mod:`processing.softdelete`.
 """
 
 from __future__ import annotations
@@ -30,6 +33,8 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+
+from processing.softdelete import SoftDeleteConfig
 
 _UNITS = {
     "second": 1,
@@ -112,6 +117,9 @@ class ProcessConfig:
     scope: str = "production"
     checkpoint: CheckpointConfig = field(default_factory=CheckpointConfig)
     runner: RunnerConfig = field(default_factory=RunnerConfig)
+    # Chạy SAU khi transform thành công, TRƯỚC khi advance checkpoint: soft
+    # delete lỗi thì run FAILED và checkpoint không nhích.
+    soft_delete: tuple[SoftDeleteConfig, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.process_key.strip() or not self.target.strip():
@@ -138,6 +146,20 @@ class ProcessConfig:
         if "safety_lag" in checkpoint_raw:
             checkpoint_raw["safety_lag"] = parse_duration(checkpoint_raw["safety_lag"])
 
+        soft_delete = tuple(
+            SoftDeleteConfig(
+                target=item["target"],
+                business_key=tuple(item["business_key"]),
+                key_source_sql=item["key_source_sql"],
+                **{
+                    key: value
+                    for key, value in item.items()
+                    if key not in {"target", "business_key", "key_source_sql"}
+                },
+            )
+            for item in (raw.get("soft_delete") or [])
+        )
+
         return cls(
             process_key=raw["process_key"],
             target=raw["target"],
@@ -145,4 +167,5 @@ class ProcessConfig:
             scope=raw.get("scope", "production"),
             checkpoint=CheckpointConfig(**checkpoint_raw),
             runner=RunnerConfig(**(raw.get("runner") or {})),
+            soft_delete=soft_delete,
         )

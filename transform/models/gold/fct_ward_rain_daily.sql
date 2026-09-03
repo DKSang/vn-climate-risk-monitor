@@ -28,6 +28,7 @@ SELECT
     bridge.weather_model,
     bridge.grid_cell_id,
     bridge.ward_count_on_grid,
+    bridge.is_active AS ward_is_active,
     daily.rain_date,
     daily.rain_total_mm,
     daily.observed_hours,

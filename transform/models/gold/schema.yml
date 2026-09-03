@@ -17,16 +17,26 @@ models:
         tests: [not_null]
 
   - name: dim_ward
-    description: "126 phường/xã Hà Nội. KHÔNG mang grid_cell_id — xem bridge"
+    description: >
+      126 phường/xã Hà Nội. KHÔNG mang grid_cell_id — xem bridge.
+      Incremental để soft delete giữ được cờ: phường giải thể ở nguồn vẫn còn
+      dòng với `is_active = FALSE`, nên fact lịch sử không thành orphan.
     columns:
       - name: ward_code
         tests: [unique, not_null]
       - name: ward_name
         tests: [not_null]
+      - name: is_active
+        description: "FALSE = không còn trong seed (giải thể/sáp nhập)"
+        tests: [not_null]
 
   - name: bridge_ward_grid
     description: "Phường ↔ ô lưới theo model. 252 dòng, đủ để join lúc query"
     columns:
+      - name: ward_grid_key
+        tests: [unique, not_null]
+      - name: is_active
+        tests: [not_null]
       - name: ward_code
         tests:
           - not_null
