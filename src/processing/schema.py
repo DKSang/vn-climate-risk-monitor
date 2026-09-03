@@ -48,6 +48,14 @@ SCHEMA_STATEMENTS = (
         bounds JSONB NOT NULL DEFAULT '{}'::jsonb
             CHECK (jsonb_typeof(bounds) = 'object'),
         checkpoint_candidate TIMESTAMPTZ,
+        -- Số dòng trong target SAU khi run thành công. Đủ để bắt "run xanh
+        -- nhưng bảng rỗng" — thứ mà insert/update count sinh ra để bắt, nhưng
+        -- rẻ hơn nhiều: dbt của ta không phát ra rows_affected cho
+        -- materialization DuckLake (main statement là DROP TABLE tmp).
+        target_row_count BIGINT,
+        -- Soft delete: NULL khi process không khai báo rule nào.
+        rows_deactivated BIGINT,
+        rows_reactivated BIGINT,
         actor TEXT NOT NULL DEFAULT 'runner',
         reason TEXT,
         error_type TEXT,
@@ -68,6 +76,13 @@ SCHEMA_STATEMENTS = (
     CREATE INDEX IF NOT EXISTS processing_runs_history_idx
         ON processing.processing_runs (process_key, scope, started_at_utc DESC)
     """,
+    # Cột thêm 2026-09-03. ADD COLUMN IF NOT EXISTS để control plane đang chạy
+    # nâng cấp tại chỗ, không phải dựng lại.
+    *(
+        f"ALTER TABLE processing.processing_runs "
+        f"ADD COLUMN IF NOT EXISTS {column} BIGINT"
+        for column in ("target_row_count", "rows_deactivated", "rows_reactivated")
+    ),
 )
 
 
