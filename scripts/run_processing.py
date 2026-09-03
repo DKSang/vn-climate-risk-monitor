@@ -89,7 +89,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     repository, connection = open_repository()
     deletions: list[SoftDeleteResult] = []
 
-    def execute(bounds: object) -> None:
+    def execute(bounds: object) -> dict[str, int | None]:
         """dbt rồi soft delete, TRONG CÙNG một run.
 
         Thứ tự bắt buộc: soft delete đọc bảng mà dbt vừa ghi. Và vì nó nằm trong
@@ -97,8 +97,6 @@ def cmd_run(args: argparse.Namespace) -> int:
         chạy lại đúng cửa sổ đó.
         """
         run_dbt(bounds, project_dir=TRANSFORM_DIR, select=select)  # type: ignore[arg-type]
-        if not config.soft_delete:
-            return
         lakehouse = get_connection()
         try:
             for rule in config.soft_delete:
@@ -109,8 +107,20 @@ def cmd_run(args: argparse.Namespace) -> int:
                         now=bounds.run_started_at,  # type: ignore[attr-defined]
                     )
                 )
+            row = lakehouse.execute(
+                f"SELECT COUNT(*) FROM {config.target}"
+            ).fetchone()
         finally:
             lakehouse.close()
+        return {
+            "target_row_count": None if row is None else int(row[0]),
+            "rows_deactivated": (
+                sum(d.deactivated for d in deletions) if deletions else None
+            ),
+            "rows_reactivated": (
+                sum(d.reactivated for d in deletions) if deletions else None
+            ),
+        }
 
     try:
         result = run_process(
@@ -153,14 +163,19 @@ def cmd_status(args: argparse.Namespace) -> int:
     for source_ref, checkpoint in checkpoints.items():
         print(f"  {source_ref}: {checkpoint or '(chưa có — full refresh)'}")
     print("  runs:")
-    for run_id, status, started, completed, candidate, who, reason, etype, emsg in runs:
+    for run in runs:
+        (_id, status, started, completed, candidate, who, reason, etype, emsg,
+         rows, off, on) = run
         line = f"    {status:<9} {started} → {completed or '...'}  ckpt={candidate}"
+        if rows is not None:
+            line += f"  rows={rows:,}"
+        if off or on:
+            line += f"  soft_delete(-{off or 0}/+{on or 0})"
         if reason:
             line += f"  [{who}: {reason}]"
         if etype:
             line += f"  {etype}: {(emsg or '')[:80]}"
         print(line)
-        del run_id
     return 0
 
 

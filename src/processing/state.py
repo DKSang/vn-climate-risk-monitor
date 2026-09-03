@@ -118,6 +118,7 @@ class ProcessingRepository:
         source_refs: Sequence[str],
         checkpoint: datetime,
         completed_at: datetime,
+        metrics: Mapping[str, int | None] | None = None,
     ) -> None:
         """Advance checkpoint — CHỈ gọi sau khi transform + test đã thành công.
 
@@ -126,15 +127,25 @@ class ProcessingRepository:
         lại (checkpoint nhích mà không ai biết run nào đã nhích nó).
         """
         with self.connection.transaction():
+            counts = dict(metrics or {})
             cursor = self.connection.execute(
                 """
                 UPDATE processing.processing_runs
                 SET status = 'SUCCEEDED',
                     completed_at_utc = %s,
+                    target_row_count = %s,
+                    rows_deactivated = %s,
+                    rows_reactivated = %s,
                     updated_at_utc = CURRENT_TIMESTAMP
                 WHERE processing_run_id = %s AND status = 'RUNNING'
                 """,
-                (completed_at, run_id),
+                (
+                    completed_at,
+                    counts.get("target_row_count"),
+                    counts.get("rows_deactivated"),
+                    counts.get("rows_reactivated"),
+                    run_id,
+                ),
             )
             if cursor.rowcount != 1:
                 raise ProcessingStateError(
@@ -300,7 +311,8 @@ class ProcessingRepository:
         return self.connection.execute(
             """
             SELECT processing_run_id, status, started_at_utc, completed_at_utc,
-                   checkpoint_candidate, actor, reason, error_type, error_message
+                   checkpoint_candidate, actor, reason, error_type, error_message,
+                   target_row_count, rows_deactivated, rows_reactivated
             FROM processing.processing_runs
             WHERE process_key = %s AND scope = %s
             ORDER BY started_at_utc DESC

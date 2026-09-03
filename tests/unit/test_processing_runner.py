@@ -265,6 +265,31 @@ def test_run_records_bounds_for_audit() -> None:
     assert recorded["bounds"]["archive_hourly"]["lower_bound"] == at(9, 45).isoformat()
 
 
+def test_metrics_from_execute_are_recorded_with_the_run() -> None:
+    """"Run xanh nhưng bảng rỗng" chỉ thấy được nếu số dòng được ghi lại."""
+    repository = FakeRepository(clock=[at(11, 0), at(11, 5)])
+
+    run_process(
+        config=build_config(),
+        repository=repository,
+        execute=lambda b: {"target_row_count": 5_818_584, "rows_deactivated": 1},
+    )
+
+    assert repository.completed[0]["metrics"]["target_row_count"] == 5_818_584
+    assert repository.completed[0]["metrics"]["rows_deactivated"] == 1
+
+
+def test_execute_may_return_no_metrics() -> None:
+    """Metrics là tuỳ chọn, không phải điều kiện để run thành công."""
+    repository = FakeRepository(clock=[at(11, 0), at(11, 5)])
+
+    run_process(
+        config=build_config(), repository=repository, execute=lambda b: None
+    )
+
+    assert repository.completed[0]["metrics"] is None
+
+
 def test_run_is_opened_before_transform_executes() -> None:
     """Run phải RUNNING trước khi transform chạy, nếu không crash là mất audit."""
     repository = FakeRepository(clock=[at(11, 0), at(11, 5)])

@@ -18,7 +18,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -117,9 +117,14 @@ def run_process(
     *,
     config: ProcessConfig,
     repository: Any,
-    execute: Callable[[Bounds], None],
+    execute: Callable[[Bounds], Mapping[str, int | None] | None],
 ) -> ProcessingResult:
-    """Chạy transform một lần và chỉ advance checkpoint khi nó thành công."""
+    """Chạy transform một lần và chỉ advance checkpoint khi nó thành công.
+
+    ``execute`` có thể trả về metrics (số dòng target, số dòng soft delete) để
+    ghi cùng run. Trả ``None`` cũng hợp lệ — metrics là tuỳ chọn, không phải
+    điều kiện để run được coi là thành công.
+    """
     run_started_at = repository.control_now()
     checkpoints = repository.read_checkpoints(
         process_key=config.process_key,
@@ -136,7 +141,7 @@ def run_process(
         bounds=bounds.as_json(),
     )
     try:
-        execute(bounds)
+        metrics = execute(bounds)
     except BaseException as error:
         repository.fail_run(
             run_id, error=error, completed_at=repository.control_now()
@@ -152,6 +157,7 @@ def run_process(
         # trong lúc run chạy sẽ nằm sau mốc này và được lần sau nhặt lên.
         checkpoint=run_started_at,
         completed_at=repository.control_now(),
+        metrics=metrics,
     )
     return ProcessingResult(
         run_id=run_id,
