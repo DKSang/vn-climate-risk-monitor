@@ -116,13 +116,19 @@ def test_negative_safety_lag_is_rejected(tmp_path: Path) -> None:
         )
 
 
-def test_shipped_config_is_loadable() -> None:
-    """Config thật trong repo phải parse được, không chỉ fixture trong test."""
-    config = ProcessConfig.from_yaml("processing/rainfall_historical_hourly.yml")
+def test_every_shipped_config_is_loadable() -> None:
+    """Mọi config thật trong repo phải parse được, không chỉ fixture trong test.
 
-    assert config.process_key == "rainfall_historical_hourly"
-    assert config.source_refs == ("archive_hourly",)
-    assert config.checkpoint.safety_lag == timedelta(minutes=15)
+    Quét cả thư mục thay vì gọi đích danh một file: đổi tên process là chuyện
+    thường, và test gãy vì đổi tên không nói lên điều gì.
+    """
+    paths = sorted(Path("processing").glob("*.yml"))
+
+    assert paths, "không tìm thấy process config nào trong processing/"
+    for path in paths:
+        config = ProcessConfig.from_yaml(path)
+        assert config.process_key == path.stem, path
+        assert config.sources
 
 
 def test_cli_module_is_importable() -> None:

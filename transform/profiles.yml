@@ -11,7 +11,7 @@ transform:
       extensions:
         - httpfs      # đọc file trên MinIO (S3)
         - ducklake    # lakehouse catalog
-        - postgres    # đọc thẳng Postgres nguồn, không cần bước ingest trung gian
+        - postgres    # metadata catalog của DuckLake nằm trong Postgres
 
       secrets:
         - type: s3
@@ -23,23 +23,16 @@ transform:
           url_style: path
 
       attach:
-        # 1) Silver/Gold: metadata trong Postgres, dữ liệu trên MinIO root
+        # MỘT catalog cho mọi bảng. DuckLake suy path là
+        # <data_path>/<schema>/<table>, nên silver.stg_* nằm ở silver/stg_*/.
         - path: "ducklake:postgres:dbname={{ env_var('POSTGRES_DB', 'vnclimate') }} host={{ env_var('POSTGRES_HOST', '127.0.0.1') }} port={{ env_var('POSTGRES_PORT', '5432') }} user={{ env_var('POSTGRES_USER', 'vnclimate') }} password={{ env_var('POSTGRES_PASSWORD', 'vnclimate') }}"
           alias: catalog1
           options:
             data_path: "s3://{{ env_var('MINIO_BUCKET', 'vn-climate') }}"
             metadata_schema: "ducklake"
 
-        # 2) Bronze tables: root riêng để path luôn là bronze/tables/<table>/
-        - path: "ducklake:postgres:dbname={{ env_var('POSTGRES_DB', 'vnclimate') }} host={{ env_var('POSTGRES_HOST', '127.0.0.1') }} port={{ env_var('POSTGRES_PORT', '5432') }} user={{ env_var('POSTGRES_USER', 'vnclimate') }} password={{ env_var('POSTGRES_PASSWORD', 'vnclimate') }}"
-          alias: bronze_store
-          options:
-            data_path: "s3://{{ env_var('MINIO_BUCKET', 'vn-climate') }}/bronze"
-            metadata_schema: "ducklake_bronze"
 
-        # 3) Postgres NGUỒN (chỉ đọc) — dbt đọc trực tiếp dữ liệu địa lý
-        - path: "dbname={{ env_var('POSTGRES_DB', 'vnclimate') }} host={{ env_var('POSTGRES_HOST', '127.0.0.1') }} port={{ env_var('POSTGRES_PORT', '5432') }} user={{ env_var('POSTGRES_USER', 'vnclimate') }} password={{ env_var('POSTGRES_PASSWORD', 'vnclimate') }}"
-          alias: pg_source
-          type: postgres
-          options:
-            read_only: true
+        # KHÔNG còn attach `pg_source`. Danh mục phường/xã chỉ đến từ seed
+        # `ward_coordinates_seed.csv`. Bản cũ đọc song song cả Postgres nguồn
+        # lẫn seed cho CÙNG một thực thể — hai đường, và khi chúng lệch nhau thì
+        # không có quy tắc nào nói bên nào đúng.

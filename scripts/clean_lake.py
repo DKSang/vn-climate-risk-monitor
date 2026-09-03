@@ -1,16 +1,12 @@
 #!/usr/bin/env python3
 """Expire all historical snapshots and clean unreferenced lakehouse files."""
 
-from vn_climate_risk_monitor.lakehouse import (
-    BRONZE_CATALOG,
-    PRIMARY_CATALOG,
-    get_connection,
-)
+from vn_climate_risk_monitor.lakehouse import PRIMARY_CATALOG, get_connection
 
 
 def main() -> None:
     connection = get_connection()
-    for catalog in (PRIMARY_CATALOG, BRONZE_CATALOG):
+    for catalog in (PRIMARY_CATALOG,):
         connection.execute(
             f"CALL ducklake_expire_snapshots('{catalog}', older_than => now())"
         )

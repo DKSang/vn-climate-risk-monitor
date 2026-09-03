@@ -42,8 +42,9 @@ jobs:
         run: uv run dbt parse --profiles-dir . --no-partial-parse
 
       # dbt compile primes the adapter cache and therefore opens every attachment
-      # before applying node selection. Local empty catalogs preserve the production
-      # aliases while keeping compilation independent of PostgreSQL and MinIO.
+      # before applying node selection. A local empty catalog preserves the
+      # production alias while keeping compilation independent of PostgreSQL and
+      # MinIO. Một catalog kể từ 2026-09-03 (bỏ bronze_store và pg_source).
       - name: Prepare service-free dbt catalogs
         run: |
           mkdir -p /tmp/vn-climate-dbt-ci
@@ -52,8 +53,6 @@ jobs:
 
           catalogs = {
               "/tmp/vn-climate-dbt-ci/catalog1.duckdb": ("seed", "silver", "gold"),
-              "/tmp/vn-climate-dbt-ci/bronze_store.duckdb": ("tables",),
-              "/tmp/vn-climate-dbt-ci/pg_source.duckdb": ("public",),
           }
           for path, schemas in catalogs.items():
               connection = duckdb.connect(path)
@@ -71,10 +70,6 @@ jobs:
                 attach:
                   - path: /tmp/vn-climate-dbt-ci/catalog1.duckdb
                     alias: catalog1
-                  - path: /tmp/vn-climate-dbt-ci/bronze_store.duckdb
-                    alias: bronze_store
-                  - path: /tmp/vn-climate-dbt-ci/pg_source.duckdb
-                    alias: pg_source
           YAML
 
       # Compile validates SQL/Jinja for the full project. Fixture-backed dbt tests

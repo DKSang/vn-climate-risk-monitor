@@ -5,8 +5,8 @@ Bootstrap the DuckLake lakehouse.
 Idempotent — safe to re-run:
   1. Creates MinIO bucket (skip if exists)
   2. Installs/loads DuckLake extension in DuckDB
-  3. Attaches primary and Bronze DuckLake catalogs
-  4. Creates ``bronze_store.tables``, ``catalog1.silver`` and ``catalog1.gold``
+  3. Attaches the DuckLake catalog
+  4. Creates ``catalog1.silver`` and ``catalog1.gold``
   5. Creates the native PostgreSQL ingestion control plane
 
 Usage:
@@ -27,9 +27,6 @@ from autoloader import (
 from processing import ensure_processing_state
 from vn_climate_risk_monitor.config import load_settings
 from vn_climate_risk_monitor.lakehouse import (
-    BRONZE_CATALOG,
-    BRONZE_METADATA_SCHEMA,
-    BRONZE_TABLE_SCHEMA,
     PRIMARY_CATALOG,
     PRIMARY_METADATA_SCHEMA,
 )
@@ -96,27 +93,21 @@ def step_2_setup_ducklake_catalog() -> None:
     """)
     print("  ✓ MinIO secret created")
 
-    # Attach primary and Bronze DuckLake catalogs. The separate Bronze root is
-    # required because DuckLake derives paths as data_path/schema/table.
-    print("  → Attaching DuckLake catalogs (Postgres + MinIO)...")
+    # MỘT catalog. DuckLake suy path là data_path/schema/table, nên
+    # silver.stg_* nằm ở s3://<bucket>/silver/stg_*/ mà không cần catalog thứ hai.
+    print("  → Attaching DuckLake catalog (Postgres + MinIO)...")
     pg_conn = SETTINGS.postgres.ducklake_connection_string
     con.execute(
         f"ATTACH 'ducklake:postgres:{pg_conn}' "
         f"AS {PRIMARY_CATALOG} (DATA_PATH 's3://{SETTINGS.minio.bucket}', "
         f"METADATA_SCHEMA '{PRIMARY_METADATA_SCHEMA}');"
     )
-    con.execute(
-        f"ATTACH 'ducklake:postgres:{pg_conn}' "
-        f"AS {BRONZE_CATALOG} "
-        f"(DATA_PATH 's3://{SETTINGS.minio.bucket}/bronze', "
-        f"METADATA_SCHEMA '{BRONZE_METADATA_SCHEMA}');"
-    )
-    print(f"  ✓ DuckLake catalogs '{PRIMARY_CATALOG}' and '{BRONZE_CATALOG}' attached")
+    print(f"  ✓ DuckLake catalog '{PRIMARY_CATALOG}' attached")
 
     con.execute(f"USE {PRIMARY_CATALOG};")
 
-    # Create medallion schemas (idempotent). Bronze's logical `tables` schema
-    # maps to the physical prefix bronze/tables/.
+    # `silver` chứa cả staging (stg_*, autoloader ghi) lẫn curated (dbt ghi).
+    # Bronze không có schema: nó chỉ là landing zone raw file trên MinIO.
     print("  → Creating medallion schemas...")
     for schema in ("silver", "gold"):
         try:
@@ -125,8 +116,6 @@ def step_2_setup_ducklake_catalog() -> None:
         except duckdb.CatalogException:
             # Schema already exists
             print(f"    ✓ Schema '{schema}' already exists")
-    con.execute(f"CREATE SCHEMA IF NOT EXISTS {BRONZE_CATALOG}.{BRONZE_TABLE_SCHEMA};")
-    print(f"    ✓ Schema '{BRONZE_CATALOG}.{BRONZE_TABLE_SCHEMA}' ready")
 
     con.close()
 
@@ -159,7 +148,7 @@ def step_4_verify() -> None:
             SELECT table_schema, table_name
             FROM information_schema.tables
             WHERE (
-                table_schema IN ('ducklake', 'ducklake_bronze')
+                table_schema = 'ducklake'
                 AND table_name LIKE 'ducklake_%'
             ) OR (
                 table_schema = 'ingestion'
@@ -216,7 +205,7 @@ def main() -> None:
     print()
     print("  Next steps:")
     print("    make transform   # build dbt models (silver + gold)")
-    print("    make quality     # Provero quét bronze")
+    print("    make quality     # Provero quét silver staging")
     print("=" * 60)
 
 

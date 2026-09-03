@@ -14,7 +14,7 @@ Ví dụ ``sources/open_meteo_forecast.yml``::
 
     transform:
       sql_file: open_meteo_forecast.sql
-      target: bronze_store.tables.open_meteo_forecast
+      target: catalog1.silver.stg_weather_forecast
 
 ``parameters`` cho phép NHIỀU NGUỒN DÙNG CHUNG MỘT FILE SQL. Ví dụ ERA5 và
 ECMWF IFS là hai endpoint khác nhau nhưng trả đúng một bộ cột; thay vì hai file

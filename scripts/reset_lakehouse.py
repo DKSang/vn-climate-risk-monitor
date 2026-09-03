@@ -3,10 +3,11 @@
 
 KHÔNG BAO GIỜ chạm ``bronze/files/`` trên MinIO. Đó là landing zone bất biến —
 SSOT payload nguồn. Script này chỉ drop object trong catalog DuckLake rồi bảo
-DuckLake dọn parquet mà nó tự sinh ra (``bronze/tables/``, ``silver/``, ``gold/``).
+DuckLake dọn parquet mà nó tự sinh ra (``silver/``, ``gold/``).
 
     reset_lakehouse.py --list                     xem sẽ xóa gì, không xóa
     reset_lakehouse.py --yes                      drop bảng + view
+    reset_lakehouse.py --yes --keep-staging       giữ silver.stg_* (KHÔNG phải nạp lại)
     reset_lakehouse.py --yes --reset-ingestion    + nạp lại từ raw ở lần load sau
     reset_lakehouse.py --yes --reset-processing   + xoá checkpoint transform
 
@@ -30,15 +31,26 @@ from vn_climate_risk_monitor.lakehouse import get_connection
 PROTECTED_PREFIX = "bronze/files/"
 
 
-def list_objects(duck: Any) -> list[tuple[str, str, str, str]]:
-    return duck.execute(
+# Bảng staging do autoloader ghi. Dựng lại chúng nghĩa là nạp lại 20M dòng từ
+# raw, nên vòng lặp thiết kế medallion (drop gold, sửa model, build lại) không
+# nên phải trả giá đó.
+STAGING_PREFIX = "stg_"
+
+
+def list_objects(
+    duck: Any, *, keep_staging: bool = False
+) -> list[tuple[str, str, str, str]]:
+    rows = duck.execute(
         """
         SELECT table_catalog, table_schema, table_name, table_type
         FROM information_schema.tables
-        WHERE table_catalog IN ('catalog1', 'bronze_store')
+        WHERE table_catalog = 'catalog1'
         ORDER BY 1, 2, 3
         """
     ).fetchall()
+    if keep_staging:
+        rows = [row for row in rows if not row[2].startswith(STAGING_PREFIX)]
+    return rows
 
 
 def drop_objects(duck: Any, objects: list[tuple[str, str, str, str]]) -> int:
@@ -52,9 +64,8 @@ def drop_objects(duck: Any, objects: list[tuple[str, str, str, str]]) -> int:
 
 def reclaim_files(duck: Any) -> None:
     """Bảo DuckLake bỏ snapshot cũ rồi xoá parquet không còn ai tham chiếu."""
-    for catalog in ("catalog1", "bronze_store"):
-        duck.execute(f"CALL ducklake_expire_snapshots('{catalog}', older_than => now())")
-        duck.execute(f"CALL ducklake_cleanup_old_files('{catalog}', cleanup_all => true)")
+    duck.execute("CALL ducklake_expire_snapshots('catalog1', older_than => now())")
+    duck.execute("CALL ducklake_cleanup_old_files('catalog1', cleanup_all => true)")
 
 
 def ingestion_gap(control: Any) -> tuple[int, int]:
@@ -93,24 +104,36 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--list", action="store_true", help="chỉ liệt kê, không xóa")
     parser.add_argument("--yes", action="store_true", help="xác nhận xóa thật")
+    parser.add_argument(
+        "--keep-staging",
+        action="store_true",
+        help="giữ silver.stg_* — khỏi phải nạp lại từ raw",
+    )
     parser.add_argument("--reset-ingestion", action="store_true")
     parser.add_argument("--reset-processing", action="store_true")
     args = parser.parse_args()
 
     duck = get_connection()
-    objects = list_objects(duck)
+    objects = list_objects(duck, keep_staging=args.keep_staging)
 
     if args.list or not args.yes:
         for catalog, schema, name, kind in objects:
             print(f"  {kind:<10} {catalog}.{schema}.{name}")
         print(f"\n{len(objects)} object sẽ bị xóa. Thêm --yes để thực hiện.")
         print(f"Landing zone {PROTECTED_PREFIX!r} KHÔNG bị đụng tới.")
+        if args.keep_staging:
+            print(f"Giữ nguyên mọi bảng {STAGING_PREFIX}* trong silver.")
         duck.close()
         return 0
 
     settings = load_settings()
     control = connect_control_plane(settings.postgres.ducklake_connection_string)
     try:
+        if args.reset_ingestion and args.keep_staging:
+            raise SystemExit(
+                "--keep-staging và --reset-ingestion mâu thuẫn: giữ bảng staging "
+                "nhưng xoá ledger sẽ nạp lại toàn bộ raw vào bảng đã có dữ liệu."
+            )
         if args.reset_ingestion:
             known, still_live = ingestion_gap(control)
             print(

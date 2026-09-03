@@ -39,8 +39,6 @@ clean-targets:         # directories to be removed by `dbt clean`
 on-run-end:
   - "CALL ducklake_expire_snapshots('catalog1', older_than => now() - INTERVAL 7 DAY)"
   - "CALL ducklake_cleanup_old_files('catalog1', cleanup_all => true)"
-  - "CALL ducklake_expire_snapshots('bronze_store', older_than => now() - INTERVAL 7 DAY)"
-  - "CALL ducklake_cleanup_old_files('bronze_store', cleanup_all => true)"
 
 # Seed: file CSV tĩnh, version-control cùng code.
 #
@@ -49,9 +47,8 @@ on-run-end:
 # và MẤT số 0 đầu — đúng vấn đề mà read_csv_auto trên MinIO đã gây ra trước đây,
 # khiến silver phải LPAD lại. Ép VARCHAR để bronze giữ đúng nguyên bản nguồn.
 #
-# Seed nằm ở schema `seed`, KHÔNG phải `bronze`: nó là input artifact — cùng vai
-# trò với Postgres nguồn (pg_source), không phải một lớp của medallion. Nhờ vậy
-# schema bronze dùng tên nguồn/entity, không lặp hậu tố `_raw`.
+# Seed nằm ở schema `seed`, KHÔNG phải `bronze`: nó là input artifact được
+# version-control cùng code, không phải một lớp của medallion.
 seeds:
   transform:
     +database: catalog1
@@ -68,18 +65,13 @@ seeds:
         region: VARCHAR
         climate_zone: VARCHAR
 
+# KHÔNG có thư mục `bronze/` trong models: Bronze là việc của autoloader, dbt
+# chỉ ĐỌC qua `source()`. Ranh giới đó giữ ingest và transform tách bạch —
+# bản cũ có 5 model dbt ghi vào Bronze, tức hai cơ chế ingest song song.
 models:
   transform:
     # Mọi model đều nằm trong DuckLake catalog (Postgres metadata + MinIO Parquet)
     +database: catalog1
-
-    # Bronze tables dùng catalog riêng root tại s3://<bucket>/bronze. Schema
-    # `tables` tạo đúng path vật lý bronze/tables/<table>/.
-    bronze:
-      +database: bronze_store
-      +schema: tables
-      +materialized: table
-      +tags: ['bronze']
 
     # Silver: validate, chuẩn hóa, deduplicate và conform. View -> không tốn dung lượng.
     silver:

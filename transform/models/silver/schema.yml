@@ -1,0 +1,49 @@
+version: 2
+
+models:
+  - name: weather_hourly
+    description: >
+      Quan trắc theo giờ đã dedup và canonical hoá toạ độ. View — luôn nhất
+      quán với Bronze, không tốn dung lượng.
+    columns:
+      - name: grid_cell_id
+        description: "Sinh MỘT LẦN ở đây; mọi lớp sau chỉ dùng id"
+        tests: [not_null]
+      - name: weather_model
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['era5', 'ecmwf_ifs']
+      - name: valid_time_utc
+        tests: [not_null]
+
+  - name: ward
+    description: "126 phường/xã Hà Nội, lọc từ seed 3.321 đơn vị toàn quốc"
+    columns:
+      - name: ward_code
+        tests: [unique, not_null]
+      - name: ward_name
+        tests: [not_null]
+      - name: ward_latitude
+        tests: [not_null]
+      - name: ward_longitude
+        tests: [not_null]
+
+  - name: ward_grid
+    description: >
+      Phường × model → ô lưới, lấy từ phép snap của Open-Meteo chứ không phải
+      nearest-neighbour tự tính.
+    columns:
+      - name: ward_code
+        tests:
+          - not_null
+          - relationships:
+              to: ref('ward')
+              field: ward_code
+      - name: weather_model
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['era5', 'ecmwf_ifs']
+      - name: grid_cell_id
+        tests: [not_null]

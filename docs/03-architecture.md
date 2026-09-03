@@ -1,5 +1,13 @@
 # Kiến trúc hệ thống
 
+> **Đã thay thế một phần (2026-09-03).** Kiến trúc chốt hiện tại ở
+> [plan lean medallion](superpowers/plans/2026-09-03-lean-medallion.md) và
+> [plan Silver Layer Flow](superpowers/plans/2026-09-03-silver-layer-flow.md):
+> MỘT catalog DuckLake (`catalog1`), Bronze chỉ còn là landing zone raw file,
+> bảng append-only của autoloader nay là `silver.stg_*`.
+> Phần mô tả `bronze_store` / hai catalog / các model gold cũ trong tài liệu
+> này KHÔNG còn đúng.
+
 **Hanoi Flood & Climate Risk Monitor** · v2.0 · 2026-08-21
 
 ## Kiến trúc tổng thể
@@ -49,9 +57,9 @@ thương mại phải review lại giấy phép và deployment profile.
 | Layer | Contract | Ví dụ |
 |---|---|---|
 | Bronze files | Response nguồn nguyên bản, immutable; checksum ở PostgreSQL | `bronze/files/open_meteo/...` |
-| Bronze tables | Parse cấu trúc, giữ mọi record/vintage, chưa validate | `bronze_store.tables.open_meteo_forecast_hourly` |
-| Silver | Type, validate, dedup, late data, mapping và join | `silver.rainfall_forecast_hourly` |
-| Gold | Dimensional model, KPI và aggregate nghiệp vụ | `gold.fct_rainfall_pressure_hourly` |
+| Silver staging | Parse cấu trúc, giữ mọi record/vintage, chưa validate | `silver.stg_weather_forecast` |
+| Silver curated | Type, validate, dedup, late data, mapping và join | `silver.weather_hourly` |
+| Gold | Dimensional model, KPI và aggregate nghiệp vụ | `gold.fct_rain_hourly` |
 
 Bronze có thể explode array nguồn thành grain nguyên tử vì payload nguyên bản đã
 được giữ trong `bronze/files`. Không được lọc, dedup hay áp business rule tại
@@ -62,21 +70,22 @@ Bronze.
 Schema đã thể hiện layer, do đó không dùng hậu tố `_raw` hoặc `_cleaned`:
 
 ```text
-bronze_store.tables.gso_provinces
-bronze_store.tables.gso_wards
-bronze_store.tables.gso_administrative_units
-bronze_store.tables.gso_administrative_regions
-bronze_store.tables.ward_coordinates
+silver.stg_weather_hourly      staging append-only (autoloader ghi)
+silver.stg_weather_forecast
 
-silver.wards
-silver.ward_centroids
-silver.ward_locations
+silver.weather_hourly          curated, đã dedup
+silver.ward
+silver.ward_grid
 
-gold.dim_hanoi_ward
+gold.dim_grid
+gold.dim_ward
+gold.bridge_ward_grid
+gold.fct_rain_hourly
 ```
 
-Source qualifier ở Bronze giúp tránh xung đột tên model dbt và ghi rõ lineage.
-Gold tiếp tục dùng `dim_`/`fct_` theo dimensional modeling.
+Tiền tố `stg_` đánh dấu lớp staging append-only; tên không tiền tố là bảng
+curated mà consumer nên dùng. Gold dùng `dim_`/`fct_`/`bridge_` theo dimensional
+modeling.
 
 ## Incremental ingestion
 

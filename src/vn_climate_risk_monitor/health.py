@@ -151,9 +151,9 @@ def _check_weather_table(
 
 
 def _check_forecast_coverage(connection: Any) -> CheckResult:
-    if not _relation_exists(connection, "gold.dim_hanoi_ward"):
+    if not _relation_exists(connection, "gold.dim_ward"):
         return _result(
-            "forecast.complete_run", "FAIL", "Thiếu gold.dim_hanoi_ward; chạy bootstrap-geography"
+            "forecast.complete_run", "FAIL", "Thiếu gold.dim_ward; chạy make transform"
         )
     complete_runs = _scalar(
         connection,
@@ -168,7 +168,7 @@ def _check_forecast_coverage(connection: Any) -> CheckResult:
                 valid_time_utc,
                 _source_file,
                 _ingested_at
-            FROM bronze_store.tables.open_meteo_forecast
+            FROM catalog1.silver.stg_weather_forecast
         ),
         latest_file_ingests AS (
             SELECT *
@@ -182,7 +182,7 @@ def _check_forecast_coverage(connection: Any) -> CheckResult:
             GROUP BY run_name, valid_time_utc
         ),
         wards AS (
-            SELECT COUNT(*) AS expected FROM gold.dim_hanoi_ward
+            SELECT COUNT(*) AS expected FROM gold.dim_ward
         )
         SELECT COUNT(*)
         FROM (
@@ -212,7 +212,7 @@ def _check_archive_coverage(connection: Any) -> CheckResult:
                 grid_longitude,
                 DATE_TRUNC('month', valid_time_utc) AS month_start,
                 COUNT(DISTINCT valid_time_utc) AS observed_hours
-            FROM silver.archive_hourly
+            FROM silver.weather_hourly
             WHERE valid_time_utc < DATE_TRUNC('month', CURRENT_TIMESTAMP)
             GROUP BY 1, 2, 3, 4
         )
@@ -234,17 +234,15 @@ def _check_archive_coverage(connection: Any) -> CheckResult:
 def _check_archive_duplicates(connection: Any) -> CheckResult:
     raw_count, unique_count = connection.execute(
         """
-        SELECT
-            COUNT(*),
-            COUNT(DISTINCT (weather_model, grid_latitude, grid_longitude, valid_time_utc))
-        FROM silver.archive_hourly
+        SELECT COUNT(*), COUNT(DISTINCT (grid_cell_id, valid_time_utc))
+        FROM silver.weather_hourly
         """
     ).fetchone()
     duplicates = raw_count - unique_count
     return _result(
         "archive.silver_grain",
         "PASS" if duplicates == 0 else "FAIL",
-        f"{duplicates:,} dòng trùng grain sau Silver",
+        f"{duplicates:,} dòng trùng grain sau khi dedup ở Silver",
         row_count=raw_count,
         unique_grain_count=unique_count,
         duplicate_rows=duplicates,
@@ -253,55 +251,60 @@ def _check_archive_duplicates(connection: Any) -> CheckResult:
 
 
 def _check_mapping(connection: Any) -> CheckResult:
-    if not _relation_exists(connection, "silver.ward_grid_map"):
-        return _result("archive.mapping_distance", "FAIL", "Thiếu silver.ward_grid_map")
-    count, maximum = connection.execute(
-        "SELECT COUNT(*), MAX(mapping_distance_km) FROM silver.ward_grid_map"
+    """Mỗi phường phải có đúng một ô lưới cho mỗi model.
+
+    Bản cũ đo `mapping_distance_km`; cột đó đến từ model `ward_grid_map` tự tính
+    nearest-neighbour, nay đã bỏ. Ánh xạ hiện lấy thẳng từ phép snap của
+    Open-Meteo (seed) nên khoảng cách không còn là thứ ta kiểm soát — thứ đáng
+    kiểm là ĐỘ PHỦ: thiếu một dòng thì phường đó biến mất khỏi fact mà INNER JOIN
+    không báo gì.
+    """
+    relation = "gold.bridge_ward_grid"
+    if not _relation_exists(connection, relation):
+        return _result("archive.ward_mapping", "FAIL", f"Thiếu {relation}")
+    rows, wards, models = connection.execute(
+        f"""
+        SELECT COUNT(*), COUNT(DISTINCT ward_code), COUNT(DISTINCT weather_model)
+        FROM {relation}
+        """
     ).fetchone()
-    limit = float(os.getenv("HEALTH_MAX_MAPPING_DISTANCE_KM", "25"))
-    valid = count == 252 and maximum is not None and maximum <= limit
+    expected = wards * models
     return _result(
-        "archive.mapping_distance",
-        "PASS" if valid else "FAIL",
-        f"{count} ánh xạ, khoảng cách lớn nhất {maximum} km",
-        mapping_count=count,
-        maximum_distance_km=maximum,
-        allowed_distance_km=limit,
+        "archive.ward_mapping",
+        "PASS" if rows == expected and rows > 0 else "FAIL",
+        f"{rows} ánh xạ cho {wards} phường × {models} model (cần {expected})",
+        mapping_count=rows,
+        ward_count=wards,
+        model_count=models,
+        expected_count=expected,
     )
 
 
 def _check_gold(connection: Any) -> list[CheckResult]:
-    relation = "gold.fct_rainfall_forecast_summary"
+    """Fact mưa lõi: có tồn tại, có dòng, và grain không trùng.
+
+    CỐ Ý không kiểm freshness ở phase này: pipeline mới chỉ có lịch sử, nên
+    `valid_time_utc` mới nhất luôn lùi vài tuần một cách hợp lệ. Freshness quay
+    lại cùng nhánh forecast.
+    """
+    relation = "gold.fct_rain_hourly"
     if not _relation_exists(connection, relation):
-        return [_result("gold.forecast.exists", "FAIL", f"Không tìm thấy {relation}")]
-    age = _hours_old(_scalar(connection, f"SELECT MAX(as_of_utc) FROM {relation}"))
-    max_age = int(os.getenv("HEALTH_GOLD_MAX_AGE_HOURS", "24"))
-    duplicates = _scalar(
-        connection,
-        f"""
-        SELECT COUNT(*)
-        FROM (
-            SELECT forecast_snapshot_id, grid_cell_id
-            FROM {relation}
-            GROUP BY 1, 2
-            HAVING COUNT(*) > 1
-        )
-        """,
-    )
+        return [_result("gold.rain_hourly.exists", "FAIL", f"Không tìm thấy {relation}")]
+    rows, distinct_keys = connection.execute(
+        f"SELECT COUNT(*), COUNT(DISTINCT rain_hourly_key) FROM {relation}"
+    ).fetchone()
+    duplicates = rows - distinct_keys
     return [
         _result(
-            "gold.forecast.freshness",
-            "PASS" if age is not None and age <= max_age else "FAIL",
-            "Gold chưa có dữ liệu"
-            if age is None
-            else f"Gold mới nhất cách {age:.2f} giờ",
-            age_hours=age,
-            maximum_hours=max_age,
+            "gold.rain_hourly.rows",
+            "PASS" if rows > 0 else "FAIL",
+            f"{rows:,} dòng trong {relation}",
+            row_count=rows,
         ),
         _result(
-            "gold.forecast.grain",
+            "gold.rain_hourly.grain",
             "PASS" if duplicates == 0 else "FAIL",
-            f"{duplicates:,} khóa forecast/grid bị trùng",
+            f"{duplicates:,} khóa rain_hourly bị trùng",
             duplicate_keys=duplicates,
         ),
     ]
@@ -390,42 +393,37 @@ def collect_health(
                 checks.extend(
                     _check_weather_table(
                         connection,
-                        "bronze_store.tables.open_meteo_forecast",
+                        "catalog1.silver.stg_weather_forecast",
                         required=True,
                         freshness_hours=24,
                     )
                 )
                 if _relation_exists(
-                    connection, "bronze_store.tables.open_meteo_forecast"
+                    connection, "catalog1.silver.stg_weather_forecast"
                 ):
                     checks.append(_check_forecast_coverage(connection))
                 if require_gold:
                     checks.extend(_check_gold(connection))
             if scope in {"archive", "all"}:
+                # era5 và ecmwf_ifs dùng CHUNG một bảng staging, phân biệt bằng
+                # cột `weather_model`, nên một check thay cho hai. Độ phủ theo
+                # từng model vẫn được `archive.monthly_coverage` kiểm riêng.
                 checks.extend(
                     _check_weather_table(
                         connection,
-                        "bronze_store.tables.open_meteo_archive",
+                        "catalog1.silver.stg_weather_hourly",
                         required=True,
                         freshness_hours=None,
                     )
                 )
-                checks.extend(
-                    _check_weather_table(
-                        connection,
-                        "bronze_store.tables.open_meteo_ifs",
-                        required=True,
-                        freshness_hours=None,
-                    )
-                )
-                if _relation_exists(connection, "silver.archive_hourly"):
+                if _relation_exists(connection, "silver.weather_hourly"):
                     checks.append(_check_archive_coverage(connection))
                     checks.append(_check_archive_duplicates(connection))
                     checks.append(_check_mapping(connection))
                 elif require_gold:
                     checks.append(
                         _result(
-                            "archive.silver", "FAIL", "Thiếu silver.archive_hourly"
+                            "archive.silver", "FAIL", "Thiếu silver.weather_hourly"
                         )
                     )
         except Exception as error:  # noqa: BLE001

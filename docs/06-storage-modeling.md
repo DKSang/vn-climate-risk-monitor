@@ -1,5 +1,13 @@
 # Bước 6 — Lưu trữ: single source of truth
 
+> **Đã thay thế một phần (2026-09-03).** Kiến trúc chốt hiện tại ở
+> [plan lean medallion](superpowers/plans/2026-09-03-lean-medallion.md) và
+> [plan Silver Layer Flow](superpowers/plans/2026-09-03-silver-layer-flow.md):
+> MỘT catalog DuckLake (`catalog1`), Bronze chỉ còn là landing zone raw file,
+> bảng append-only của autoloader nay là `silver.stg_*`.
+> Phần mô tả `bronze_store` / hai catalog / các model gold cũ trong tài liệu
+> này KHÔNG còn đúng.
+
 **Hanoi Flood & Climate Risk Monitor** · 2026-08-31
 
 **Trạng thái:** đã triển khai 2026-08-31. Silver view.
@@ -34,7 +42,7 @@ Ngoài phạm vi: API/SMI/IDF, xác suất ngập, serving, Q3, Q9, SCD2 hành c
 
 ```text
 Landing     bronze/files/...                 JSON bất biến
-Bronze      bronze_store.tables.*            table, append, _ingested_at
+Bronze      catalog1.silver.stg_*            table, append, _ingested_at
 Silver      catalog1.silver.*               VIEW: type, dedup, canonicalize lat/lon
 Gold        catalog1.gold.*                 table — SSOT nghiệp vụ
 Control     ingestion.*                     Postgres: files + gold watermarks

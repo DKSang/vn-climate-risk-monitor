@@ -1,5 +1,13 @@
 # Thiết kế ingestion Open-Meteo
 
+> **Đã thay thế một phần (2026-09-03).** Kiến trúc chốt hiện tại ở
+> [plan lean medallion](superpowers/plans/2026-09-03-lean-medallion.md) và
+> [plan Silver Layer Flow](superpowers/plans/2026-09-03-silver-layer-flow.md):
+> MỘT catalog DuckLake (`catalog1`), Bronze chỉ còn là landing zone raw file,
+> bảng append-only của autoloader nay là `silver.stg_*`.
+> Phần mô tả `bronze_store` / hai catalog / các model gold cũ trong tài liệu
+> này KHÔNG còn đúng.
+
 > ## ⚠️ TÀI LIỆU CŨ — kiến trúc đã thay đổi 2026-08-21
 >
 > Mọi lệnh `collect-open-meteo-*`, `load-open-meteo-*`, `run-open-meteo-*`,
@@ -57,7 +65,7 @@ Collector
                          │
                          ▼
               Bronze DuckLake table
-              ├── catalog metadata → PostgreSQL ducklake_bronze
+              ├── catalog metadata → PostgreSQL ducklake
               └── Parquet          → MinIO bronze/tables
                          │
                          ▼
@@ -80,7 +88,7 @@ tables; catalog metadata nằm trong PostgreSQL và data files nằm trên MinIO
 | Analytical/table | DuckLake | snapshot/schema/table metadata và Parquet medallion |
 
 Schema `ingestion` là native PostgreSQL, tách khỏi các schema nội bộ
-`ducklake` và `ducklake_bronze`. Không tạo `ops` như một data layer thứ tư.
+`ducklake` và `ducklake`. Không tạo `ops` như một data layer thứ tư.
 Migration `003_move_ingestion_control_to_postgres.py` loại hai relation DuckLake
 `ops` cũ, nhưng từ chối chạy nếu chúng có dữ liệu.
 Migration `004_generalize_ingestion_control.py` đã chuyển control schema sang
@@ -323,7 +331,7 @@ Loader đã triển khai:
    `ForecastFileParameters`, rồi map response array với ordered `ward_keys`;
 4. validate `hourly.time` và độ dài mọi parallel array;
 5. tạo Arrow table bằng explicit schema;
-6. `MERGE` vào `bronze_store.tables.open_meteo_forecast_hourly`;
+6. `MERGE` vào `catalog1.silver.stg_weather_forecast`;
 7. cập nhật file thành `COMMITTED` cùng row metrics và parser version.
 
 Khóa idempotent:
