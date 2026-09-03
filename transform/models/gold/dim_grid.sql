@@ -10,14 +10,31 @@
     tags = ['gold', 'dim']
 ) }}
 
+WITH observed AS (
+    SELECT
+        grid_cell_id,
+        weather_model,
+        grid_latitude,
+        grid_longitude,
+        MIN(valid_time_utc) AS first_observed_utc,
+        MAX(valid_time_utc) AS last_observed_utc,
+        COUNT(*) AS observation_hours
+    FROM {{ ref('weather_hourly') }}
+    GROUP BY grid_cell_id, weather_model, grid_latitude, grid_longitude
+),
+
+-- Độ cao KHÔNG lấy từ bảng theo giờ: response của đợt fetch theo phường trả độ
+-- cao của ĐIỂM ĐƯỢC HỎI, nên cùng một ô có nhiều giá trị (đo được 9–41 m).
+-- Seed ánh xạ là nơi duy nhất quan hệ phường→ô được ghi tường minh, nên gộp ở
+-- đó rồi lấy trung vị làm đại diện cho ô.
+elevation AS (
+    SELECT grid_cell_id, MEDIAN(grid_elevation_m) AS elevation_m
+    FROM {{ ref('ward_grid') }}
+    GROUP BY grid_cell_id
+)
+
 SELECT
-    grid_cell_id,
-    weather_model,
-    grid_latitude,
-    grid_longitude,
-    MIN(elevation_m) AS elevation_m,
-    MIN(valid_time_utc) AS first_observed_utc,
-    MAX(valid_time_utc) AS last_observed_utc,
-    COUNT(*) AS observation_hours
-FROM {{ ref('weather_hourly') }}
-GROUP BY grid_cell_id, weather_model, grid_latitude, grid_longitude
+    observed.*,
+    elevation.elevation_m
+FROM observed
+LEFT JOIN elevation USING (grid_cell_id)

@@ -3,9 +3,23 @@ version: 2
 models:
   - name: weather_hourly
     description: >
-      Quan trắc theo giờ đã dedup và canonical hoá toạ độ. View — luôn nhất
-      quán với Bronze, không tốn dung lượng.
+      CURATED — một dòng hiện hành cho mỗi (ô lưới, giờ). Table incremental với
+      MERGE change-aware: chỉ ghi dòng có `_row_hash` khác, nên lần chạy không
+      có dữ liệu mới ghi đúng 0 dòng và `_updated_at` của phần còn lại đứng yên.
     columns:
+      - name: weather_hourly_key
+        description: "MD5(grid_cell_id | valid_time_utc) — merge key"
+        tests: [unique, not_null]
+      - name: _row_hash
+        description: >
+          MD5 các cột GIÁ TRỊ. Không gồm `_source_file`/`_ingested_at`: cùng giá
+          trị đến từ file khác không phải là dữ liệu đổi.
+        tests: [not_null]
+      - name: _updated_at
+        description: "Chỉ nhích khi `_row_hash` đổi. Gold watermark trên cột này."
+        tests: [not_null]
+      - name: is_active
+        tests: [not_null]
       - name: grid_cell_id
         description: "Sinh MỘT LẦN ở đây; mọi lớp sau chỉ dùng id"
         tests: [not_null]

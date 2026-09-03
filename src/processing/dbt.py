@@ -46,6 +46,11 @@ def build_vars(bounds: Bounds) -> dict[str, Any]:
             for source in bounds.sources
             if source.lower_bound is not None
         },
+        # Dấu thời gian cho `_updated_at` của các lớp mutable. Lấy start time của
+        # run, KHÔNG phải CURRENT_TIMESTAMP của DuckDB: cùng kỷ luật một-đồng-hồ
+        # đã áp cho `_ingested_at`, và start time luôn SỚM HƠN lúc ghi thật nên
+        # watermark downstream không bao giờ nhảy qua dòng vừa ghi.
+        "processing_run_started_at": to_sql_timestamp(bounds.run_started_at),
     }
 
 

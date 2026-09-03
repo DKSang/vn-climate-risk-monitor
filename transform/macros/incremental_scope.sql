@@ -3,9 +3,9 @@
     framework (`scripts/run_processing.py`).
 
     ── VÌ SAO CẦN MACRO ────────────────────────────────────────────────────────
-    `fct_rainfall_historical_hourly` từng viết tay `INTERVAL '71 hours'` ở BA
-    chỗ. Đó không phải trùng lặp thẩm mỹ: nếu ba chỗ lệch nhau thì rolling window
-    tính trên dữ liệu thiếu và ra số SAI mà mọi test not_null/unique vẫn PASS.
+    Model rolling window từng viết tay `INTERVAL '<n> hours'` ở BA chỗ. Đó không
+    phải trùng lặp thẩm mỹ: nếu ba chỗ lệch nhau thì cửa sổ tính trên dữ liệu
+    thiếu và ra số SAI mà mọi test not_null/unique vẫn PASS.
 
     ── VÌ SAO HAI MACRO, KHÔNG PHẢI MỘT ────────────────────────────────────────
     Input scope và output scope KHÔNG đối xứng.
@@ -24,7 +24,7 @@
     Nới output xuống MIN−71h sẽ ghi đè những row hoàn toàn không bị ảnh hưởng.
 
     ── VÌ SAO LOOKBACK KHAI BÁO Ở MODEL, KHÔNG Ở YAML ─────────────────────────
-    Một process (`+tag:historical`) build nhiều model có window khác nhau. Độ
+    Một process build nhiều model có window khác nhau. Độ
     rộng window là thuộc tính của SQL sinh ra nó, nên phải version cùng file đó.
     Framework chỉ cấp chặn dưới qua var `processing_bounds`.
 
@@ -36,6 +36,26 @@
 
 {% macro processing_lower_bound(source_ref) %}
     {{- var('processing_bounds', {}).get(source_ref) -}}
+{% endmacro %}
+
+
+{#
+    Bộ lọc incremental TỐI GIẢN: chỉ `change_column > lower_bound`.
+
+    Dùng cho hop không có cửa sổ trượt — ví dụ staging → curated, nơi mỗi dòng
+    đầu ra chỉ phụ thuộc chính dòng đầu vào của nó. Không cần nới scope theo
+    `dimension` như `incremental_input_scope`, và cũng không nên: nới scope ở đây
+    chỉ làm đọc thừa.
+
+    `prefix` cho phép nối vào một WHERE đã có ('AND') thay vì mở WHERE mới.
+#}
+{% macro incremental_changed_filter(
+    source_ref, change_column='_ingested_at', prefix='WHERE'
+) %}
+{%- set lower = var('processing_bounds', {}).get(source_ref) -%}
+{%- if lower and is_incremental() -%}
+{{ prefix }} {{ change_column }} > TIMESTAMPTZ '{{ lower }}'
+{%- endif -%}
 {% endmacro %}
 
 
@@ -101,5 +121,27 @@ WHERE {{ dimension }} >= (
         SELECT MAX({{ dimension }}) + INTERVAL '{{ expand_forward }}'
         FROM ({{ changed }}) AS changed
     )
+{%- endif -%}
+{% endmacro %}
+
+
+{#
+    Dấu thời gian cho `_updated_at` của lớp mutable.
+
+    Bình thường lấy `run_started_at` mà `scripts/run_processing.py` bơm xuống —
+    cùng đồng hồ Postgres với `_ingested_at`, và sớm hơn lúc ghi thật nên
+    watermark downstream không nhảy qua dòng vừa ghi.
+
+    Chạy dbt TAY (không qua framework) thì không có var đó và ta rơi về
+    CURRENT_TIMESTAMP của DuckDB. Chấp nhận được vì lần chạy tay KHÔNG advance
+    checkpoint, và `safety_lag` 15 phút hấp thụ lệch đồng hồ ở mức máy đơn.
+    Nhưng đó là đường phụ: pipeline production luôn đi qua `make transform`.
+#}
+{% macro processing_updated_at() %}
+{%- set run_started_at = var('processing_run_started_at', '') -%}
+{%- if run_started_at -%}
+TIMESTAMPTZ '{{ run_started_at }}'
+{%- else -%}
+CURRENT_TIMESTAMP
 {%- endif -%}
 {% endmacro %}

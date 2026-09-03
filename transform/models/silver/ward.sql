@@ -19,6 +19,10 @@ SELECT
     latitude AS ward_latitude,
     longitude AS ward_longitude,
     region,
-    climate_zone
+    climate_zone,
+    -- Có mặt trong seed = đang tồn tại. Soft delete cho phường đã giải thể xảy
+    -- ra ở `gold.dim_ward` (bảng mutable), không ở view này — view dựng lại từ
+    -- seed mỗi lần nên không giữ được cờ.
+    TRUE AS is_active
 FROM {{ ref('ward_coordinates_seed') }}
 WHERE province_code = '01'

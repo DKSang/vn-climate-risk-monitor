@@ -1,0 +1,16 @@
+process_key: rain_gold
+target: gold.fct_rain_hourly
+scope: production
+
+sources:
+  # Đọc lớp CURATED, không đọc staging. Watermark trên `_updated_at` — cột chỉ
+  # nhích khi giá trị thật sự đổi (so `_row_hash`), nên lần chạy không có dữ
+  # liệu mới không kéo theo bất kỳ dòng Gold nào.
+  - ref: weather_hourly
+    change_column: _updated_at
+
+checkpoint:
+  safety_lag: 15 minutes
+
+runner:
+  select: "tag:gold"

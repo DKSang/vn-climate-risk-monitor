@@ -131,14 +131,17 @@ dbt-test:
 freshness:
 	cd transform && uv run dbt source freshness --profiles-dir .
 
-# build = run + test, và tự dọn file cũ qua on-run-end
-# Chạy qua processing framework: nó chốt run_started_at TRƯỚC khi dbt đọc gì, và
-# chỉ ghi mốc đó vào checkpoint khi dbt exit 0.
-transform:
-	uv run python scripts/run_processing.py run rain_hourly
+# Chuỗi HAI process, mỗi process một checkpoint riêng:
+#   staging --(_ingested_at)--> silver curated --(_updated_at)--> gold
+# Tách ra để lỗi ở Gold không buộc Silver dedup lại 20M dòng từ đầu.
+# Mỗi process chốt run_started_at TRƯỚC khi dbt đọc gì, và chỉ ghi mốc đó vào
+# checkpoint khi dbt exit 0. Make dừng ngay nếu process đầu lỗi.
+transform: seed
+	uv run python scripts/run_processing.py run silver_weather
+	uv run python scripts/run_processing.py run rain_gold
 
 # Tiến độ + lịch sử run của một process.
-PROCESS ?= rain_hourly
+PROCESS ?= rain_gold
 processing-status:
 	uv run python scripts/run_processing.py status $(PROCESS)
 

@@ -31,6 +31,7 @@ WITH source AS (
         relation = ref('weather_hourly'),
         source_ref = 'weather_hourly',
         dimension = 'valid_time_utc',
+        change_column = '_updated_at',
         expand_backward = lookback,
         expand_forward = lookback,
         keys = ['grid_cell_id']
@@ -48,6 +49,7 @@ windowed AS (
         soil_moisture_7_to_28cm,
         _source_file,
         _ingested_at,
+        _updated_at,
         {{ rolling_rain_sums(windows, partition_by='grid_cell_id') }}
     FROM source
 ),
@@ -66,7 +68,8 @@ published AS (
         soil_moisture_7_to_28cm,
         {{ rolling_rain_columns(windows) }},
         _source_file,
-        _ingested_at
+        _ingested_at,
+        _updated_at
     FROM windowed
 )
 
@@ -80,5 +83,6 @@ FROM published
     relation = ref('weather_hourly'),
     source_ref = 'weather_hourly',
     dimension = 'valid_time_utc',
+    change_column = '_updated_at',
     expand_forward = lookback
 ) }}

@@ -60,6 +60,9 @@ models:
         tests: [not_null]
       - name: rain_date
         tests: [not_null]
+      - name: _updated_at
+        description: "Kế thừa từ silver.weather_hourly — nguồn watermark của Gold"
+        tests: [not_null]
       - name: hanoi_rain_scenario_band
         tests:
           - accepted_values:

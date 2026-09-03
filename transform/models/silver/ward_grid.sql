@@ -23,5 +23,6 @@ SELECT
     ) }} AS grid_cell_id,
     ROUND(grid_latitude, 6) AS grid_latitude,
     ROUND(grid_longitude, 6) AS grid_longitude,
-    elevation_m AS grid_elevation_m
+    elevation_m AS grid_elevation_m,
+    TRUE AS is_active
 FROM {{ ref('ward_grid_map_seed') }}
