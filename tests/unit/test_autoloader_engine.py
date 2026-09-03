@@ -424,3 +424,86 @@ def test_repository_drops_collector_run_lifecycle() -> None:
     assert not hasattr(PostgresIngestionRepository, "fail_run")
     assert not hasattr(PostgresIngestionRepository, "succeed_run")
     assert hasattr(PostgresIngestionRepository, "ensure_source_run")
+
+
+def test_parameters_from_yaml_reach_the_sql(tmp_path: Path) -> None:
+    """Nhiều nguồn cùng schema phải dùng CHUNG một file SQL.
+
+    era5 và ecmwf_ifs từng là hai file SQL lệch nhau đúng một dòng — dạng trùng
+    lặp chắc chắn sẽ trôi khỏi nhau khi thêm cột.
+    """
+    config = build_config(tmp_path, batch_size=10)
+    config = SourceConfig(
+        name=config.name,
+        dataset=config.dataset,
+        scope=config.scope,
+        discovery=config.discovery,
+        transform=config.transform,
+        loader=config.loader,
+        parameters={"weather_model": "era5"},
+        base_dir=tmp_path,
+    )
+    (tmp_path / "t.sql").write_text(
+        "SELECT '{{ weather_model }}' AS weather_model "
+        "FROM read_json_auto({{ files }})",
+        encoding="utf-8",
+    )
+    loader = AutoLoader(
+        config=config,
+        checkpoint=FakeCheckpoint(),
+        object_client=FakeObjectClient(["raw/a.json"]),
+        sql=FakeSql(),
+        bucket="bkt",
+        worker_id="w1",
+    )
+
+    loader.load()
+
+    insert = next(s for s in loader.sql.statements if s.startswith("INSERT"))
+    assert "'era5' AS weather_model" in insert
+    assert "{{" not in insert
+
+
+def test_parameter_cannot_shadow_an_engine_placeholder(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="trùng placeholder"):
+        SourceConfig(
+            name="src",
+            dataset="ds",
+            discovery=DiscoveryConfig(prefix="raw"),
+            transform=TransformConfig(sql_file="t.sql", target="t"),
+            parameters={"ingested_at": "now()"},
+        )
+
+
+def test_parameter_with_a_quote_is_rejected(tmp_path: Path) -> None:
+    """Giá trị chèn thẳng vào SQL, nên nháy đơn làm gãy câu lệnh ở runtime."""
+    with pytest.raises(ValueError, match="nháy đơn"):
+        SourceConfig(
+            name="src",
+            dataset="ds",
+            discovery=DiscoveryConfig(prefix="raw"),
+            transform=TransformConfig(sql_file="t.sql", target="t"),
+            parameters={"weather_model": "era5' OR '1"},
+        )
+
+
+def test_shipped_sources_render_without_leftover_placeholders() -> None:
+    """Mọi YAML trong sources/ phải cấp đủ parameter cho SQL của nó.
+
+    Placeholder thiếu chỉ nổ lúc chạy thật trên DuckDB, sau khi đã claim file.
+    """
+    import re
+
+    for path in sorted(Path("sources").glob("*.yml")):
+        config = SourceConfig.from_yaml(path)
+        rendered = config.sql
+        for key, value in {
+            "files": "[]",
+            "ingested_at": "NOW()",
+            **config.parameters,
+        }.items():
+            rendered = rendered.replace(f"{{{{ {key} }}}}", value)
+        code = "\n".join(
+            line for line in rendered.splitlines() if not line.lstrip().startswith("--")
+        )
+        assert not re.search(r"\{\{.*?\}\}", code), f"{path}: còn placeholder chưa thay"
