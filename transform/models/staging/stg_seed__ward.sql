@@ -1,5 +1,5 @@
 /*
-    SILVER — 126 phường/xã Hà Nội, lọc từ 3.321 đơn vị toàn quốc.
+    STAGING — 126 phường/xã Hà Nội, lọc từ seed 3.321 đơn vị toàn quốc.
 
     MỘT nguồn duy nhất cho thực thể này: seed. Bản cũ còn đọc song song
     `pg_source.public.wards` qua dbt — hai đường cho cùng một danh mục, và khi

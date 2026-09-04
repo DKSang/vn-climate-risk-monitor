@@ -1,5 +1,5 @@
 /*
-    GOLD — mưa theo ô lưới × giờ, kèm cửa sổ trượt và dải kịch bản.
+    MART — mưa theo ô lưới × giờ, kèm cửa sổ trượt và dải kịch bản.
 
     Bảng lớn nhất (~20M dòng) và là bảng DUY NHẤT incremental: hai fact còn lại
     dựng từ đây, nhỏ, nên full refresh rẻ hơn là nuôi thêm hai checkpoint.
@@ -12,7 +12,7 @@
 {{ config(
     materialized = 'incremental',
     unique_key = 'rain_hourly_key',
-    tags = ['gold', 'fact', 'rain']
+    tags = ['fact', 'rain']
 ) }}
 
 {#
@@ -26,10 +26,10 @@
 
 WITH source AS (
     SELECT *
-    FROM {{ ref('weather_hourly') }}
+    FROM {{ ref('int_weather_hourly') }}
     {{ incremental_input_scope(
-        relation = ref('weather_hourly'),
-        source_ref = 'weather_hourly',
+        relation = ref('int_weather_hourly'),
+        source_ref = 'int_weather_hourly',
         dimension = 'valid_time_utc',
         change_column = '_updated_at',
         expand_backward = lookback,
@@ -80,8 +80,8 @@ SELECT
     {{ vn_rain_band_24h('rain_24h_mm') }} AS vn_rain_band_24h
 FROM published
 {{ incremental_output_scope(
-    relation = ref('weather_hourly'),
-    source_ref = 'weather_hourly',
+    relation = ref('int_weather_hourly'),
+    source_ref = 'int_weather_hourly',
     dimension = 'valid_time_utc',
     change_column = '_updated_at',
     expand_forward = lookback

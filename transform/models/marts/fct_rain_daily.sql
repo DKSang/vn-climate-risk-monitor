@@ -1,5 +1,5 @@
 /*
-    GOLD — mưa theo ô lưới × ngày.
+    MART — mưa theo ô lưới × ngày.
 
     Full refresh: dựng từ `fct_rain_hourly` đã tính sẵn cửa sổ trượt, ~9,7k
     ngày × 60 ô nên rebuild rẻ hơn nhiều so với nuôi thêm một checkpoint.
@@ -11,7 +11,7 @@
 
 {{ config(
     materialized = 'table',
-    tags = ['gold', 'fact', 'rain']
+    tags = ['fact', 'rain']
 ) }}
 
 {% set windows = rain_windows() %}

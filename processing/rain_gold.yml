@@ -3,17 +3,22 @@ target: gold.fct_rain_hourly
 scope: production
 
 sources:
-  # Đọc lớp CURATED, không đọc staging. Watermark trên `_updated_at` — cột chỉ
-  # nhích khi giá trị thật sự đổi (so `_row_hash`), nên lần chạy không có dữ
-  # liệu mới không kéo theo bất kỳ dòng Gold nào.
-  - ref: weather_hourly
+  # Đọc lớp CURATED (intermediate), không đọc staging. Watermark trên
+  # `_updated_at` — cột chỉ nhích khi giá trị thật sự đổi (so `_row_hash`), nên
+  # lần chạy không có dữ liệu mới không kéo theo bất kỳ dòng Gold nào.
+  # Đổi ref từ `weather_hourly` (2026-09-03, tái cấu trúc 3 lớp) — checkpoint
+  # cũ theo ref cũ thành dead row, lần chạy kế full refresh một lần.
+  - ref: int_weather_hourly
     change_column: _updated_at
 
 checkpoint:
   safety_lag: 15 minutes
 
 runner:
-  select: "tag:gold"
+  # Chỉ marts. KHÔNG dùng `+tag:marts` — kéo int_weather_hourly vào đây sẽ
+  # chạy lại dedup với bounds của process SAI (source_ref stg_weather_hourly
+  # không có trong bounds của rain_gold) và phá ranh giới hai process.
+  select: "tag:marts"
 
 # Danh mục phường CÓ THỂ bị xoá ở nguồn (sáp nhập/giải thể theo nghị quyết), và
 # seed liệt kê được toàn bộ key nên anti-join chạy được. Weather thì không:

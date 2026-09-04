@@ -71,7 +71,7 @@ models:
       - name: rain_date
         tests: [not_null]
       - name: _updated_at
-        description: "Kế thừa từ silver.weather_hourly — nguồn watermark của Gold"
+        description: "Kế thừa từ silver.int_weather_hourly — watermark của fact này"
         tests: [not_null]
       - name: hanoi_rain_scenario_band
         tests:

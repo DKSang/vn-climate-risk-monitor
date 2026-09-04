@@ -1,0 +1,55 @@
+version: 2
+
+models:
+  - name: stg_open_meteo__weather_hourly
+    description: >
+      View mỏng trên staging vật lý `silver.stg_weather_hourly` (do autoloader
+      ghi ngoài đồ thị dbt). Chỉ chọn cột và loại dòng không có grain; KHÔNG
+      dedup — đó là việc của `int_weather_hourly`.
+    columns:
+      - name: weather_model
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['era5', 'ecmwf_ifs']
+      - name: valid_time_utc
+        tests: [not_null]
+      - name: grid_latitude
+        tests: [not_null]
+      - name: grid_longitude
+        tests: [not_null]
+      - name: _source_file
+        tests: [not_null]
+      - name: _ingested_at
+        tests: [not_null]
+
+  - name: stg_seed__ward
+    description: "126 phường/xã Hà Nội, lọc từ seed 3.321 đơn vị toàn quốc"
+    columns:
+      - name: ward_code
+        tests: [unique, not_null]
+      - name: ward_name
+        tests: [not_null]
+      - name: ward_latitude
+        tests: [not_null]
+      - name: ward_longitude
+        tests: [not_null]
+
+  - name: stg_seed__ward_grid
+    description: >
+      Phường × model → ô lưới, lấy từ phép snap của Open-Meteo chứ không phải
+      nearest-neighbour tự tính.
+    columns:
+      - name: ward_code
+        tests:
+          - not_null
+          - relationships:
+              to: ref('stg_seed__ward')
+              field: ward_code
+      - name: weather_model
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['era5', 'ecmwf_ifs']
+      - name: grid_cell_id
+        tests: [not_null]

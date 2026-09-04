@@ -73,14 +73,34 @@ models:
     # Mọi model đều nằm trong DuckLake catalog (Postgres metadata + MinIO Parquet)
     +database: catalog1
 
-    # Silver: validate, chuẩn hóa, deduplicate và conform. View -> không tốn dung lượng.
-    silver:
+    # Ba lớp chuẩn: staging -> intermediate -> marts. THƯ MỤC là cấu trúc dbt;
+    # TÊN VẬT LÝ (schema DuckLake) vẫn theo medallion: staging + intermediate
+    # vào `silver`, marts vào `gold`. SILVER_CLEAN của reference architecture
+    # (bảng MERGE) là `int_weather_hourly`, không phải model nào trong staging/.
+    #
+    # Vì sao staging là view MỎNG (rename/cast/WHERE, không window/join):
+    # DuckDB không đẩy filter xuống dưới window function qua view (đo 9,7s vs
+    # 0,0s). Dedup + `_row_hash` nằm ở intermediate TABLE incremental — chỗ duy
+    # nhất nó rẻ.
+
+    # 1 model / 1 nguồn. Rename + cast. Mặc định view -> không tốn dung lượng
+    # (bản vật lý đã nằm ở catalog, autoloader ghi ngoài dbt cho weather).
+    staging:
       +schema: silver
       +materialized: view
-      +tags: ['silver']
+      +tags: ['staging']
 
-    # Gold: nghiệp vụ (join, lọc phạm vi, conditional logic)
-    gold:
+    # Business logic trung gian: dedup, conform, change-aware MERGE.
+    # Mặc định view; `int_weather_hourly` override = incremental TABLE vì đó
+    # là bảng MERGE, đẩy lên view sẽ tái tạo bug 49s.
+    intermediate:
+      +schema: silver
+      +materialized: view
+      +tags: ['intermediate']
+
+    # Star schema. Mặc định table; fact/dim mutable ghi `incremental` trong
+    # file để giữ cờ soft delete và `_updated_at` của dòng không đổi.
+    marts:
       +schema: gold
       +materialized: table
-      +tags: ['gold']
+      +tags: ['marts']

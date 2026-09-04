@@ -212,7 +212,7 @@ def _check_archive_coverage(connection: Any) -> CheckResult:
                 grid_longitude,
                 DATE_TRUNC('month', valid_time_utc) AS month_start,
                 COUNT(DISTINCT valid_time_utc) AS observed_hours
-            FROM silver.weather_hourly
+            FROM silver.int_weather_hourly
             WHERE valid_time_utc < DATE_TRUNC('month', CURRENT_TIMESTAMP)
             GROUP BY 1, 2, 3, 4
         )
@@ -235,7 +235,7 @@ def _check_archive_duplicates(connection: Any) -> CheckResult:
     raw_count, unique_count = connection.execute(
         """
         SELECT COUNT(*), COUNT(DISTINCT (grid_cell_id, valid_time_utc))
-        FROM silver.weather_hourly
+        FROM silver.int_weather_hourly
         """
     ).fetchone()
     duplicates = raw_count - unique_count
@@ -416,14 +416,14 @@ def collect_health(
                         freshness_hours=None,
                     )
                 )
-                if _relation_exists(connection, "silver.weather_hourly"):
+                if _relation_exists(connection, "silver.int_weather_hourly"):
                     checks.append(_check_archive_coverage(connection))
                     checks.append(_check_archive_duplicates(connection))
                     checks.append(_check_mapping(connection))
                 elif require_gold:
                     checks.append(
                         _result(
-                            "archive.silver", "FAIL", "Thiếu silver.weather_hourly"
+                            "archive.silver", "FAIL", "Thiếu silver.int_weather_hourly"
                         )
                     )
         except Exception as error:  # noqa: BLE001

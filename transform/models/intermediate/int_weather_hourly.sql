@@ -1,5 +1,6 @@
 /*
-    SILVER CURATED — một dòng hiện hành cho mỗi (ô lưới, giờ).
+    INTERMEDIATE — một dòng hiện hành cho mỗi (ô lưới, giờ).
+    (Lớp SILVER_CLEAN trong Silver Layer Flow: dedup + upsert change-aware.)
 
     Ba việc, đúng ba việc:
 
@@ -36,7 +37,7 @@
 {{ config(
     materialized = 'incremental',
     unique_key = 'weather_hourly_key',
-    tags = ['silver']
+    tags = ['intermediate']
 ) }}
 
 {#
@@ -58,6 +59,10 @@
     'soil_moisture_7_to_28cm',
 ] %}
 
+{#
+    `valid_time_utc IS NOT NULL` được bảo đảm ở staging view
+    (`stg_open_meteo__weather_hourly`); không lặp lại ở đây.
+#}
 WITH staged AS (
     SELECT
         weather_model,
@@ -71,12 +76,11 @@ WITH staged AS (
         soil_moisture_7_to_28cm,
         _source_file,
         _ingested_at
-    FROM {{ source('silver_staging', 'stg_weather_hourly') }}
-    WHERE valid_time_utc IS NOT NULL
+    FROM {{ ref('stg_open_meteo__weather_hourly') }}
     {{ incremental_changed_filter(
         source_ref = 'stg_weather_hourly',
         change_column = '_ingested_at',
-        prefix = 'AND'
+        prefix = 'WHERE'
     ) }}
 ),
 
@@ -127,7 +131,7 @@ incoming AS (
 SELECT
     incoming.*,
     -- Weather không bao giờ bị xoá ở nguồn (Open-Meteo là REST, không liệt kê
-    -- được key để anti-join). Cột có mặt để mọi bảng curated cùng một hình dạng,
+    -- được key để anti-join). Cột có mặt để mọi bảng clean cùng một hình dạng,
     -- consumer viết `WHERE is_active` mà không phải nhớ bảng nào hỗ trợ.
     TRUE AS is_active,
     {{ processing_updated_at() }} AS _updated_at

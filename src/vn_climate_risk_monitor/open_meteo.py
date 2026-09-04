@@ -95,10 +95,10 @@ class Location:
 
 def load_locations(connection: duckdb.DuckDBPyConnection) -> tuple[Location, ...]:
     rows = connection.execute(
-        "SELECT ward_code, latitude, longitude FROM gold.dim_hanoi_ward ORDER BY ward_key"
+        "SELECT ward_code, ward_latitude, ward_longitude FROM gold.dim_ward ORDER BY ward_code"
     ).fetchall()
     if not rows:
-        raise RuntimeError("gold.dim_hanoi_ward rỗng — chạy `make transform` trước")
+        raise RuntimeError("gold.dim_ward rỗng — chạy `make transform` trước")
     return tuple(Location(str(c), float(lat), float(lon)) for c, lat, lon in rows)
 
 

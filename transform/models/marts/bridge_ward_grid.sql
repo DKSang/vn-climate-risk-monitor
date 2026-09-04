@@ -1,5 +1,5 @@
 /*
-    GOLD — cầu nối phường ↔ ô lưới, theo từng model.
+    MART — cầu nối phường ↔ ô lưới, theo từng model.
 
     252 dòng. Nhỏ đến mức mọi câu hỏi theo GIỜ ở cấp phường chỉ cần join bảng
     này với `fct_rain_hourly` lúc query — không cần một fact phường×giờ nhân bản
@@ -17,7 +17,7 @@
 {{ config(
     materialized = 'incremental',
     unique_key = 'ward_grid_key',
-    tags = ['gold', 'bridge']
+    tags = ['bridge']
 ) }}
 
 SELECT
@@ -31,7 +31,7 @@ SELECT
     TRUE AS is_active,
     CAST(NULL AS TIMESTAMPTZ) AS _deactivated_at,
     {{ processing_updated_at() }} AS _updated_at
-FROM {{ ref('ward_grid') }} AS map
+FROM {{ ref('stg_seed__ward_grid') }} AS map
 -- INNER JOIN: một dòng ánh xạ trỏ tới ô không tồn tại trong dữ liệu là lỗi
 -- ánh xạ, và test relationships sẽ chỉ ra ngay thay vì để nó lặng lẽ sinh
 -- fact phường rỗng.

@@ -14,18 +14,19 @@
 
 ```text
 Sources
-  ├── PostgreSQL administrative reference
-  ├── versioned CSV/GeoJSON reference
-  └── Open-Meteo
+  ├── versioned CSV reference (seeds)
+  └── Open-Meteo REST
             │
             ▼
-Fetch (Python) + autoloader: MinIO source objects + PostgreSQL checkpoint
+Fetch (Python): MinIO source landing zone (`bronze/files/...`)
             │
             ▼
-DuckLake
-  ├── Bronze: source-faithful, append/replayable
-  ├── Silver: validated and conformed
-  └── Gold: business-ready dimensions, facts and aggregates
+Autoloader: file ledger (`ingestion`) + INSERT staging (`catalog1.silver.stg_*`)
+            │
+            ▼
+DuckLake (catalog1)
+  ├── Silver: staging (`stg_*`) + intermediate curated (`int_weather_hourly`, change-aware MERGE)
+  └── Gold: marts (`dim_*`, `bridge_*`, `fct_*`)
             │
             ▼
 dbt quality gate → serving
@@ -58,7 +59,7 @@ thương mại phải review lại giấy phép và deployment profile.
 |---|---|---|
 | Bronze files | Response nguồn nguyên bản, immutable; checksum ở PostgreSQL | `bronze/files/open_meteo/...` |
 | Silver staging | Parse cấu trúc, giữ mọi record/vintage, chưa validate | `silver.stg_weather_forecast` |
-| Silver curated | Type, validate, dedup, late data, mapping và join | `silver.weather_hourly` |
+| Silver curated | Type, validate, dedup, late data, mapping và join | `silver.int_weather_hourly` |
 | Gold | Dimensional model, KPI và aggregate nghiệp vụ | `gold.fct_rain_hourly` |
 
 Bronze có thể explode array nguồn thành grain nguyên tử vì payload nguyên bản đã
@@ -67,25 +68,31 @@ Bronze.
 
 ## Naming
 
-Schema đã thể hiện layer, do đó không dùng hậu tố `_raw` hoặc `_cleaned`:
+Schema đã thể hiện layer, do đó không dùng hậu tố `_raw` hoặc `_cleaned`.
+Cấu trúc dbt theo chuẩn 3 lớp (`staging / intermediate / marts`); tên vật lý
+DuckLake vẫn theo medallion:
 
 ```text
-silver.stg_weather_hourly      staging append-only (autoloader ghi)
+silver.stg_weather_hourly      staging append-only (autoloader ghi, NGOÀI dbt)
 silver.stg_weather_forecast
 
-silver.weather_hourly          curated, đã dedup
-silver.ward
-silver.ward_grid
+silver.stg_open_meteo__weather_hourly   staging dbt: view mỏng trên source
+silver.stg_seed__ward                   staging dbt: view mỏng trên seed
+silver.stg_seed__ward_grid
+
+silver.int_weather_hourly      curated: dedup + MERGE change-aware (incremental)
 
 gold.dim_grid
 gold.dim_ward
 gold.bridge_ward_grid
 gold.fct_rain_hourly
+gold.fct_rain_daily
+gold.fct_ward_rain_daily
 ```
 
-Tiền tố `stg_` đánh dấu lớp staging append-only; tên không tiền tố là bảng
-curated mà consumer nên dùng. Gold dùng `dim_`/`fct_`/`bridge_` theo dimensional
-modeling.
+Tiền tố `stg_` đánh dấu lớp staging append-only (vật lý) hoặc view mỏng
+(dbt); `int_` là lớp trung gian mang business logic (dedup, conform); Gold
+dùng `dim_`/`fct_`/`bridge_` theo dimensional modeling.
 
 ## Incremental ingestion
 
@@ -136,11 +143,11 @@ month × location batch là file checkpoint. Bronze table partition vật lý th
 
 ## Materialization
 
-| Layer | Mặc định hiện tại | Lý do |
+| Lớp dbt | Mặc định hiện tại | Lý do |
 |---|---|---|
-| Bronze | DuckLake table | Persist source-faithful records và lineage |
-| Silver | View | Transform địa lý hiện nhẹ và không cần copy dữ liệu |
-| Gold | DuckLake table | Stable serving contract và snapshot |
+| `staging` | DuckLake **view** | Không tốn dung lượng — source vật lý đã nằm ở DuckLake, staging chỉ `SELECT *` mỏng |
+| `intermediate` | View (mặc định); curated là **incremental table** | MERGE change-aware, watermark `_updated_at`; đặt lên view sẽ tái tạo bug 49s |
+| `marts` | DuckLake **table** | Stable serving contract; dim/bridge `incremental` giữ cờ soft delete |
 
 Custom dbt `table` materialization dùng `CREATE OR REPLACE TABLE` trực tiếp vào
 tên đích và giữ đầy đủ hooks/commit. Điều này tránh file DuckLake bị ghi vào
@@ -159,9 +166,9 @@ prefix `__dbt_tmp` rồi chỉ rename metadata.
 Đã có:
 
 - MinIO + Postgres + DuckLake + DuckDB/dbt;
-- ba schema medallion;
-- native PostgreSQL ingestion control plane;
-- geography Bronze/Silver/Gold;
+- một catalog DuckLake (`catalog1`) với hai schema `silver` và `gold`, Bronze là landing zone raw file trên MinIO (`bronze/files/...`);
+- native PostgreSQL control plane: schema `ingestion` (file ledger) và `processing` (state / checkpoints);
+- geography seed tĩnh (`ward_coordinates_seed`, `ward_grid_map_seed`) + dbt build `dim_ward` / `bridge_ward_grid`;
 - fetch Open-Meteo: missing rows + urllib GET/PUT JSON bất biến trên MinIO;
 - autoloader: directory listing, discovery run ổn định, claim/lease, SQL transform;
 - forecast hourly production 126 phường/xã;

@@ -9,7 +9,7 @@ sources:
     description: >
       Bảng staging append-only do autoloader nạp từ landing zone. Giữ MỌI phiên
       bản đã fetch của cùng một grain — đó là change log, không phải rác.
-      Dedup xảy ra ở lớp curated (`silver.weather_hourly`).
+      Dedup xảy ra ở lớp curated (`silver.int_weather_hourly`).
     tables:
       - name: stg_weather_hourly
         description: >

@@ -1,5 +1,14 @@
 # Phương pháp KPI mưa lớn và áp lực ngập đô thị
 
+> **Đã thay thế một phần (2026-09-03).** Kiến trúc chốt hiện tại ở
+> [plan lean medallion](superpowers/plans/2026-09-03-lean-medallion.md) và
+> [plan Silver Layer Flow](superpowers/plans/2026-09-03-silver-layer-flow.md):
+> MỘT catalog DuckLake (`catalog1`), Bronze chỉ còn là landing zone raw file,
+> bảng append-only của autoloader nay là `silver.stg_*`.
+> Cấu trúc dbt chuẩn hoá 3 lớp: `staging/` -> `intermediate/` -> `marts/`.
+> Fact/dim gọn lại thành `dim_grid`, `dim_ward`, `bridge_ward_grid`, `fct_rain_hourly`,
+> `fct_rain_daily`, `fct_ward_rain_daily`.
+
 **Hanoi Flood & Climate Risk Monitor** · MVP v1.0 · 2026-08-22
 
 **Trạng thái:** Gold forecast và Gold lịch sử đã được triển khai và kiểm thử
@@ -291,8 +300,8 @@ vn_rain_band_24h
 vn_rain_threshold_exceeded
 ```
 
-Đã triển khai trên `fct_rainfall_forecast_hourly` và
-`fct_rainfall_historical_hourly`. Không suy ra `official_disaster_risk_level`
+Đã triển khai trên `fct_rain_hourly` (kế thừa từ `fct_rainfall_forecast_hourly` và
+`fct_rainfall_historical_hourly` cũ). Không suy ra `official_disaster_risk_level`
 từ một ô lưới hoặc centroid phường.
 Cấp độ pháp lý chỉ được bổ sung khi toàn bộ điều kiện của văn bản được mô hình
 hóa và kiểm chứng.

@@ -1,5 +1,5 @@
 /*
-    GOLD — 126 phường/xã Hà Nội.
+    MART — 126 phường/xã Hà Nội.
 
     KHÔNG mang `grid_cell_id`: một phường ánh xạ sang ô KHÁC NHAU tuỳ model
     (era5 12 ô, ecmwf_ifs 48 ô). Quan hệ đó là many-to-many theo model nên nó
@@ -15,7 +15,7 @@
 {{ config(
     materialized = 'incremental',
     unique_key = 'ward_code',
-    tags = ['gold', 'dim']
+    tags = ['dim']
 ) }}
 
 SELECT
@@ -32,4 +32,4 @@ SELECT
     TRUE AS is_active,
     CAST(NULL AS TIMESTAMPTZ) AS _deactivated_at,
     {{ processing_updated_at() }} AS _updated_at
-FROM {{ ref('ward') }}
+FROM {{ ref('stg_seed__ward') }}

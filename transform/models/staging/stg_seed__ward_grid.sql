@@ -1,5 +1,5 @@
 /*
-    SILVER — phường × model thời tiết → ô lưới.
+    STAGING — phường × model thời tiết → ô lưới.
 
     KHÔNG tính nearest-neighbour. Ánh xạ này lấy từ CHÍNH phép snap của
     Open-Meteo (`make map-grid` ghi lại toạ độ ô mà API trả về cho từng phường);

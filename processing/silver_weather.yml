@@ -1,5 +1,5 @@
 process_key: silver_weather
-target: silver.weather_hourly
+target: silver.int_weather_hourly
 scope: production
 
 sources:
@@ -16,4 +16,7 @@ checkpoint:
   safety_lag: 15 minutes
 
 runner:
-  select: "tag:silver"
+  # staging (view mỏng) + intermediate (bảng MERGE). KHÔNG dùng `+tag:...`:
+  # kéo cả seed vào mỗi lần chạy là thừa — seed do `make bootstrap-geography`
+  # lo, và hai process tách nhau để lỗi ở Gold không buộc Silver dedup lại.
+  select: "tag:staging tag:intermediate"

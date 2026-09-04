@@ -14,22 +14,25 @@
 
 ```text
 DuckDB/dbt
-   ├── catalog1 metadata      → PostgreSQL schema ducklake
-   ├── ingestion control     → PostgreSQL schema ingestion
+   ├── catalog1 metadata     → PostgreSQL schema ducklake
+   ├── ingestion control     → PostgreSQL schema ingestion (file ledger)
+   ├── processing control    → PostgreSQL schema processing (watermarks/audit)
    └── Files + Parquet       → s3://vn-climate trên MinIO
 ```
 
-Bucket chỉ có ba data prefix:
+Bucket có ba data prefix:
 
 ```text
-bronze/
-silver/
-gold/
+bronze/files/   # response object nguyên bản do fetch quản lý
+silver/         # Parquet cho staging stg_* và intermediate int_*
+gold/           # Parquet cho marts
 ```
 
-Bronze chỉ có hai prefix con: `bronze/files/` chứa response object nguyên bản do
-fetch quản lý; `bronze/tables/` chứa Parquet do DuckLake quản lý. Native
-PostgreSQL schema `ingestion` lưu control state và tách khỏi DuckLake catalog.
+Bronze chỉ có prefix `bronze/files/` chứa response object nguyên bản do
+fetch quản lý (không còn `bronze/tables/` — autoloader ghi thẳng vào
+`catalog1.silver.stg_*`). PostgreSQL lưu DuckLake catalog metadata trong schema
+`ducklake`, đồng thời lưu control plane trong schema `ingestion` (file ledger) và
+`processing` (processing state).
 
 ## Khởi động
 
@@ -39,8 +42,8 @@ make bootstrap
 make quality
 ```
 
-Kiểm tra sau bootstrap: `make quality` (Provero quét Bronze qua catalog DuckLake,
-exit 1 khi có check fail) và `make transform` (dbt build Silver/Gold kèm test).
+Kiểm tra sau bootstrap: `make quality` (Provero quét silver staging qua catalog DuckLake,
+exit 1 khi có check fail) và `make transform` (dbt build qua processing framework kèm test).
 Script POC `scripts/verify_lakehouse.py` đã xoá — mọi check của nó giờ có bản
 chạy liên tục: bootstrap step 4 (schema), dbt build + `assert_gold_is_readable`
 (đọc Parquet thật, chống bảng ma), Provero (row_count/freshness).
@@ -48,24 +51,23 @@ chạy liên tục: bootstrap step 4 (schema), dbt build + `assert_gold_is_reada
 `make bootstrap` thực hiện idempotently:
 
 1. Tạo bucket MinIO nếu chưa có.
-2. Attach catalog chính và catalog Bronze, cùng backed by PostgreSQL.
-3. Tạo `catalog1.silver`, `catalog1.silver`, `catalog1.gold`.
-4. Tạo `ingestion.ingestion_runs` và `ingestion.ingestion_files` trực tiếp trong PostgreSQL.
+2. Cài/load DuckLake extension trong DuckDB và attach catalog `catalog1` backed by PostgreSQL (`ducklake`).
+3. Tạo hai schema `catalog1.silver` và `catalog1.gold`.
+4. Tạo control plane tables trong PostgreSQL (schema `ingestion` và `processing`).
 
 ## Storage ownership
 
 | Prefix/schema | Owner | Chính sách |
 |---|---|---|
 | `bronze/files` | fetch | immutable, append-only, không DuckLake cleanup |
-| `bronze/tables/<table>` | `catalog1.silver` | snapshot/maintenance qua catalog |
-| `silver/<table>` | DuckLake | validated/conformed |
-| `gold/<table>` | DuckLake | business-ready |
-| `ingestion.*` | ingestion runtime | checkpoint và audit |
+| `silver/<table>` | DuckLake | staging append-only (`stg_*`) + intermediate curated (`int_*`) |
+| `gold/<table>` | DuckLake | marts business-ready (`dim_*`, `bridge_*`, `fct_*`) |
+| `ingestion.*` | ingestion runtime | checkpoint file và discovery |
+| `processing.*` | processing runtime | processing checkpoint và audit runs |
 
 Phase 5 đã tạo và vận hành `catalog1.silver.stg_weather_forecast` cho
-126 phường/xã; catalog của bảng
-nằm trong PostgreSQL `ducklake`, còn Parquet nằm đúng prefix
-`bronze/tables/open_meteo_forecast_hourly/`.
+126 phường/xã; catalog của bảng nằm trong PostgreSQL schema `ducklake`,
+còn Parquet nằm đúng prefix `silver/stg_weather_forecast/`.
 
 Không dùng prefix `raw/` hoặc `landing/`.
 
@@ -78,4 +80,4 @@ snapshot tham chiếu. Lệnh này không quản lý object trong `bronze/files`
 make clean-lake
 ```
 
-`clean-lake` xóa lịch sử snapshot của cả hai DuckLake catalog; không xóa Bronze files.
+`clean-lake` xóa lịch sử snapshot của DuckLake catalog `catalog1`; không xóa Bronze files.

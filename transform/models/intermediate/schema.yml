@@ -1,7 +1,7 @@
 version: 2
 
 models:
-  - name: weather_hourly
+  - name: int_weather_hourly
     description: >
       CURATED — một dòng hiện hành cho mỗi (ô lưới, giờ). Table incremental với
       MERGE change-aware: chỉ ghi dòng có `_row_hash` khác, nên lần chạy không
@@ -16,7 +16,7 @@ models:
           trị đến từ file khác không phải là dữ liệu đổi.
         tests: [not_null]
       - name: _updated_at
-        description: "Chỉ nhích khi `_row_hash` đổi. Gold watermark trên cột này."
+        description: "Chỉ nhích khi `_row_hash` đổi. Watermark của Gold trên cột này."
         tests: [not_null]
       - name: is_active
         tests: [not_null]
@@ -29,35 +29,4 @@ models:
           - accepted_values:
               values: ['era5', 'ecmwf_ifs']
       - name: valid_time_utc
-        tests: [not_null]
-
-  - name: ward
-    description: "126 phường/xã Hà Nội, lọc từ seed 3.321 đơn vị toàn quốc"
-    columns:
-      - name: ward_code
-        tests: [unique, not_null]
-      - name: ward_name
-        tests: [not_null]
-      - name: ward_latitude
-        tests: [not_null]
-      - name: ward_longitude
-        tests: [not_null]
-
-  - name: ward_grid
-    description: >
-      Phường × model → ô lưới, lấy từ phép snap của Open-Meteo chứ không phải
-      nearest-neighbour tự tính.
-    columns:
-      - name: ward_code
-        tests:
-          - not_null
-          - relationships:
-              to: ref('ward')
-              field: ward_code
-      - name: weather_model
-        tests:
-          - not_null
-          - accepted_values:
-              values: ['era5', 'ecmwf_ifs']
-      - name: grid_cell_id
         tests: [not_null]
