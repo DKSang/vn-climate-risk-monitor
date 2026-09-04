@@ -1,5 +1,5 @@
 /*
-    GOLD — ô lưới thời tiết. Nơi DUY NHẤT giữ lat/lon của ô.
+    MART — ô lưới thời tiết. Nơi DUY NHẤT giữ lat/lon của ô.
 
     Fact chỉ mang `grid_cell_id`. Lặp lat/lon vào fact là mở đường cho hai bảng
     round khác nhau rồi không join được với nhau.
@@ -7,7 +7,7 @@
 
 {{ config(
     materialized = 'table',
-    tags = ['gold', 'dim']
+    tags = ['dim']
 ) }}
 
 WITH observed AS (
@@ -19,7 +19,7 @@ WITH observed AS (
         MIN(valid_time_utc) AS first_observed_utc,
         MAX(valid_time_utc) AS last_observed_utc,
         COUNT(*) AS observation_hours
-    FROM {{ ref('weather_hourly') }}
+    FROM {{ ref('int_weather_hourly') }}
     GROUP BY grid_cell_id, weather_model, grid_latitude, grid_longitude
 ),
 
@@ -29,7 +29,7 @@ WITH observed AS (
 -- đó rồi lấy trung vị làm đại diện cho ô.
 elevation AS (
     SELECT grid_cell_id, MEDIAN(grid_elevation_m) AS elevation_m
-    FROM {{ ref('ward_grid') }}
+    FROM {{ ref('stg_seed__ward_grid') }}
     GROUP BY grid_cell_id
 )
 

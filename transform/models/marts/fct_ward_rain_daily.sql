@@ -1,5 +1,5 @@
 /*
-    GOLD — mưa theo phường × ngày. Chiếu `fct_rain_daily` qua bridge.
+    MART — mưa theo phường × ngày. Chiếu `fct_rain_daily` qua bridge.
 
     Vì sao chỉ ở grain NGÀY: 126 phường chỉ có 12 (era5) hoặc 48 (ecmwf_ifs) giá
     trị khác nhau ở mỗi giờ. Một fact phường × giờ sẽ là ~26 triệu dòng mà phần
@@ -14,7 +14,7 @@
 
 {{ config(
     materialized = 'table',
-    tags = ['gold', 'fact', 'rain', 'ward']
+    tags = ['fact', 'rain', 'ward']
 ) }}
 
 {% set windows = rain_windows() %}
@@ -28,7 +28,6 @@ SELECT
     bridge.weather_model,
     bridge.grid_cell_id,
     bridge.ward_count_on_grid,
-    bridge.is_active AS ward_is_active,
     daily.rain_date,
     daily.rain_total_mm,
     daily.observed_hours,
@@ -39,7 +38,8 @@ SELECT
     daily.hours_rain_50_to_70,
     daily.hours_rain_70_to_100,
     daily.hours_rain_over_100,
-    daily._ingested_at
+    bridge.is_active AS ward_is_active,
+    bridge._deactivated_at AS ward_grid_deactivated_at
 FROM {{ ref('fct_rain_daily') }} AS daily
 INNER JOIN {{ ref('bridge_ward_grid') }} AS bridge
     ON bridge.grid_cell_id = daily.grid_cell_id

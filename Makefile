@@ -7,11 +7,11 @@ bootstrap-env:
 bootstrap: bootstrap-env
 	uv run python scripts/bootstrap.py
 
-# Chỉ seed và build graph địa lý cần để tạo gold.dim_hanoi_ward.
+# Chỉ seed và build graph địa lý cần để tạo gold.dim_ward.
 # Tách khỏi bootstrap hạ tầng để không tạo vòng phụ thuộc bootstrap <-> dbt.
 bootstrap-geography:
-	cd transform && uv run dbt seed --profiles-dir . --select +dim_hanoi_ward
-	cd transform && uv run dbt build --profiles-dir . --select +dim_hanoi_ward --exclude resource_type:seed
+	cd transform && uv run dbt seed --profiles-dir . --select +dim_ward
+	cd transform && uv run dbt build --profiles-dir . --select +dim_ward --exclude resource_type:seed
 
 # ==== Infrastructure (Docker Compose: MinIO + Postgres + pgAdmin) ====
 up:
@@ -103,7 +103,7 @@ quality-forecast:
 	$(_PROVERO_FORECAST)
 	uv run python scripts/healthcheck.py --scope forecast
 
-# Gate Bronze archive/IFS và checkpoint. Silver là view nên phản ánh Bronze mới ngay.
+# Gate Bronze archive/IFS và checkpoint.
 quality-archive:
 	uv run python scripts/healthcheck.py --scope archive
 

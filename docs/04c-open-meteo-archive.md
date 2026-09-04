@@ -19,10 +19,11 @@
 >
 > Giữ file này làm ghi chép thiết kế và kết quả khảo sát API — phần đó vẫn đúng.
 >
-> **Thêm nữa (2026-08-22):** Bronze loader giờ là **INSERT**, không còn
+> **Thêm nữa (2026-08-22, refactor 2026-09-03):** Bronze loader giờ là **INSERT**, không còn
 > `bronze_row_id` + `MERGE INTO` như mô tả ở §6 — bảng đích là
 > `catalog1.silver.stg_weather_hourly` và dedup theo (ô lưới, giờ) làm ở
-> Silver (`ROW_NUMBER() ... rn = 1`). Lý do và đánh đổi: xem ADR cuối
+> lớp curated `silver.int_weather_hourly` (`QUALIFY ROW_NUMBER() ... = 1` kèm
+> `_row_hash` change-aware MERGE). Lý do và đánh đổi: xem ADR cuối
 > [04b-ingestion-runbook.md](04b-ingestion-runbook.md).
 >
 > **2026-08-28:** không còn pacing chủ động (đã thử token-bucket `QuotaLimiter`,
@@ -52,8 +53,8 @@ catalog1.silver.stg_weather_hourly
 ```
 
 Bronze chỉ parse payload theo source contract. Dedup semantic, hợp nhất Archive
-với Forecast và công thức KPI mưa/ngập thuộc Silver/Gold, không nằm trong
-ingestion.
+với Forecast và công thức KPI mưa/ngập thuộc intermediate (`int_weather_hourly`)
+và marts (`fct_rain_*`), không nằm trong ingestion.
 
 ## 2. Luồng dữ liệu
 

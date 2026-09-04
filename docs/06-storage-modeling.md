@@ -10,42 +10,43 @@
 
 **Hanoi Flood & Climate Risk Monitor** · 2026-08-31
 
-**Trạng thái:** đã triển khai 2026-08-31. Silver view.
-**Cập nhật 2026-09-03:** checkpoint Gold chuyển sang `processing.processing_state`
-(start time của lần chạy thành công gần nhất). `ingestion.gold_watermarks`
-deprecated — xem [plan 2026-09-03](superpowers/plans/2026-09-03-processing-checkpoint.md).
+**Trạng thái:** đã triển khai 2026-08-31, tái cấu trúc lean medallion & Silver Layer Flow 2026-09-03.
+**Cập nhật 2026-09-03:**
+- Checkpoint Gold chuyển sang `processing.processing_state` (start time của lần chạy thành công gần nhất). `ingestion.gold_watermarks` deprecated — xem [plan 2026-09-03](superpowers/plans/2026-09-03-processing-checkpoint.md).
+- Cấu trúc dbt chuẩn hoá 3 lớp: `staging/` (view mỏng), `intermediate/` (`int_weather_hourly` — incremental table MERGE change-aware), `marts/` (table/incremental).
+- Fact/dim tinh gọn: `dim_grid`, `dim_ward`, `bridge_ward_grid`, `fct_rain_hourly`, `fct_rain_daily`, `fct_ward_rain_daily`.
 
 Gold DuckLake là SSOT nghiệp vụ. Bronze files là SSOT payload nguồn. Không copy
-Gold sang Postgres. Bước 8 đọc DuckLake. Silver là **view**, không materialize.
+Gold sang Postgres. Bước 8 đọc DuckLake.
 
 ## 1. Quyết định đã khóa
 
 | # | Quyết định |
 |---|---|
-| Phạm vi | Star + dim còn thiếu cho Q1/Q2/Q4/Q5/Q7/Q8. Không Q3, Q9, serving mart. |
+| Phạm vi | Star + dim tinh gọn cho nhu cầu hiện hành. Không climatology/event chưa dùng. |
 | Điểm úng | Có. Thu thập QĐ 2280 → CSV review. Không bịa tọa độ. |
-| `dim_grid` | Grain `(weather_model, weather_product, lat6, lon6)`. `weather_model ∈ {era5, ecmwf_ifs}`. `weather_product ∈ {archive, forecast}`. Forecast: `ecmwf_ifs` + `forecast`. |
+| `dim_grid` | Grain `(weather_model, lat6, lon6)`. `weather_model ∈ {era5, ecmwf_ifs}`. |
 | Tọa độ | Round/canonicalize **6 chữ số trước** khi tạo `grid_cell_id` và trước mọi mapping. |
-| Phường | SCD2 **từ 2025-07-01 → tương lai**. Không reconstruct ranh giới lịch sử. |
+| Phường | Soft delete qua `is_active` (`dim_ward` và `bridge_ward_grid`). |
 | SSOT | `catalog1.gold.*`. Bronze files = payload. |
 | Checkpoint Gold | `processing.processing_state.last_successful_start_at` = **start time** của run SUCCEEDED gần nhất, trừ `safety_lag`. Không dùng `MAX()` của bất kỳ timestamp nào làm checkpoint. |
-| Autoloader | Chỉ Bronze. File: `PENDING → PROCESSING → COMMITTED` (hoặc `FAILED`). Chỉ `COMMITTED` được coi là Bronze durable. |
-| Incremental | Hourly merge theo watermark control + lookback 72h. Climatology/anomaly/event/drought: full từ hourly đã merge. |
-| Climatology | Khóa `climatology_window_id` + năm bắt đầu/kết thúc. Anomaly join đúng window đó. |
+| Autoloader | Chỉ Bronze/staging. File: `PENDING → PROCESSING → COMMITTED` (hoặc `FAILED`). Chỉ `COMMITTED` được coi là durable. |
+| Incremental | Hourly merge theo watermark control `_updated_at`. |
 | Fact | Chỉ `grid_cell_id`. Lat/lon ô chỉ ở `dim_grid`. |
-| Bronze | Files + bảng source-faithful. Append, không dedup. |
-| Silver | View (`+materialized: view`). Không snapshot DuckLake. |
+| Staging | Bảng append-only do autoloader ghi (`stg_weather_*`) + dbt view mỏng. |
+| Curated / Inter | Incremental table (`int_weather_hourly`), MERGE change-aware, watermark `_updated_at`. |
+| Marts | Table (mặc định), dim/bridge incremental để giữ cờ soft-delete. |
 
-Ngoài phạm vi: API/SMI/IDF, xác suất ngập, serving, Q3, Q9, SCD2 hành chính trước 2025.
+Ngoài phạm vi: API/SMI/IDF, xác suất ngập, serving, SCD2 hành chính trước 2025.
 
 ## 2. Medallion
 
 ```text
-Landing     bronze/files/...                 JSON bất biến
-Bronze      catalog1.silver.stg_*            table, append, _ingested_at
-Silver      catalog1.silver.*               VIEW: type, dedup, canonicalize lat/lon
-Gold        catalog1.gold.*                 table — SSOT nghiệp vụ
-Control     ingestion.*                     Postgres: files + gold watermarks
+Landing     bronze/files/...                 JSON bất biến (MinIO)
+Staging     catalog1.silver.stg_*            table append-only (autoloader) + view dbt (stg_*)
+Curated     catalog1.silver.int_*            table incremental: dedup + MERGE change-aware
+Gold        catalog1.gold.*                  table / incremental — SSOT nghiệp vụ
+Control     PostgreSQL ingestion + processing
 ```
 
 Silver **không** expire snapshot vì không có file Parquet riêng.
@@ -190,33 +191,18 @@ checkpoint đọc được cùng chỗ với lịch sử run.
 dim_grid
   grid_cell_id PK
   weather_model          era5 | ecmwf_ifs
-  weather_product       archive | forecast
   grid_latitude         -- lat6
   grid_longitude        -- lon6
 
-dim_hanoi_ward                 SCD2 từ 2025-07-01
-dim_hanoi_flood_point
-dim_climatology_window       seed/config
-dim_historical_replay_window
+dim_ward                 126 phường/xã Hà Nội, soft-delete qua `is_active`
+bridge_ward_grid         ward_code × weather_model → grid_cell_id, is_active, ward_count_on_grid
 
-bridge_hanoi_ward_grid              ward_key × weather_model × weather_product
-bridge_hanoi_flood_point_grid       flood_point_key × weather_model × weather_product
-
-fct_rainfall_forecast_hourly        snapshot × grid_cell_id × valid_time
-fct_rainfall_forecast_summary
-fct_rainfall_historical_hourly       grid_cell_id × valid_time
-fct_rainfall_historical_daily
-fct_rainfall_climatology_monthly    grid_cell_id × calendar_month × window_hours
-                                    × climatology_window_id
-fct_rainfall_historical_anomaly_hourly   -- join cùng climatology_window_id
-fct_rainfall_drought_daily
-fct_rainfall_historical_event
-fct_ward_*
-fct_flood_point_rainfall_forecast_hourly
-fct_flood_point_rainfall_band_daily
+fct_rain_hourly          grid_cell_id × valid_time_utc, rolling 1/3/6/12/24h, scenario bands, watermark _updated_at
+fct_rain_daily           grid_cell_id × rain_date
+fct_ward_rain_daily      ward_code × rain_date (chiếu fct_rain_daily qua bridge_ward_grid)
 ```
 
-Q4: unique `grid_cell_id`, không average phường. Q1: điểm → ô forecast. Q6: daily band counts, không nhân hourly × 220 điểm.
+Q4: unique `grid_cell_id`, không average phường. Chiếu về phường ở grain NGÀY (`fct_ward_rain_daily`), không nhân bản ở grain giờ.
 
 ## 6. Climatology window (khóa)
 
@@ -241,7 +227,7 @@ Anomaly **bắt buộc** `climatology_window_id` (và `weather_model`, `weather_
 
 Thêm giờ `t` → rolling H của mọi `T ∈ [t, t+H-1]` đổi. H = 72.
 
-Slice `new` lấy từ Silver view với `_ingested_at > last_successful_ingestion_watermark`, **không** từ `MAX` trên Gold.
+Slice `new` lấy từ intermediate table `int_weather_hourly` với `_updated_at > last_successful_start_at` (qua macro `incremental_changed_filter`), **không** từ `MAX` trên Gold.
 
 Macro incremental: `DELETE`+`INSERT` vào tên đích, không `__dbt_tmp`.
 

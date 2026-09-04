@@ -22,20 +22,20 @@
              song song" bên dưới)
                land(): GET rồi ghi JSON lên MinIO
                 bronze/files/open_meteo/<dataset>/...
-2. load      autoloader liệt kê MinIO, nạp file MỚI vào bronze bằng SQL
-                catalog1.silver.open_meteo_*
+2. load      autoloader liệt kê MinIO, nạp file MỚI vào staging bằng SQL
+                catalog1.silver.stg_weather_*
 ```
 
-`land()` nằm trong package ``fetch``; hàng đợi song song ở `fetch/pool.py`. Planner Open-Meteo (URL, định tuyến model, skip tháng) nằm trong ``open_meteo.py``; bản đồ ô lưới ở ``grid.py``. Object singleton được bọc thành array để khớp `read_json_auto` với file cũ.
+`land()` nằm trong package `fetch`; hàng đợi song song ở `fetch/pool.py`. Planner Open-Meteo (URL, định tuyến model, skip tháng) nằm trong `open_meteo.py`; bản đồ ô lưới ở `grid.py`. Object singleton được bọc thành array để khớp `read_json_auto` với file cũ.
 
 ### Archive: fetch theo ô lưới, hai model theo thời kỳ
 
-| thời kỳ | model | ô Hà Nội | bảng bronze |
-|---|---|---|---|
-| trước 2017 | `era5` (0,25°) | 12 | `open_meteo_archive` |
-| từ 2017-01 | `ecmwf_ifs` (~9km) | 48 | `open_meteo_ifs` |
+| thời kỳ | model | ô Hà Nội | nguồn / dataset | bảng staging |
+|---|---|---|---|---|
+| trước 2017 | `era5` (0,25°) | 12 | `open_meteo_archive` | `catalog1.silver.stg_weather_hourly` |
+| từ 2017-01 | `ecmwf_ifs` (~9km) | 48 | `open_meteo_ifs` | `catalog1.silver.stg_weather_hourly` |
 
-**Giữ cả hai.** IFS không có dữ liệu trước 2017 (probe 2026-08-28: 2016 mọi quý NULL) — bỏ ERA5 là mất 17 năm baseline. Fetch theo ô: 126 phường chỉ rơi vào 12 ô ERA5 và **mọi bản sao trong cùng ô giống hệt nhau** (0 cặp (ô, giờ) nào lệch), nên fetch theo phường tiêu quota gấp ~10 lần mà không thêm thông tin. Silver chiếu ngược về phường qua `ward_grid_map`.
+**Giữ cả hai.** IFS không có dữ liệu trước 2017 (probe 2026-08-28: 2016 mọi quý NULL) — bỏ ERA5 là mất 17 năm baseline. Fetch theo ô: 126 phường chỉ rơi vào 12 ô ERA5 và **mọi bản sao trong cùng ô giống hệt nhau** (0 cặp (ô, giờ) nào lệch), nên fetch theo phường tiêu quota gấp ~10 lần mà không thêm thông tin. Chiếu ngược về phường qua `bridge_ward_grid` (ở marts/Gold).
 
 `ecmwf_ifs` cho tín hiệu khác nhau THẬT giữa các phường: cùng ngày mưa, ba phường mà ERA5 gộp thành một chuỗi 9,3mm thì IFS trả 105,0 / 137,9 / 116,2 mm. Khoảng cách phường→tâm ô giảm từ 18,9km (era5) xuống 5,5km.
 
@@ -54,16 +54,16 @@ ghi dở rồi tiến trình chết vẫn được nhặt ở lần chạy sau.
 
 ## Bootstrap dữ liệu địa lý
 
-Sau `make up && make bootstrap`, bảo đảm nguồn tham chiếu `public.wards` đã có
-trong PostgreSQL rồi chạy:
+Sau `make up && make bootstrap` chạy:
 
 ```bash
 make bootstrap-geography
 ```
 
-Target seed `ward_coordinates_seed` và build đúng graph tổ tiên của
-`gold.dim_hanoi_ward`. Nó tách khỏi bootstrap hạ tầng để không tạo vòng phụ
-thuộc, đồng thời không build các fact thời tiết chưa có Bronze source.
+Target seed `ward_coordinates_seed` (CSV version-control, không còn đọc
+`public.wards` từ PostgreSQL) và build đúng graph tổ tiên của `gold.dim_ward`.
+Nó tách khỏi bootstrap hạ tầng để không tạo vòng phụ thuộc, đồng thời không
+build các fact thời tiết chưa có Bronze source.
 
 ## Lệnh hằng ngày
 
@@ -276,7 +276,7 @@ vẹn còn lại: MinIO bitrot protection + `etag`/`size_bytes` trong
 fetch 126 phường cho mọi tháng. Đo trên chính bronze: 126 phường rơi vào 12 ô
 ERA5 (seed; nearest-neighbour từng lệch 12 vs 13) và 0 cặp (ô, giờ) nào có
 giá trị lệch nhau — tức trả quota gấp ~10 lần cho dữ liệu nhân bản. Nay fetch
-theo ô, Silver chiếu ngược qua `ward_grid_map`. **Giữ cả hai model:** IFS
+theo ô, marts chiếu ngược qua `bridge_ward_grid`. **Giữ cả hai model:** IFS
 không có dữ liệu trước 2017 (probe 2026-08-28: 2016 mọi quý NULL), nên ERA5
 là chuỗi lịch sử sâu duy nhất; từ 2017 dùng `ecmwf_ifs` ~9km cho tín hiệu
 khác nhau thật giữa các phường. Backfill còn lại: 267 request / 13.121 đơn vị
@@ -296,7 +296,7 @@ hoặc chia nhỏ `--start`/`--end`.
 
 **Bảng đích do engine tạo (2026-08-28).** Trước đó thêm nguồn mới phải chạy DDL
 tay, và quên thì `make load` chết ở INSERT vào bảng không tồn tại — `bootstrap.py`
-chỉ tạo *schema* `catalog1.silver`, không tạo table. Nay engine tự
+chỉ tạo *schema* `catalog1.silver` và `catalog1.gold`, không tạo table. Nay engine tự
 `CREATE TABLE IF NOT EXISTS ... AS (<sql>) WHERE false`, lấy schema từ chính SQL
 của nguồn nên không có danh sách cột thứ hai để lệch. Probe `SELECT 1 FROM
 <target> WHERE false` chạy trước vì `CREATE TABLE IF NOT EXISTS ... AS SELECT`
@@ -312,10 +312,11 @@ discovery:{timestamp}` mỗi lần load. Một run `SUCCEEDED` / nguồn
 (`logical_key=discovery`) nhận thêm file PENDING. Lease trên `PROCESSING` vẫn
 là crash recovery (flock chỉ chống hai process sống cùng lúc).
 
-**Bronze INSERT, dedup ở Silver (2026-08-22).** Không MERGE theo row id ở Bronze:
-forecast giữ MỌI vintage (mỗi vintage là dữ liệu phân tích, docs/04 §1), và
-Silver đã `ROW_NUMBER() ... rn = 1` dedup theo (ô lưới, giờ). Chi phí: re-land
-cùng tháng làm Bronze phình (đo 2026-08-21: 3.062.736 dòng thô cho 1.106.784
+**Bronze INSERT, dedup và MERGE change-aware ở Silver (2026-08-22, refactor 2026-09-03).**
+Không MERGE theo row id ở Bronze: forecast và archive giữ MỌI vintage trong bảng
+staging `silver.stg_*` (mỗi vintage là dữ liệu phân tích), và dedup theo (ô lưới, giờ)
+kèm MERGE change-aware thực hiện ở intermediate `silver.int_weather_hourly`. Chi phí: re-land
+cùng tháng làm staging phình (đo 2026-08-21: 3.062.736 dòng thô cho 1.106.784
 khóa duy nhất) — chấp nhận vì Parquet trên MinIO local gần như miễn phí.
 
 ## Bảng đối chiếu lệnh cũ → mới

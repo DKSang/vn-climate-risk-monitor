@@ -132,8 +132,8 @@ precipitation_probability
 weather_code
 ```
 
-Location được đọc từ `gold.dim_hanoi_ward`, bắt buộc đủ 126 dòng, sắp xếp theo
-`ward_key` rồi mới chia batch. Open-Meteo trả array theo thứ tự location request;
+Location được đọc từ `gold.dim_ward`, bắt buộc đủ 126 dòng, sắp xếp theo
+`ward_code` rồi mới chia batch. Open-Meteo trả array theo thứ tự location request;
 vì vậy forecast adapter lưu ordered mapping trong
 `ingestion_files.file_parameters.ward_keys` cho từng response file.
 
