@@ -64,7 +64,7 @@ class ArchiveModel:
 
 # Hai model chia CHUNG một bảng staging, phân biệt bằng cột `weather_model`.
 # Trước 2026-09-03 mỗi model một bảng, dù schema y hệt nhau.
-STAGING_HOURLY = "catalog1.silver.stg_weather_hourly"
+STAGING_HOURLY = "catalog1.silver.stg_weather_archive_hourly"
 
 ERA5 = ArchiveModel(
     name="era5",
@@ -393,7 +393,7 @@ def _cmd_archive(args, settings) -> int:
 
 def _cmd_forecast(args, settings) -> int:
     open_meteo = settings.open_meteo
-    connection = get_connection(attach_bronze=False, read_only=True)
+    connection = get_connection(read_only=True)
     try:
         locations = load_locations(connection)
     finally:

@@ -212,7 +212,7 @@ def _check_archive_coverage(connection: Any) -> CheckResult:
                 grid_longitude,
                 DATE_TRUNC('month', valid_time_utc) AS month_start,
                 COUNT(DISTINCT valid_time_utc) AS observed_hours
-            FROM silver.int_weather_hourly
+            FROM silver.int_weather_archive_hourly
             WHERE valid_time_utc < DATE_TRUNC('month', CURRENT_TIMESTAMP)
             GROUP BY 1, 2, 3, 4
         )
@@ -235,7 +235,7 @@ def _check_archive_duplicates(connection: Any) -> CheckResult:
     raw_count, unique_count = connection.execute(
         """
         SELECT COUNT(*), COUNT(DISTINCT (grid_cell_id, valid_time_utc))
-        FROM silver.int_weather_hourly
+        FROM silver.int_weather_archive_hourly
         """
     ).fetchone()
     duplicates = raw_count - unique_count
@@ -287,11 +287,11 @@ def _check_gold(connection: Any) -> list[CheckResult]:
     `valid_time_utc` mới nhất luôn lùi vài tuần một cách hợp lệ. Freshness quay
     lại cùng nhánh forecast.
     """
-    relation = "gold.fct_rain_hourly"
+    relation = "gold.fct_rain_archive_hourly"
     if not _relation_exists(connection, relation):
         return [_result("gold.rain_hourly.exists", "FAIL", f"Không tìm thấy {relation}")]
     rows, distinct_keys = connection.execute(
-        f"SELECT COUNT(*), COUNT(DISTINCT rain_hourly_key) FROM {relation}"
+        f"SELECT COUNT(*), COUNT(DISTINCT rain_archive_hourly_key) FROM {relation}"
     ).fetchone()
     duplicates = rows - distinct_keys
     return [
@@ -304,7 +304,7 @@ def _check_gold(connection: Any) -> list[CheckResult]:
         _result(
             "gold.rain_hourly.grain",
             "PASS" if duplicates == 0 else "FAIL",
-            f"{duplicates:,} khóa rain_hourly bị trùng",
+            f"{duplicates:,} khóa rain_archive_hourly bị trùng",
             duplicate_keys=duplicates,
         ),
     ]
@@ -411,19 +411,19 @@ def collect_health(
                 checks.extend(
                     _check_weather_table(
                         connection,
-                        "catalog1.silver.stg_weather_hourly",
+                        "catalog1.silver.stg_weather_archive_hourly",
                         required=True,
                         freshness_hours=None,
                     )
                 )
-                if _relation_exists(connection, "silver.int_weather_hourly"):
+                if _relation_exists(connection, "silver.int_weather_archive_hourly"):
                     checks.append(_check_archive_coverage(connection))
                     checks.append(_check_archive_duplicates(connection))
                     checks.append(_check_mapping(connection))
                 elif require_gold:
                     checks.append(
                         _result(
-                            "archive.silver", "FAIL", "Thiếu silver.int_weather_hourly"
+                            "archive.silver", "FAIL", "Thiếu silver.int_weather_archive_hourly"
                         )
                     )
         except Exception as error:  # noqa: BLE001

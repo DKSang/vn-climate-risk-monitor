@@ -2,7 +2,7 @@
     MART — cầu nối phường ↔ ô lưới, theo từng model.
 
     252 dòng. Nhỏ đến mức mọi câu hỏi theo GIỜ ở cấp phường chỉ cần join bảng
-    này với `fct_rain_hourly` lúc query — không cần một fact phường×giờ nhân bản
+    này với `fct_rain_archive_hourly` lúc query — không cần một fact phường×giờ nhân bản
     26 triệu dòng giống hệt nhau (126 phường chỉ có 12 hoặc 48 giá trị khác
     nhau ở mỗi giờ).
 
@@ -12,7 +12,7 @@
 
 {#
     INCREMENTAL cùng lý do với `dim_ward`: giữ dòng của phường đã giải thể để
-    `fct_ward_rain_daily` không mất lịch sử khi INNER JOIN.
+    `fct_ward_rain_archive_daily` không mất lịch sử khi INNER JOIN.
 #}
 {{ config(
     materialized = 'incremental',

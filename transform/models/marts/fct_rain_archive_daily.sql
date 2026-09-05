@@ -1,7 +1,7 @@
 /*
-    MART — mưa theo ô lưới × ngày.
+    MART — mưa theo ô lưới × ngày (Archive).
 
-    Full refresh: dựng từ `fct_rain_hourly` đã tính sẵn cửa sổ trượt, ~9,7k
+    Full refresh: dựng từ `fct_rain_archive_hourly` đã tính sẵn cửa sổ trượt, ~9,7k
     ngày × 60 ô nên rebuild rẻ hơn nhiều so với nuôi thêm một checkpoint.
 
     Ngày theo UTC, khớp `valid_time_utc`. Đổi sang giờ VN là quyết định của lớp
@@ -18,7 +18,7 @@
 
 SELECT
     MD5(CONCAT_WS('|', grid_cell_id, CAST(rain_date AS VARCHAR)))
-        AS rain_daily_key,
+        AS rain_archive_daily_key,
     grid_cell_id,
     rain_date,
     SUM(precipitation_mm) AS rain_total_mm,
@@ -36,5 +36,5 @@ SELECT
     COUNT(*) FILTER (hanoi_rain_scenario_band = 'over_100')
         AS hours_rain_over_100,
     MAX(_ingested_at) AS _ingested_at
-FROM {{ ref('fct_rain_hourly') }}
+FROM {{ ref('fct_rain_archive_hourly') }}
 GROUP BY grid_cell_id, rain_date

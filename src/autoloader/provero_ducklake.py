@@ -74,7 +74,9 @@ class DuckLakeConnector:
         # provero/connectors/factory.py::create_connector), không phải
         # `connection` như tên trường trong YAML.
         self.database = database
-        self.catalog_dsn = connection_string or os.getenv("DUCKLAKE_DSN", "")
+        # Ưu tiên DUCKLAKE_DSN từ biến môi trường để hỗ trợ môi trường container/Docker
+        # nơi host DB là 'postgres' thay vì '127.0.0.1' trong file YAML tĩnh.
+        self.catalog_dsn = os.getenv("DUCKLAKE_DSN") or connection_string or ""
         self.alias = os.getenv("DUCKLAKE_ALIAS", "catalog1")
         self.data_path = os.getenv("DUCKLAKE_DATA_PATH", "")
         self.metadata_schema = os.getenv("DUCKLAKE_METADATA_SCHEMA", "ducklake")

@@ -30,7 +30,9 @@ vn-climate-risk-monitor/
 │   └── tests/
 │
 ├── reference/                       # GeoJSON và văn bản nguồn tĩnh
-├── orchestration/cron/              # schedule template; không chứa business logic
+├── orchestration/
+│   ├── cron/                        # schedule template; không chứa business logic
+│   └── dags/                        # Airflow DAGs: forecast_hourly, archive_monthly
 ├── serving/                         # API/dashboard chỉ đọc Gold (Bước 8, chưa cài)
 ├── scripts/                         # bootstrap, run_processing, healthcheck, maintenance
 └── tests/
@@ -67,7 +69,7 @@ trong catalog DuckLake, không bao giờ xóa file trong `bronze/files`.
 |---|---|
 | `bronze/files` | Response nguồn nguyên bản, append-only trên MinIO |
 | `silver` (staging) | Bảng append-only do autoloader nạp (`stg_*`) + view mỏng dbt (`stg_*`) |
-| `silver` (intermediate) | Dedup theo (ô, giờ), conform, change-aware MERGE (`int_weather_hourly`) |
+| `silver` (intermediate) | Dedup theo (ô, giờ), conform, change-aware MERGE (`int_weather_archive_hourly`) |
 | `gold` (marts) | Star schema: dimension (`dim_*`), bridge (`bridge_*`), fact (`fct_*`) |
 | Control plane | PostgreSQL `ingestion` (file ledger, lease) và `processing` (state, audit runs) |
 
@@ -77,11 +79,11 @@ Thêm nguồn REST mới = planner trong app + `fetch.land`. Thêm nguồn file 
 ## Quy ước đặt tên
 
 - Schema đã biểu đạt layer nên không dùng `_raw` hoặc `_cleaned`.
-- Staging dùng tiền tố `stg_`, ví dụ `stg_weather_hourly` (bảng vật lý do autoloader ghi),
-  `stg_open_meteo__weather_hourly` (view dbt), `stg_seed__ward`, `stg_seed__ward_grid`.
-- Intermediate dùng tiền tố `int_`, ví dụ `int_weather_hourly` (curated table incremental).
+- Staging dùng tiền tố `stg_`, ví dụ `stg_weather_archive_hourly` (bảng vật lý do autoloader ghi),
+  `stg_open_meteo__weather_archive_hourly` (view dbt), `stg_seed__ward`, `stg_seed__ward_grid`.
+- Intermediate dùng tiền tố `int_`, ví dụ `int_weather_archive_hourly` (curated table incremental).
 - Marts dùng `dim_`, `bridge_`, `fct_` theo dimensional modeling, ví dụ
-  `dim_grid`, `dim_ward`, `bridge_ward_grid`, `fct_rain_hourly`, `fct_rain_daily`, `fct_ward_rain_daily`.
+  `dim_grid`, `dim_ward`, `bridge_ward_grid`, `fct_rain_archive_hourly`, `fct_rain_archive_daily`, `fct_ward_rain_archive_daily`.
 - Metadata kỹ thuật dùng tên rõ nghĩa: `_source_file`, `_ingested_at`, `_updated_at`, `_row_hash`.
 
 ## Incremental contract
@@ -95,5 +97,5 @@ Thêm nguồn REST mới = planner trong app + `fetch.land`. Thêm nguồn file 
 4. DuckDB chạy SQL transform của nguồn (`INSERT ... BY NAME` vào staging `silver.stg_*`).
 5. Chỉ sau khi commit staging mới cập nhật file ledger thành `COMMITTED`.
 6. Crash giữa bước 4 và 5: lease hết hạn, file được claim lại, INSERT lặp —
-   staging at-least-once, dedup và MERGE change-aware ở `silver.int_weather_hourly`.
+   staging at-least-once, dedup và MERGE change-aware ở `silver.int_weather_archive_hourly`.
    Payload luôn giữ để replay, không giả định distributed transaction giữa Postgres và MinIO.

@@ -9,11 +9,11 @@ sources:
     description: >
       Bảng staging append-only do autoloader nạp từ landing zone. Giữ MỌI phiên
       bản đã fetch của cùng một grain — đó là change log, không phải rác.
-      Dedup xảy ra ở lớp curated (`silver.int_weather_hourly`).
+      Dedup xảy ra ở lớp curated (`silver.int_weather_archive_hourly`).
     tables:
-      - name: stg_weather_hourly
+      - name: stg_weather_archive_hourly
         description: >
-          Quan trắc/reanalysis theo giờ. Một bảng cho nhiều model thời tiết,
+          Quan trắc/reanalysis theo giờ (Archive). Một bảng cho nhiều model thời tiết,
           phân biệt bằng `weather_model`: era5 (0,25°, 2000–2016) và ecmwf_ifs
           (~9km, 2017→nay). Append-only: giữ mọi phiên bản đã fetch của cùng grain.
         loaded_at_field: _ingested_at
@@ -36,6 +36,17 @@ sources:
 
       - name: stg_weather_forecast
         description: >
-          Forecast run theo giờ. CHƯA có model curated/Gold ở phase này — vẫn
-          nạp đều để nhánh forecast thêm sau mà không phải backfill lại.
+          Forecast run theo giờ từ Open-Meteo API. Append-only, do autoloader ghi.
+          Mỗi run trả về chuỗi giờ tương lai (valid_time_utc).
         loaded_at_field: _ingested_at
+        columns:
+          - name: valid_time_utc
+            tests: [not_null]
+          - name: grid_latitude
+            tests: [not_null]
+          - name: grid_longitude
+            tests: [not_null]
+          - name: _source_file
+            tests: [not_null]
+          - name: _ingested_at
+            tests: [not_null]

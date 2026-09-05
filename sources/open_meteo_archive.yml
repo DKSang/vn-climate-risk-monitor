@@ -10,8 +10,8 @@ parameters:
 
 transform:
   # Dùng CHUNG contract với open_meteo_ifs — cùng bộ cột, chỉ khác model.
-  sql_file: open_meteo_hourly.sql
-  target: catalog1.silver.stg_weather_hourly
+  sql_file: open_meteo_archive_hourly.sql
+  target: catalog1.silver.stg_weather_archive_hourly
 
 # File archive ~600KB bung thành ~16k dòng; 50 file/lô đo 0,4s. Mỗi INSERT là
 # một snapshot DuckLake, nên lô 50 giảm ~5 lần số snapshot so với mặc định 10.

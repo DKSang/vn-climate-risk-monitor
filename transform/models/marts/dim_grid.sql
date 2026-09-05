@@ -19,7 +19,7 @@ WITH observed AS (
         MIN(valid_time_utc) AS first_observed_utc,
         MAX(valid_time_utc) AS last_observed_utc,
         COUNT(*) AS observation_hours
-    FROM {{ ref('int_weather_hourly') }}
+    FROM {{ ref('int_weather_archive_hourly') }}
     GROUP BY grid_cell_id, weather_model, grid_latitude, grid_longitude
 ),
 

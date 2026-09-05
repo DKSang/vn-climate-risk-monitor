@@ -32,8 +32,8 @@
 
 | thời kỳ | model | ô Hà Nội | nguồn / dataset | bảng staging |
 |---|---|---|---|---|
-| trước 2017 | `era5` (0,25°) | 12 | `open_meteo_archive` | `catalog1.silver.stg_weather_hourly` |
-| từ 2017-01 | `ecmwf_ifs` (~9km) | 48 | `open_meteo_ifs` | `catalog1.silver.stg_weather_hourly` |
+| trước 2017 | `era5` (0,25°) | 12 | `open_meteo_archive` | `catalog1.silver.stg_weather_archive_hourly` |
+| từ 2017-01 | `ecmwf_ifs` (~9km) | 48 | `open_meteo_ifs` | `catalog1.silver.stg_weather_archive_hourly` |
 
 **Giữ cả hai.** IFS không có dữ liệu trước 2017 (probe 2026-08-28: 2016 mọi quý NULL) — bỏ ERA5 là mất 17 năm baseline. Fetch theo ô: 126 phường chỉ rơi vào 12 ô ERA5 và **mọi bản sao trong cùng ô giống hệt nhau** (0 cặp (ô, giờ) nào lệch), nên fetch theo phường tiêu quota gấp ~10 lần mà không thêm thông tin. Chiếu ngược về phường qua `bridge_ward_grid` (ở marts/Gold).
 
@@ -315,7 +315,7 @@ là crash recovery (flock chỉ chống hai process sống cùng lúc).
 **Bronze INSERT, dedup và MERGE change-aware ở Silver (2026-08-22, refactor 2026-09-03).**
 Không MERGE theo row id ở Bronze: forecast và archive giữ MỌI vintage trong bảng
 staging `silver.stg_*` (mỗi vintage là dữ liệu phân tích), và dedup theo (ô lưới, giờ)
-kèm MERGE change-aware thực hiện ở intermediate `silver.int_weather_hourly`. Chi phí: re-land
+kèm MERGE change-aware thực hiện ở intermediate `silver.int_weather_archive_hourly`. Chi phí: re-land
 cùng tháng làm staging phình (đo 2026-08-21: 3.062.736 dòng thô cho 1.106.784
 khóa duy nhất) — chấp nhận vì Parquet trên MinIO local gần như miễn phí.
 

@@ -76,7 +76,7 @@ models:
     # Ba lớp chuẩn: staging -> intermediate -> marts. THƯ MỤC là cấu trúc dbt;
     # TÊN VẬT LÝ (schema DuckLake) vẫn theo medallion: staging + intermediate
     # vào `silver`, marts vào `gold`. SILVER_CLEAN của reference architecture
-    # (bảng MERGE) là `int_weather_hourly`, không phải model nào trong staging/.
+    # (bảng MERGE) là `int_weather_archive_hourly`, không phải model nào trong staging/.
     #
     # Vì sao staging là view MỎNG (rename/cast/WHERE, không window/join):
     # DuckDB không đẩy filter xuống dưới window function qua view (đo 9,7s vs
@@ -91,7 +91,7 @@ models:
       +tags: ['staging']
 
     # Business logic trung gian: dedup, conform, change-aware MERGE.
-    # Mặc định view; `int_weather_hourly` override = incremental TABLE vì đó
+    # Mặc định view; `int_weather_archive_hourly` override = incremental TABLE vì đó
     # là bảng MERGE, đẩy lên view sẽ tái tạo bug 49s.
     intermediate:
       +schema: silver

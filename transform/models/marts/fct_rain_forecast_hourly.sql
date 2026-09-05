@@ -1,35 +1,23 @@
 /*
-    MART — mưa theo ô lưới × giờ, kèm cửa sổ trượt và dải kịch bản.
-
-    Bảng lớn nhất (~20M dòng) và là bảng DUY NHẤT incremental: hai fact còn lại
-    dựng từ đây, nhỏ, nên full refresh rẻ hơn là nuôi thêm hai checkpoint.
-
-    `rain_{N}h_mm` NULL nghĩa là cửa sổ THIẾU GIỜ. Không có cột `_is_complete`
-    song song — NULL đã mang đúng nghĩa đó, và 14 cột phụ của bản cũ chỉ là
-    cùng một thông tin viết lại ba lần.
+    MART — mưa dự báo theo ô lưới × giờ, kèm cửa sổ trượt và dải kịch bản.
+    Grain: (grid_cell_id, valid_time_utc)
 */
 
 {{ config(
     materialized = 'incremental',
-    unique_key = 'rain_hourly_key',
-    tags = ['fact', 'rain']
+    unique_key = 'rain_forecast_hourly_key',
+    tags = ['fact', 'rain', 'forecast']
 ) }}
 
-{#
-    Lookback SUY RA từ danh sách cửa sổ, không gõ tay: cửa sổ rộng nhất N giờ
-    thì một giờ mới ở T làm sai các dòng đầu ra trong [T, T+(N−1)h], và để
-    tính chúng phải đọc từ T−(N−1)h. Thêm cửa sổ 72h sau này thì lookback tự
-    đúng theo — không có chỗ nào để quên cập nhật.
-#}
 {% set windows = rain_windows() %}
 {% set lookback = (windows | max - 1) ~ ' hours' %}
 
 WITH source AS (
     SELECT *
-    FROM {{ ref('int_weather_hourly') }}
+    FROM {{ ref('int_weather_forecast_hourly') }}
     {{ incremental_input_scope(
-        relation = ref('int_weather_hourly'),
-        source_ref = 'int_weather_hourly',
+        relation = ref('int_weather_forecast_hourly'),
+        source_ref = 'int_weather_forecast_hourly',
         dimension = 'valid_time_utc',
         change_column = '_updated_at',
         expand_backward = lookback,
@@ -44,9 +32,9 @@ windowed AS (
         valid_time_utc,
         precipitation_mm,
         rain_mm,
+        showers_mm,
+        precipitation_probability_pct,
         weather_code,
-        soil_moisture_0_to_7cm,
-        soil_moisture_7_to_28cm,
         _source_file,
         _ingested_at,
         _updated_at,
@@ -57,15 +45,15 @@ windowed AS (
 published AS (
     SELECT
         MD5(CONCAT_WS('|', grid_cell_id, CAST(valid_time_utc AS VARCHAR)))
-            AS rain_hourly_key,
+            AS rain_forecast_hourly_key,
         grid_cell_id,
         valid_time_utc,
-        CAST(valid_time_utc AS DATE) AS rain_date,
+        CAST(valid_time_utc AS DATE) AS forecast_date,
         precipitation_mm,
         rain_mm,
+        showers_mm,
+        precipitation_probability_pct,
         weather_code,
-        soil_moisture_0_to_7cm,
-        soil_moisture_7_to_28cm,
         {{ rolling_rain_columns(windows) }},
         _source_file,
         _ingested_at,
@@ -80,8 +68,8 @@ SELECT
     {{ vn_rain_band_24h('rain_24h_mm') }} AS vn_rain_band_24h
 FROM published
 {{ incremental_output_scope(
-    relation = ref('int_weather_hourly'),
-    source_ref = 'int_weather_hourly',
+    relation = ref('int_weather_forecast_hourly'),
+    source_ref = 'int_weather_forecast_hourly',
     dimension = 'valid_time_utc',
     change_column = '_updated_at',
     expand_forward = lookback
