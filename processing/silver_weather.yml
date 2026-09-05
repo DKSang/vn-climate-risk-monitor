@@ -1,12 +1,12 @@
 process_key: silver_weather
-target: silver.int_weather_hourly
+target: silver.int_weather_archive_hourly
 scope: production
 
 sources:
   # Staging do autoloader ghi. `_ingested_at` là timestamp do PLATFORM sinh
   # (đồng hồ Postgres, engine inject), KHÔNG phải business time của Open-Meteo —
   # giờ của hệ nguồn có thể backdated, null, sai timezone; giờ ingest thì không.
-  - ref: stg_weather_hourly
+  - ref: stg_weather_archive_hourly
     change_column: _ingested_at
 
 checkpoint:

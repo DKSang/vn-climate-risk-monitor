@@ -37,13 +37,13 @@ Medallion đã dựng lại gọn (xem
 |---|---|---|
 | landing | `bronze/files/**.json` *(raw bất biến, ngoài catalog)* | 1.302 file · 790 MB |
 | seed | `ward_coordinates_seed` · `ward_grid_map_seed` *(input artifact)* | 3.321 · 252 |
-| silver staging | `stg_weather_hourly` (bảng) · `stg_open_meteo__weather_hourly` (view) · `stg_seed__ward` (view) · `stg_seed__ward_grid` (view) | **19.895.304** · 126 · 252 |
-| silver intermediate | `int_weather_hourly` (curated: dedup + MERGE change-aware) | **5.818.584** |
+| silver staging | `stg_weather_archive_hourly` (bảng) · `stg_open_meteo__weather_archive_hourly` (view) · `stg_seed__ward` (view) · `stg_seed__ward_grid` (view) | **19.895.304** · 126 · 252 |
+| silver intermediate | `int_weather_archive_hourly` (curated: dedup + MERGE change-aware) | **5.818.584** |
 | gold marts (dim) | `dim_grid` · `dim_ward` · `bridge_ward_grid` | 60 · 126 · 252 |
-| gold marts (fact) | `fct_rain_hourly` · `fct_rain_daily` · `fct_ward_rain_daily` | **5.818.584** · **242.441** · **1.223.303** |
+| gold marts (fact) | `fct_rain_archive_hourly` · `fct_rain_archive_daily` · `fct_ward_rain_archive_daily` | **5.818.584** · **242.441** · **1.223.303** |
 
 Staging giữ 70% dòng "trùng" một cách CÓ CHỦ Ý: đó là change log của mọi lần
-fetch. Dedup xảy ra ở `silver.int_weather_hourly`.
+fetch. Dedup xảy ra ở `silver.int_weather_archive_hourly`.
 
 ## Lệnh thường dùng
 
@@ -67,5 +67,5 @@ make dbt-docs                # sinh và mở dbt docs
   20/08/2026. Test quan trọng phải buộc engine đọc file thật (xem `assert_gold_is_readable`).
 - Mọi giả định ghi rõ dạng `A1`, `A2`… và rủi ro dạng `R1`, `R2`… để trace ngược.
 - Bronze CHỈ là landing zone raw file. Bảng append-only đầu tiên là `silver.stg_*`
-  (staging), dedup ở `silver.int_weather_hourly` (curated) — xem
+  (staging), dedup ở `silver.int_weather_archive_hourly` (curated) — xem
   [plan Silver Layer Flow](superpowers/plans/2026-09-03-silver-layer-flow.md).

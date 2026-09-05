@@ -56,7 +56,63 @@ services:
       postgres:
         condition: service_healthy
 
+  airflow:
+    image: apache/airflow:2.10.5-python3.12
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    ports:
+      - "${AIRFLOW_PORT:-8080}:8080"
+    environment:
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: >-
+        postgresql+psycopg2://${POSTGRES_USER:-vnclimate}:${POSTGRES_PASSWORD:-vnclimate}@postgres:5432/${POSTGRES_DB:-vnclimate}?options=-csearch_path%3Dairflow
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
+      AIRFLOW__LOGGING__BASE_LOG_FOLDER: /opt/airflow/logs
+      AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY:-vnclimate-airflow-secret-key-change-in-prod}
+      AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "true"
+      # Project environment variables passed to worker
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_DB: ${POSTGRES_DB:-vnclimate}
+      POSTGRES_USER: ${POSTGRES_USER:-vnclimate}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-vnclimate}
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      MINIO_BUCKET: ${MINIO_BUCKET:-vn-climate}
+      MINIO_SECURE: "false"
+      OPEN_METEO_FETCH_WORKERS: ${OPEN_METEO_FETCH_WORKERS:-4}
+      OPEN_METEO_FORECAST_URL: ${OPEN_METEO_FORECAST_URL:-https://api.open-meteo.com/v1/forecast}
+      OPEN_METEO_ARCHIVE_URL: ${OPEN_METEO_ARCHIVE_URL:-https://archive-api.open-meteo.com/v1/archive}
+      OPEN_METEO_FORECAST_MODEL: ${OPEN_METEO_FORECAST_MODEL:-best_match}
+      OPEN_METEO_FORECAST_HOURS: ${OPEN_METEO_FORECAST_HOURS:-72}
+      OPEN_METEO_LOCATION_BATCH_SIZE: ${OPEN_METEO_LOCATION_BATCH_SIZE:-25}
+      DUCKLAKE_ALIAS: catalog1
+      DUCKLAKE_DATA_PATH: s3://${MINIO_BUCKET:-vn-climate}
+      DUCKLAKE_METADATA_SCHEMA: ducklake
+      DUCKLAKE_DSN: "ducklake:postgres:dbname=${POSTGRES_DB:-vnclimate} host=postgres port=5432 user=${POSTGRES_USER:-vnclimate} password=${POSTGRES_PASSWORD:-vnclimate}"
+      PROJECT_DIR: /project
+      # Dùng venv riêng trong container để tránh đụng quyền với .venv của host (UID 1000 vs 50000)
+      UV_PROJECT_ENVIRONMENT: /tmp/project_venv
+    volumes:
+      - ./orchestration/dags:/opt/airflow/dags:ro
+      - .:/project
+      - airflow_logs:/opt/airflow/logs
+    command: standalone
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
 volumes:
   postgres_data:
   minio_data:
   pgadmin_data:
+  airflow_logs:

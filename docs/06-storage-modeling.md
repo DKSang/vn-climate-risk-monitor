@@ -13,8 +13,8 @@
 **Trạng thái:** đã triển khai 2026-08-31, tái cấu trúc lean medallion & Silver Layer Flow 2026-09-03.
 **Cập nhật 2026-09-03:**
 - Checkpoint Gold chuyển sang `processing.processing_state` (start time của lần chạy thành công gần nhất). `ingestion.gold_watermarks` deprecated — xem [plan 2026-09-03](superpowers/plans/2026-09-03-processing-checkpoint.md).
-- Cấu trúc dbt chuẩn hoá 3 lớp: `staging/` (view mỏng), `intermediate/` (`int_weather_hourly` — incremental table MERGE change-aware), `marts/` (table/incremental).
-- Fact/dim tinh gọn: `dim_grid`, `dim_ward`, `bridge_ward_grid`, `fct_rain_hourly`, `fct_rain_daily`, `fct_ward_rain_daily`.
+- Cấu trúc dbt chuẩn hoá 3 lớp: `staging/` (view mỏng), `intermediate/` (`int_weather_archive_hourly` — incremental table MERGE change-aware), `marts/` (table/incremental).
+- Fact/dim tinh gọn: `dim_grid`, `dim_ward`, `bridge_ward_grid`, `fct_rain_archive_hourly`, `fct_rain_archive_daily`, `fct_ward_rain_archive_daily`.
 
 Gold DuckLake là SSOT nghiệp vụ. Bronze files là SSOT payload nguồn. Không copy
 Gold sang Postgres. Bước 8 đọc DuckLake.
@@ -34,7 +34,7 @@ Gold sang Postgres. Bước 8 đọc DuckLake.
 | Incremental | Hourly merge theo watermark control `_updated_at`. |
 | Fact | Chỉ `grid_cell_id`. Lat/lon ô chỉ ở `dim_grid`. |
 | Staging | Bảng append-only do autoloader ghi (`stg_weather_*`) + dbt view mỏng. |
-| Curated / Inter | Incremental table (`int_weather_hourly`), MERGE change-aware, watermark `_updated_at`. |
+| Curated / Inter | Incremental table (`int_weather_archive_hourly`), MERGE change-aware, watermark `_updated_at`. |
 | Marts | Table (mặc định), dim/bridge incremental để giữ cờ soft-delete. |
 
 Ngoài phạm vi: API/SMI/IDF, xác suất ngập, serving, SCD2 hành chính trước 2025.
@@ -197,12 +197,12 @@ dim_grid
 dim_ward                 126 phường/xã Hà Nội, soft-delete qua `is_active`
 bridge_ward_grid         ward_code × weather_model → grid_cell_id, is_active, ward_count_on_grid
 
-fct_rain_hourly          grid_cell_id × valid_time_utc, rolling 1/3/6/12/24h, scenario bands, watermark _updated_at
-fct_rain_daily           grid_cell_id × rain_date
-fct_ward_rain_daily      ward_code × rain_date (chiếu fct_rain_daily qua bridge_ward_grid)
+fct_rain_archive_hourly          grid_cell_id × valid_time_utc, rolling 1/3/6/12/24h, scenario bands, watermark _updated_at
+fct_rain_archive_daily           grid_cell_id × rain_date
+fct_ward_rain_archive_daily      ward_code × rain_date (chiếu fct_rain_archive_daily qua bridge_ward_grid)
 ```
 
-Q4: unique `grid_cell_id`, không average phường. Chiếu về phường ở grain NGÀY (`fct_ward_rain_daily`), không nhân bản ở grain giờ.
+Q4: unique `grid_cell_id`, không average phường. Chiếu về phường ở grain NGÀY (`fct_ward_rain_archive_daily`), không nhân bản ở grain giờ.
 
 ## 6. Climatology window (khóa)
 
@@ -227,7 +227,7 @@ Anomaly **bắt buộc** `climatology_window_id` (và `weather_model`, `weather_
 
 Thêm giờ `t` → rolling H của mọi `T ∈ [t, t+H-1]` đổi. H = 72.
 
-Slice `new` lấy từ intermediate table `int_weather_hourly` với `_updated_at > last_successful_start_at` (qua macro `incremental_changed_filter`), **không** từ `MAX` trên Gold.
+Slice `new` lấy từ intermediate table `int_weather_archive_hourly` với `_updated_at > last_successful_start_at` (qua macro `incremental_changed_filter`), **không** từ `MAX` trên Gold.
 
 Macro incremental: `DELETE`+`INSERT` vào tên đích, không `__dbt_tmp`.
 

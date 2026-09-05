@@ -36,7 +36,7 @@
 
 {{ config(
     materialized = 'incremental',
-    unique_key = 'weather_hourly_key',
+    unique_key = 'weather_archive_hourly_key',
     tags = ['intermediate']
 ) }}
 
@@ -61,7 +61,7 @@
 
 {#
     `valid_time_utc IS NOT NULL` được bảo đảm ở staging view
-    (`stg_open_meteo__weather_hourly`); không lặp lại ở đây.
+    (`stg_open_meteo__weather_archive_hourly`); không lặp lại ở đây.
 #}
 WITH staged AS (
     SELECT
@@ -76,9 +76,9 @@ WITH staged AS (
         soil_moisture_7_to_28cm,
         _source_file,
         _ingested_at
-    FROM {{ ref('stg_open_meteo__weather_hourly') }}
+    FROM {{ ref('stg_open_meteo__weather_archive_hourly') }}
     {{ incremental_changed_filter(
-        source_ref = 'stg_weather_hourly',
+        source_ref = 'stg_weather_archive_hourly',
         change_column = '_ingested_at',
         prefix = 'WHERE'
     ) }}
@@ -109,7 +109,7 @@ incoming AS (
             '|',
             {{ grid_cell_id('weather_model', 'grid_latitude', 'grid_longitude') }},
             CAST(valid_time_utc AS VARCHAR)
-        )) AS weather_hourly_key,
+        )) AS weather_archive_hourly_key,
         {{ grid_cell_id('weather_model', 'grid_latitude', 'grid_longitude') }}
             AS grid_cell_id,
         weather_model,
@@ -141,7 +141,7 @@ FROM incoming
 -- Chỉ giữ dòng MỚI hoặc ĐỔI THẬT. Dòng trùng y hệt bị loại ở đây, nên chúng
 -- không vào slice và `_updated_at` cũ của chúng được giữ nguyên.
 LEFT JOIN {{ this }} AS existing
-    ON existing.weather_hourly_key = incoming.weather_hourly_key
-WHERE existing.weather_hourly_key IS NULL
+    ON existing.weather_archive_hourly_key = incoming.weather_archive_hourly_key
+WHERE existing.weather_archive_hourly_key IS NULL
    OR existing._row_hash <> incoming._row_hash
 {% endif %}

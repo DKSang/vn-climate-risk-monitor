@@ -25,7 +25,7 @@ Autoloader: file ledger (`ingestion`) + INSERT staging (`catalog1.silver.stg_*`)
             │
             ▼
 DuckLake (catalog1)
-  ├── Silver: staging (`stg_*`) + intermediate curated (`int_weather_hourly`, change-aware MERGE)
+  ├── Silver: staging (`stg_*`) + intermediate curated (`int_weather_archive_hourly`, change-aware MERGE)
   └── Gold: marts (`dim_*`, `bridge_*`, `fct_*`)
             │
             ▼
@@ -59,8 +59,8 @@ thương mại phải review lại giấy phép và deployment profile.
 |---|---|---|
 | Bronze files | Response nguồn nguyên bản, immutable; checksum ở PostgreSQL | `bronze/files/open_meteo/...` |
 | Silver staging | Parse cấu trúc, giữ mọi record/vintage, chưa validate | `silver.stg_weather_forecast` |
-| Silver curated | Type, validate, dedup, late data, mapping và join | `silver.int_weather_hourly` |
-| Gold | Dimensional model, KPI và aggregate nghiệp vụ | `gold.fct_rain_hourly` |
+| Silver curated | Type, validate, dedup, late data, mapping và join | `silver.int_weather_archive_hourly` |
+| Gold | Dimensional model, KPI và aggregate nghiệp vụ | `gold.fct_rain_archive_hourly` |
 
 Bronze có thể explode array nguồn thành grain nguyên tử vì payload nguyên bản đã
 được giữ trong `bronze/files`. Không được lọc, dedup hay áp business rule tại
@@ -73,21 +73,21 @@ Cấu trúc dbt theo chuẩn 3 lớp (`staging / intermediate / marts`); tên v�
 DuckLake vẫn theo medallion:
 
 ```text
-silver.stg_weather_hourly      staging append-only (autoloader ghi, NGOÀI dbt)
+silver.stg_weather_archive_hourly      staging append-only (autoloader ghi, NGOÀI dbt)
 silver.stg_weather_forecast
 
-silver.stg_open_meteo__weather_hourly   staging dbt: view mỏng trên source
-silver.stg_seed__ward                   staging dbt: view mỏng trên seed
+silver.stg_open_meteo__weather_archive_hourly   staging dbt: view mỏng trên source
+silver.stg_seed__ward                           staging dbt: view mỏng trên seed
 silver.stg_seed__ward_grid
 
-silver.int_weather_hourly      curated: dedup + MERGE change-aware (incremental)
+silver.int_weather_archive_hourly      curated: dedup + MERGE change-aware (incremental)
 
 gold.dim_grid
 gold.dim_ward
 gold.bridge_ward_grid
-gold.fct_rain_hourly
-gold.fct_rain_daily
-gold.fct_ward_rain_daily
+gold.fct_rain_archive_hourly
+gold.fct_rain_archive_daily
+gold.fct_ward_rain_archive_daily
 ```
 
 Tiền tố `stg_` đánh dấu lớp staging append-only (vật lý) hoặc view mỏng

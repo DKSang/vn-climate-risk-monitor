@@ -1,5 +1,5 @@
 process_key: rain_gold
-target: gold.fct_rain_hourly
+target: gold.fct_rain_archive_hourly
 scope: production
 
 sources:
@@ -8,15 +8,15 @@ sources:
   # lần chạy không có dữ liệu mới không kéo theo bất kỳ dòng Gold nào.
   # Đổi ref từ `weather_hourly` (2026-09-03, tái cấu trúc 3 lớp) — checkpoint
   # cũ theo ref cũ thành dead row, lần chạy kế full refresh một lần.
-  - ref: int_weather_hourly
+  - ref: int_weather_archive_hourly
     change_column: _updated_at
 
 checkpoint:
   safety_lag: 15 minutes
 
 runner:
-  # Chỉ marts. KHÔNG dùng `+tag:marts` — kéo int_weather_hourly vào đây sẽ
-  # chạy lại dedup với bounds của process SAI (source_ref stg_weather_hourly
+  # Chỉ marts. KHÔNG dùng `+tag:marts` — kéo int_weather_archive_hourly vào đây sẽ
+  # chạy lại dedup với bounds của process SAI (source_ref stg_weather_archive_hourly
   # không có trong bounds của rain_gold) và phá ranh giới hai process.
   select: "tag:marts"
 

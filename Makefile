@@ -1,4 +1,4 @@
-.PHONY: bootstrap bootstrap-env bootstrap-geography up down logs backup-metadata restore-metadata map-grid fetch-forecast fetch-archive backfill-archive load forecast-pipeline archive-pipeline quality quality-forecast quality-archive health health-alert seed dbt dbt-test freshness transform dbt-docs serve-api clean-lake lint
+.PHONY: bootstrap bootstrap-env bootstrap-geography up down logs backup-metadata restore-metadata map-grid fetch-forecast fetch-archive backfill-archive load forecast-pipeline archive-pipeline quality quality-forecast quality-archive health health-alert seed dbt dbt-test freshness transform transform-forecast dbt-docs serve-api clean-lake lint airflow-init airflow-logs airflow-shell
 
 # ==== Setup ====
 bootstrap-env:
@@ -140,6 +140,9 @@ transform: seed
 	uv run python scripts/run_processing.py run silver_weather
 	uv run python scripts/run_processing.py run rain_gold
 
+transform-forecast:
+	uv run python scripts/run_processing.py run forecast_gold
+
 # Tiến độ + lịch sử run của một process.
 PROCESS ?= rain_gold
 processing-status:
@@ -156,6 +159,20 @@ dbt-docs:
 # ==== Operational serving (read-only health API + /ops dashboard) ====
 serve-api:
 	uv run uvicorn serving.api.app.main:app --host 0.0.0.0 --port $${PORT:-8000}
+
+# ==== Airflow (orchestration) ====
+airflow-init:
+	docker compose exec postgres psql -U $${POSTGRES_USER:-vnclimate} -d $${POSTGRES_DB:-vnclimate} -c "CREATE SCHEMA IF NOT EXISTS airflow;"
+	docker compose exec airflow airflow db migrate
+	docker compose exec airflow airflow pools set \
+	  lakehouse_single_writer_pool 1 \
+	  "Single-writer lock: tranh xung dot DuckLake va quota Open-Meteo"
+
+airflow-logs:
+	docker compose logs -f airflow
+
+airflow-shell:
+	docker compose exec airflow bash
 
 # ==== Bảo trì lakehouse ====
 # on-run-end trong dbt_project.yml đã tự dọn sau mỗi lần build, NHƯNG giữ lại

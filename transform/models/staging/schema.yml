@@ -1,17 +1,38 @@
 version: 2
 
 models:
-  - name: stg_open_meteo__weather_hourly
+  - name: stg_open_meteo__weather_archive_hourly
     description: >
-      View mỏng trên staging vật lý `silver.stg_weather_hourly` (do autoloader
+      View mỏng trên staging vật lý `silver.stg_weather_archive_hourly` (do autoloader
       ghi ngoài đồ thị dbt). Chỉ chọn cột và loại dòng không có grain; KHÔNG
-      dedup — đó là việc của `int_weather_hourly`.
+      dedup — đó là việc của `int_weather_archive_hourly`.
     columns:
       - name: weather_model
         tests:
           - not_null
           - accepted_values:
               values: ['era5', 'ecmwf_ifs']
+      - name: valid_time_utc
+        tests: [not_null]
+      - name: grid_latitude
+        tests: [not_null]
+      - name: grid_longitude
+        tests: [not_null]
+      - name: _source_file
+        tests: [not_null]
+      - name: _ingested_at
+        tests: [not_null]
+
+  - name: stg_open_meteo__weather_forecast_hourly
+    description: >
+      View mỏng trên staging vật lý `silver.stg_weather_forecast` (do autoloader
+      ghi). Gán weather_model cố định 'ecmwf_ifs_fc' và loại dòng thiếu valid_time_utc.
+    columns:
+      - name: weather_model
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['ecmwf_ifs_fc']
       - name: valid_time_utc
         tests: [not_null]
       - name: grid_latitude

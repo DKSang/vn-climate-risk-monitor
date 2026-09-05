@@ -13,7 +13,7 @@ Usage:
     from vn_climate_risk_monitor.lakehouse import get_connection
 
     con = get_connection()
-    con.sql("SELECT * FROM gold.fct_rain_hourly LIMIT 5").show()
+    con.sql("SELECT * FROM gold.fct_rain_archive_hourly LIMIT 5").show()
 """
 
 from __future__ import annotations
@@ -87,8 +87,8 @@ def get_connection(
     """)
 
     # 2) Attach MỘT catalog. DuckLake suy đường vật lý là
-    #    <data_path>/<schema>/<table>, nên silver.stg_weather_hourly nằm ở
-    #    s3://<bucket>/silver/stg_weather_hourly/ — không cần catalog riêng để
+    #    <data_path>/<schema>/<table>, nên silver.stg_weather_archive_hourly nằm ở
+    #    s3://<bucket>/silver/stg_weather_archive_hourly/ — không cần catalog riêng để
     #    điều khiển path như bản hai-catalog trước đây.
     read_only_option = ", READ_ONLY" if read_only else ""
     pg_conn_str = postgres.ducklake_connection_string

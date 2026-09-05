@@ -53,12 +53,12 @@ models:
         description: "Số phường dùng chung ô này — để xếp hạng không nhân trọng số"
         tests: [not_null]
 
-  - name: fct_rain_hourly
+  - name: fct_rain_archive_hourly
     description: >
-      Mưa theo ô lưới × giờ + cửa sổ trượt 1/3/6/12/24h + dải kịch bản.
+      Mưa theo ô lưới × giờ (Archive) + cửa sổ trượt 1/3/6/12/24h + dải kịch bản.
       `rain_{N}h_mm` NULL = cửa sổ thiếu giờ.
     columns:
-      - name: rain_hourly_key
+      - name: rain_archive_hourly_key
         tests: [unique, not_null]
       - name: grid_cell_id
         tests:
@@ -71,7 +71,7 @@ models:
       - name: rain_date
         tests: [not_null]
       - name: _updated_at
-        description: "Kế thừa từ silver.int_weather_hourly — watermark của fact này"
+        description: "Kế thừa từ silver.int_weather_archive_hourly — watermark của fact này"
         tests: [not_null]
       - name: hanoi_rain_scenario_band
         tests:
@@ -82,10 +82,10 @@ models:
           - accepted_values:
               values: ['below_100', 'from_100_to_200', 'over_200_to_400', 'over_400']
 
-  - name: fct_rain_daily
-    description: "Mưa theo ô lưới × ngày (UTC). Full refresh từ fct_rain_hourly"
+  - name: fct_rain_archive_daily
+    description: "Mưa theo ô lưới × ngày (UTC, Archive). Full refresh từ fct_rain_archive_hourly"
     columns:
-      - name: rain_daily_key
+      - name: rain_archive_daily_key
         tests: [unique, not_null]
       - name: grid_cell_id
         tests:
@@ -98,10 +98,10 @@ models:
       - name: observed_hours
         tests: [not_null]
 
-  - name: fct_ward_rain_daily
-    description: "Mưa theo phường × ngày. Chiếu fct_rain_daily qua bridge"
+  - name: fct_ward_rain_archive_daily
+    description: "Mưa theo phường × ngày (Archive). Chiếu fct_rain_archive_daily qua bridge"
     columns:
-      - name: ward_rain_daily_key
+      - name: ward_rain_archive_daily_key
         tests: [unique, not_null]
       - name: ward_code
         tests:
@@ -111,3 +111,26 @@ models:
               field: ward_code
       - name: rain_date
         tests: [not_null]
+
+  - name: fct_rain_forecast_hourly
+    description: >
+      Mưa theo ô lưới × giờ (Forecast) + cửa sổ trượt 1/3/6/12/24h + dải kịch bản.
+    columns:
+      - name: rain_forecast_hourly_key
+        tests: [unique, not_null]
+      - name: grid_cell_id
+        tests: [not_null]
+      - name: valid_time_utc
+        tests: [not_null]
+      - name: forecast_date
+        tests: [not_null]
+      - name: _updated_at
+        tests: [not_null]
+      - name: hanoi_rain_scenario_band
+        tests:
+          - accepted_values:
+              values: ['below_50', 'from_50_to_under_70', 'from_70_to_100', 'over_100']
+      - name: vn_rain_band_24h
+        tests:
+          - accepted_values:
+              values: ['below_100', 'from_100_to_200', 'over_200_to_400', 'over_400']

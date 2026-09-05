@@ -1,13 +1,13 @@
 version: 2
 
 models:
-  - name: int_weather_hourly
+  - name: int_weather_archive_hourly
     description: >
       CURATED — một dòng hiện hành cho mỗi (ô lưới, giờ). Table incremental với
       MERGE change-aware: chỉ ghi dòng có `_row_hash` khác, nên lần chạy không
       có dữ liệu mới ghi đúng 0 dòng và `_updated_at` của phần còn lại đứng yên.
     columns:
-      - name: weather_hourly_key
+      - name: weather_archive_hourly_key
         description: "MD5(grid_cell_id | valid_time_utc) — merge key"
         tests: [unique, not_null]
       - name: _row_hash
@@ -28,5 +28,30 @@ models:
           - not_null
           - accepted_values:
               values: ['era5', 'ecmwf_ifs']
+      - name: valid_time_utc
+        tests: [not_null]
+
+  - name: int_weather_forecast_hourly
+    description: >
+      CURATED — dự báo mới nhất cho mỗi (ô lưới forecast, valid_time_utc).
+      Table incremental với MERGE change-aware.
+    columns:
+      - name: weather_forecast_hourly_key
+        description: "MD5(grid_cell_id | valid_time_utc) — merge key"
+        tests: [unique, not_null]
+      - name: _row_hash
+        tests: [not_null]
+      - name: _updated_at
+        description: "Chỉ nhích khi _row_hash đổi. Watermark của forecast Gold trên cột này."
+        tests: [not_null]
+      - name: is_active
+        tests: [not_null]
+      - name: grid_cell_id
+        tests: [not_null]
+      - name: weather_model
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['ecmwf_ifs_fc']
       - name: valid_time_utc
         tests: [not_null]

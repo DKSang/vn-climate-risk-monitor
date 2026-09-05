@@ -1,10 +1,10 @@
 /*
-    MART — mưa theo phường × ngày. Chiếu `fct_rain_daily` qua bridge.
+    MART — mưa theo phường × ngày (Archive). Chiếu `fct_rain_archive_daily` qua bridge.
 
     Vì sao chỉ ở grain NGÀY: 126 phường chỉ có 12 (era5) hoặc 48 (ecmwf_ifs) giá
     trị khác nhau ở mỗi giờ. Một fact phường × giờ sẽ là ~26 triệu dòng mà phần
     lớn là bản sao của nhau. Câu hỏi theo giờ ở cấp phường join
-    `bridge_ward_grid` (252 dòng) với `fct_rain_hourly` lúc query — rẻ hơn và
+    `bridge_ward_grid` (252 dòng) với `fct_rain_archive_hourly` lúc query — rẻ hơn và
     không có bảng nào phải giữ đồng bộ.
 
     KHÔNG khử trùng ở đây: mỗi phường một dòng là đúng grain. Việc "không nhân
@@ -23,7 +23,7 @@ SELECT
     MD5(CONCAT_WS(
         '|', bridge.ward_code, bridge.weather_model,
         CAST(daily.rain_date AS VARCHAR)
-    )) AS ward_rain_daily_key,
+    )) AS ward_rain_archive_daily_key,
     bridge.ward_code,
     bridge.weather_model,
     bridge.grid_cell_id,
@@ -40,6 +40,6 @@ SELECT
     daily.hours_rain_over_100,
     bridge.is_active AS ward_is_active,
     bridge._deactivated_at AS ward_grid_deactivated_at
-FROM {{ ref('fct_rain_daily') }} AS daily
+FROM {{ ref('fct_rain_archive_daily') }} AS daily
 INNER JOIN {{ ref('bridge_ward_grid') }} AS bridge
     ON bridge.grid_cell_id = daily.grid_cell_id

@@ -18,7 +18,7 @@ vào retry phản ứng của `land()` khi gặp 429); `autoloader` liệt kê s
 (một discovery run / nguồn, lease khi load), micro-batch, nạp staging DuckLake
 (`catalog1.silver.stg_*`) bằng SQL trong `sources/*.yml` + `*.sql`. Staging là
 append-only — mọi vintage được giữ nguyên; dedup theo (ô lưới, giờ) và MERGE
-change-aware thực hiện ở intermediate `silver.int_weather_hourly`. Forecast chạy
+change-aware thực hiện ở intermediate `silver.int_weather_archive_hourly`. Forecast chạy
 production hằng giờ cho đủ 126 phường/xã (9.072 dòng staging hourly, không
 rescued row). Archive: ERA5 trước 2017 (12 ô) + ECMWF IFS từ 2017 (48 ô);
 năm 2000 đã land đủ 1.106.784 ward-hour; backfill 2001–nay vận hành dần theo

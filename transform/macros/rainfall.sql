@@ -12,7 +12,7 @@
     Phải là MACRO chứ không phải `{% set %}` ở cấp file: dbt chỉ export block
     `macro` từ macro-paths, biến top-level không nhìn thấy được từ model.
 
-    Đổi danh sách này thì lookback incremental của `fct_rain_hourly` cũng phải
+    Đổi danh sách này thì lookback incremental của `fct_rain_archive_hourly` cũng phải
     đổi theo (max(windows) − 1 giờ) — nó nằm ở `{% set lookback %}` trong model.
 #}
 {% macro rain_windows() %}
