@@ -142,3 +142,45 @@
   {{ return({'relations': [target_relation]}) }}
 
 {% endmaterialization %}
+
+
+{#
+    Override `is_incremental()` của dbt cho khớp với materialization ở trên.
+
+    ── LỖI ĐƯỢC SỬA ────────────────────────────────────────────────────────────
+    Materialization quyết định full refresh khi THIẾU `processing_incremental`
+    (tức mọi lần chạy ngoài `scripts/run_processing.py`, gồm cả `make dbt`).
+    `is_incremental()` bản gốc KHÔNG biết biến đó — nó chỉ nhìn "bảng có tồn
+    tại" và "có cờ --full-refresh không".
+
+    Hai quyết định lệch nhau gây mất dữ liệu im lặng:
+
+        is_incremental() = true   -> model gắn đuôi `LEFT JOIN {{ this }}
+                                     WHERE key IS NULL OR hash <> hash`
+                                  -> chuỗi đã cập nhật cho ra ĐÚNG 0 dòng
+        materialization  = full   -> CREATE OR REPLACE TABLE AS (0 dòng)
+                                  -> bảng bị XOÁ SẠCH
+
+    Đo được: `dbt build` trần trên chuỗi đã đồng bộ đưa
+    `int_weather_archive_hourly` từ 5.818.584 dòng về 0, và kéo theo toàn bộ
+    Gold. Không test nào bắt được — not_null/unique đều PASS trên bảng rỗng.
+
+    Thêm đúng một điều kiện để `is_incremental()` nói cùng một thứ với
+    materialization. Hệ quả: `make dbt` trở nên CHẬM (rebuild toàn bộ) thay vì
+    PHÁ HOẠI. Muốn nhanh thì chạy qua `run_processing.py` như thiết kế.
+#}
+{% macro is_incremental() %}
+    {#-- Không chạy introspective query lúc parse. #}
+    {% if not execute %}
+        {{ return(False) }}
+    {% else %}
+        {% set relation = adapter.get_relation(this.database, this.schema, this.table) %}
+        {{ return(
+            relation is not none
+            and relation.type == 'table'
+            and model.config.materialized in ('incremental', 'incremental_microbatch')
+            and not should_full_refresh()
+            and var('processing_incremental', false)
+        ) }}
+    {% endif %}
+{% endmacro %}
