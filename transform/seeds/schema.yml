@@ -40,3 +40,38 @@ seeds:
         tests: [not_null]
       - name: longitude
         tests: [not_null]
+
+  - name: hanoi_flood_points_seed
+    description: >
+      Danh mục điểm úng ngập Hà Nội được trích xuất và đối chiếu từ Quyết định
+      2280/QĐ-UBND và Kế hoạch 138/KH-UBND. Toạ độ thực tế đã kiểm chứng qua geocoding.
+      Tuyệt đối không tự suy diễn dòng dữ liệu để đảm bảo anti-hallucination.
+    columns:
+      - name: point_id
+        description: "Mã định danh duy nhất của điểm úng ngập (ví dụ HN_FLD_001)"
+        tests: [unique, not_null]
+      - name: point_name
+        description: "Tên chi tiết mô tả vị trí điểm úng ngập"
+        tests: [not_null]
+      - name: ward_name
+        description: "Tên phường/xã hành chính chứa điểm úng ngập"
+        tests: [not_null]
+      - name: rain_scenario
+        description: "Kịch bản mưa gây ngập theo phân loại QĐ 2280"
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['scenario_50_70mm', 'scenario_70_100mm', 'scenario_over_100mm']
+      - name: latitude
+        description: "Vĩ độ WGS84 của điểm úng ngập"
+        tests: [not_null]
+      - name: longitude
+        description: "Kinh độ WGS84 của điểm úng ngập"
+        tests: [not_null]
+      - name: status
+        description: "Trạng thái điểm úng ngập (active / inactive)"
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['active', 'inactive']
+

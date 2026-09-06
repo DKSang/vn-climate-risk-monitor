@@ -30,6 +30,63 @@ models:
         description: "FALSE = không còn trong seed (giải thể/sáp nhập)"
         tests: [not_null]
 
+  - name: dim_flood_point
+    description: "Dimension các điểm úng ngập Hà Nội từ QĐ 2280"
+    columns:
+      - name: point_id
+        tests: [unique, not_null]
+      - name: point_name
+        tests: [not_null]
+      - name: ward_name
+        tests: [not_null]
+      - name: ward_code
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_ward')
+              field: ward_code
+      - name: rain_scenario
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['scenario_50_70mm', 'scenario_70_100mm', 'scenario_over_100mm']
+      - name: latitude
+        tests: [not_null]
+      - name: longitude
+        tests: [not_null]
+      - name: status
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['active', 'inactive']
+      - name: is_active
+        tests: [not_null]
+
+  - name: bridge_flood_point_grid
+    description: "Cầu nối điểm úng ngập ↔ ô lưới thời tiết theo từng weather_model"
+    columns:
+      - name: flood_point_grid_key
+        tests: [unique, not_null]
+      - name: point_id
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_flood_point')
+              field: point_id
+      - name: weather_model
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['era5', 'ecmwf_ifs']
+      - name: grid_cell_id
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_grid')
+              field: grid_cell_id
+      - name: is_active
+        tests: [not_null]
+
   - name: bridge_ward_grid
     description: "Phường ↔ ô lưới theo model. 252 dòng, đủ để join lúc query"
     columns:
