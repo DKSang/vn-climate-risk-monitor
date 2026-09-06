@@ -9,13 +9,16 @@
     câu chữ tiếng Việt của báo, nên mọi phép suy diễn (10 cm, "lưu thông chậm",
     "lúc 6h30") phải đối chiếu lại được với nguyên văn khi nghi ngờ.
 
-    ─── ward_code CÓ THỂ NULL, và đó là vấn đề chưa giải ───────────────────
+    ─── ward_code đến từ seed geocode RIÊNG, không từ nguồn ────────────────
     Nguồn ghi địa điểm theo đoạn đường và cột mốc ("ĐLTL đoạn Km 8+200",
-    "Đường QL32: Km14+500"), không ghi phường. Không có phép khớp chuỗi nào
-    biến chúng thành một trong 126 phường — việc đó cần geocoding thật.
-    Không đoán bừa: quan sát chưa gắn được phường sẽ ở lại bảng nhãn nhưng
-    KHÔNG vào tập huấn luyện, vì không có phường thì không có ô lưới, và không
-    có ô lưới thì không có lượng mưa để ghép.
+    "Đường QL32: Km14+500"), không ghi phường. Toạ độ và phường nằm ở
+    `flood_observation_geocode_seed` — máy geocode nháp, người soát.
+
+    Chỉ nhận `ward_code` của dòng đã `geocode_verified = true`. Dòng chưa soát
+    vẫn giữ toạ độ để hiển thị nhưng ward_code là NULL, nên không vào tập huấn
+    luyện. Không đoán bừa: không có phường thì không có ô lưới, không có ô lưới
+    thì không có lượng mưa để ghép, và một phường SAI còn tệ hơn không có
+    phường — nó ghép nhãn với lượng mưa của chỗ khác.
 */
 
 {{ config(materialized = 'view') }}
@@ -40,10 +43,21 @@ WITH seed_data AS (
         source_visualisation_version,
         source_updated_at_utc
     FROM {{ ref('flood_event_observations_seed') }}
+),
+
+geocode AS (
+    SELECT
+        observation_id,
+        latitude,
+        longitude,
+        ward_code,
+        geocode_match_type,
+        geocode_verified
+    FROM {{ ref('flood_observation_geocode_seed') }}
 )
 
 SELECT
-    observation_id,
+    s.observation_id,
     event_id,
     location_name_raw,
     {#
@@ -69,6 +83,11 @@ SELECT
     source_visualisation_id,
     source_visualisation_version,
     CAST(source_updated_at_utc AS TIMESTAMPTZ) AS source_updated_at_utc,
-    -- Chưa gắn được phường từ mô tả đoạn đường; chờ geocoding.
-    CAST(NULL AS VARCHAR) AS ward_code
-FROM seed_data
+    g.latitude,
+    g.longitude,
+    g.geocode_match_type,
+    COALESCE(g.geocode_verified, FALSE) AS geocode_verified,
+    -- CHỈ nhận phường đã được người soát. Toạ độ chưa soát vẫn giữ để hiển thị.
+    CASE WHEN g.geocode_verified THEN g.ward_code END AS ward_code
+FROM seed_data s
+LEFT JOIN geocode g USING (observation_id)

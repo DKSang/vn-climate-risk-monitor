@@ -167,6 +167,13 @@ serve-api:
 fetch-flood-observations:
 	uv run python -m vn_climate_risk_monitor.flood_observations
 
+# Geocode NHÁP cho quan sát ngập: Nominatim + point-in-polygon trên 126 ranh
+# giới phường. Mọi dòng ghi ra đều `geocode_verified=false` — phải soát tay rồi
+# đổi thành true, vì chỉ dòng true mới vào tập huấn luyện. Chạy lại an toàn:
+# dòng đã xác nhận được giữ nguyên, không hỏi lại và không bị ghi đè.
+geocode-flood-observations:
+	uv run python -m vn_climate_risk_monitor.flood_geocode
+
 # ==== Airflow (orchestration) ====
 airflow-init:
 	docker compose exec postgres psql -U $${POSTGRES_USER:-vnclimate} -d $${POSTGRES_DB:-vnclimate} -c "CREATE SCHEMA IF NOT EXISTS airflow;"
