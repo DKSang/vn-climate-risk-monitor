@@ -78,6 +78,31 @@ seeds:
         longitude: DOUBLE
         status: VARCHAR
         source_reference: VARCHAR
+    # Sinh bởi `make fetch-flood-observations`, không sửa tay: mọi dòng phải
+    # truy được về đúng một snapshot Flourish có version.
+    #
+    # `observed_at_local` giữ VARCHAR chứ không để dbt suy TIMESTAMP: 4/123
+    # dòng có giá trị RỖNG (nguồn không ghi giờ), và kiểu suy tự động sẽ biến
+    # ô rỗng thành NULL lẫn với ô có giờ hợp lệ mà không phân biệt được.
+    flood_event_observations_seed:
+      +column_types:
+        observation_id: VARCHAR
+        event_id: VARCHAR
+        location_name_raw: VARCHAR
+        depth_text_raw: VARCHAR
+        traffic_text_raw: VARCHAR
+        depth_min_cm: DOUBLE
+        depth_max_cm: DOUBLE
+        traffic_status: VARCHAR
+        observed_at_local: VARCHAR
+        as_of_local: VARCHAR
+        is_flooded: BOOLEAN
+        source_grade: VARCHAR
+        source_publisher: VARCHAR
+        source_url: VARCHAR
+        source_visualisation_id: VARCHAR
+        source_visualisation_version: VARCHAR
+        source_updated_at_utc: VARCHAR
 
 # KHÔNG có thư mục `bronze/` trong models: Bronze là việc của autoloader, dbt
 # chỉ ĐỌC qua `source()`. Ranh giới đó giữ ingest và transform tách bạch —

@@ -160,6 +160,13 @@ dbt-docs:
 serve-api:
 	uv run uvicorn serving.api.app.main:app --host 0.0.0.0 --port $${PORT:-8000}
 
+# Nhãn ngập từ bảng Flourish nhúng trong bài tường thuật VnExpress 07/10/2025.
+# Script DỪNG nếu version Flourish đổi hoặc invariant 123 dòng/122 ngập không
+# khớp — nguồn báo chí có thể được sửa sau khi đăng, và một seed nhãn tự đổi
+# dưới chân mô hình còn tệ hơn không có nhãn.
+fetch-flood-observations:
+	uv run python -m vn_climate_risk_monitor.flood_observations
+
 # ==== Airflow (orchestration) ====
 airflow-init:
 	docker compose exec postgres psql -U $${POSTGRES_USER:-vnclimate} -d $${POSTGRES_DB:-vnclimate} -c "CREATE SCHEMA IF NOT EXISTS airflow;"
