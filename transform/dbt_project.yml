@@ -64,6 +64,20 @@ seeds:
         longitude: DOUBLE
         region: VARCHAR
         climate_zone: VARCHAR
+    hanoi_flood_points_seed:
+      +column_types:
+        point_id: VARCHAR
+        point_name: VARCHAR
+        street_name: VARCHAR
+        ward_name: VARCHAR
+        district_name: VARCHAR
+        drainage_basin: VARCHAR
+        rain_scenario: VARCHAR
+        typical_depth_cm: VARCHAR
+        latitude: DOUBLE
+        longitude: DOUBLE
+        status: VARCHAR
+        source_reference: VARCHAR
 
 # KHÔNG có thư mục `bronze/` trong models: Bronze là việc của autoloader, dbt
 # chỉ ĐỌC qua `source()`. Ranh giới đó giữ ingest và transform tách bạch —
