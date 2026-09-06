@@ -108,8 +108,8 @@ models:
     description: >
       View mỏng cho quan sát ngập từ seed Flourish/VnExpress. Giữ nguyên các cột
       `*_raw` để mọi phép suy diễn từ câu chữ tiếng Việt còn đối chiếu được.
-      `ward_code` hiện luôn NULL — nguồn ghi địa điểm theo cột mốc đường, chưa
-      geocode được sang phường.
+      Nối với `flood_observation_geocode_seed` để lấy toạ độ và phường;
+      `ward_code` CHỈ non-NULL khi geocode đã được người soát.
     columns:
       - name: observation_id
         tests: [unique, not_null]

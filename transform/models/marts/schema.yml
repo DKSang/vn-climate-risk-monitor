@@ -125,12 +125,20 @@ models:
         tests: [not_null]
       - name: ward_code
         description: >
-          NULL cho tới khi geocode được mô tả đoạn đường sang phường. Không có
-          not_null ở đây là CÓ CHỦ ĐÍCH — ép not_null sẽ buộc phải đoán phường.
+          NULL cho tới khi geocode được NGƯỜI SOÁT. Không có not_null ở đây là
+          CÓ CHỦ ĐÍCH — ép not_null sẽ buộc phải đoán phường, mà phường sai ghép
+          nhãn với lượng mưa của chỗ khác.
         tests:
           - relationships:
               to: ref('dim_ward')
               field: ward_code
+      - name: geocode_verified
+        description: "Cổng duy nhất vào tập huấn luyện; chỉ người soát đặt true"
+        tests: [not_null]
+      - name: geocode_match_type
+        tests:
+          - accepted_values:
+              values: ['full_name', 'road_prefix', 'outside_hanoi', 'no_match']
       - name: observed_at_utc
         description: "NULL khi nguồn không ghi giờ; không suy đoán"
       - name: is_flooded

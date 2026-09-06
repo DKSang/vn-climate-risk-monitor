@@ -42,6 +42,10 @@ SELECT
     MD5(LOWER(TRIM(o.location_name_raw))) AS location_key,
     o.location_name_raw,
     o.ward_code,
+    o.latitude,
+    o.longitude,
+    o.geocode_match_type,
+    o.geocode_verified,
     o.observed_at_utc,
     CAST(o.observed_at_utc AS DATE) AS observed_date_utc,
     o.observed_at_precision,
@@ -65,8 +69,9 @@ SELECT
         - biết rõ GIỜ: ghép mưa 1h với một nhãn "sáng 7/10" là gán sai thời
           điểm, và sai thời điểm tệ hơn thiếu dòng;
         - có ward_code: không có phường thì không có ô lưới, không có ô lưới
-          thì không có lượng mưa để ghép. Hiện TOÀN BỘ quan sát trượt điều kiện
-          này vì nguồn ghi địa điểm theo cột mốc đường, chưa geocode.
+          thì không có lượng mưa để ghép. `ward_code` chỉ non-NULL khi geocode
+          ĐÃ ĐƯỢC NGƯỜI SOÁT (`stg_seed__flood_observation` gác sẵn), nên điều
+          kiện này đã bao hàm cả `geocode_verified`.
     #}
     (
         o.source_grade IN ('A', 'B', 'C')

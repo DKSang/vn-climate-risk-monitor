@@ -93,6 +93,46 @@ seeds:
         description: "Version Flourish — đổi số này là đổi nội dung nguồn"
         tests: [not_null]
 
+  - name: flood_observation_geocode_seed
+    description: >
+      Toạ độ và phường cho từng quan sát ngập. Sinh nháp bởi
+      `make geocode-flood-observations` (Nominatim + point-in-polygon trên 126
+      ranh giới ở `reference/s13_wards/`), sau đó NGƯỜI soát.
+
+      Tách khỏi `flood_event_observations_seed.csv` vì file đó do máy sinh và bị
+      ghi đè mỗi lần fetch lại; gộp chung thì công soát tay mất sạch.
+
+      `geocode_verified` là cổng duy nhất: chỉ dòng `true` mới vào
+      `is_training_eligible`. Script LUÔN ghi `false` và không bao giờ tự đổi
+      thành `true` — gán sai phường nghĩa là sai ô lưới, sai lượng mưa, nhãn
+      hỏng, mà nhãn hỏng tệ hơn thiếu nhãn.
+
+      Đọc `geocode_match_type` khi soát:
+        full_name     — khớp cả cụm mô tả, đáng tin nhất
+        road_prefix   — CHỈ khớp tên tuyến, trả điểm đại diện của cả tuyến.
+                        Đo được: Km14+500 và Km17+700 Quốc lộ 32, cách nhau
+                        ~3 km thực địa, nhận CÙNG một toạ độ. Phải chỉnh tay.
+        outside_hanoi — có toạ độ nhưng rơi ngoài 126 phường
+        no_match      — Nominatim không trả kết quả nào
+    columns:
+      - name: observation_id
+        tests:
+          - unique
+          - not_null
+          - relationships:
+              to: ref('flood_event_observations_seed')
+              field: observation_id
+      - name: ward_code
+        description: "Suy từ point-in-polygon, KHÔNG phải do Nominatim trả về"
+      - name: geocode_match_type
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['full_name', 'road_prefix', 'outside_hanoi', 'no_match']
+      - name: geocode_verified
+        description: "Chỉ người soát mới được đặt true"
+        tests: [not_null]
+
   - name: hanoi_flood_points_seed
     description: >
       Danh mục điểm úng ngập Hà Nội được trích xuất và đối chiếu từ Quyết định

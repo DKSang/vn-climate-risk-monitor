@@ -103,6 +103,23 @@ seeds:
         source_visualisation_id: VARCHAR
         source_visualisation_version: VARCHAR
         source_updated_at_utc: VARCHAR
+    # File NGƯỜI sửa, tách khỏi file máy sinh ở trên. Nối bằng observation_id.
+    # Tách vì `flood_event_observations_seed.csv` bị ghi đè mỗi lần fetch lại;
+    # gộp chung thì công soát toạ độ biến mất ở lần fetch kế tiếp.
+    flood_observation_geocode_seed:
+      +column_types:
+        observation_id: VARCHAR
+        location_name_raw: VARCHAR
+        query_sent: VARCHAR
+        latitude: DOUBLE
+        longitude: DOUBLE
+        # Zero-pad ('00070'). Để dbt suy kiểu sẽ thành BIGINT và mất số 0 đầu.
+        ward_code: VARCHAR
+        ward_name: VARCHAR
+        geocode_source: VARCHAR
+        geocode_match_type: VARCHAR
+        geocode_verified: BOOLEAN
+        review_note: VARCHAR
 
 # KHÔNG có thư mục `bronze/` trong models: Bronze là việc của autoloader, dbt
 # chỉ ĐỌC qua `source()`. Ranh giới đó giữ ingest và transform tách bạch —
