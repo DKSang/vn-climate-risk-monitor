@@ -71,6 +71,9 @@ expected_flooded_points
 official_disaster_risk_level
 ```
 
+`risk_score` của `gold.fct_flood_risk_score` là baseline nội bộ theo §10.1 —
+được tính, không được phát hành, và không phải `flood_probability`.
+
 Ngập do mưa đô thị (*pluvial flooding*) khác với lũ sông (*fluvial flooding*).
 Nhánh hiện tại chỉ nghiên cứu áp lực gây ngập do mưa. Mưa tích lũy nhiều ngày
 không thay thế cho lưu lượng hay mực nước sông.
@@ -477,9 +480,39 @@ công thức, station coverage và sai lệch giữa grid model với trạm.
 
 ## 10. Composite score
 
-Không phát hành composite score trong MVP. Một score kết hợp rolling rain, API,
-soil moisture hoặc runoff bằng trọng số thủ công sẽ che mất giả định và tạo cảm
-giác chính xác giả.
+**Không phát hành** composite score. Một score kết hợp rolling rain, API, soil
+moisture hoặc runoff bằng trọng số thủ công sẽ che mất giả định và tạo cảm giác
+chính xác giả.
+
+### 10.1 Ngoại lệ: baseline nội bộ để backtest (2026-09-06)
+
+Cấm *phát hành* không đồng nghĩa cấm *tính*. Không có một đường cơ sở nào thì
+cũng không có gì để đo mô hình sau này tốt hơn hay tệ hơn cái gì.
+
+Được phép tồn tại trong Gold, **không** được lên dashboard và **không** được
+gọi là xác suất:
+
+```text
+gold.fct_flood_risk_score       # hazard_index, vulnerability_index, risk_score
+gold.fct_flood_backtest_metric  # POD/FAR/CSI theo từng luật, tách theo trận
+```
+
+Điều kiện bắt buộc kèm theo:
+
+- trọng số khai báo tập trung ở `macros/flood_risk.sql`, có version
+  (`flood_risk_version()`), không rải trong model;
+- `risk_score` trên thang 0–100 để **so sánh giữa các phường trong cùng một
+  giờ**, không đọc như phần trăm khả năng ngập;
+- `hazard_index` (đo được từ Open-Meteo) và `vulnerability_index` (suy từ lịch
+  sử quan sát) phải là hai cột riêng, để lớp phục vụ hiển thị được áp lực mưa
+  mà không buộc phải hiển thị điểm tổng hợp;
+- version `heuristic_baseline_v1_uncalibrated` **chưa hiệu chỉnh với bất kỳ sự
+  kiện ngập nào**. Trọng số do người đặt, không do dữ liệu học.
+
+Chỉ được gỡ trạng thái nội bộ khi POD/FAR/CSI đã đo trên nhãn thật, holdout
+theo trọn một trận mưa, và thắng được luật đang chạy (`hanoi_1h_band`).
+
+### 10.2 Chỉ số đánh giá
 
 Khi có nhãn ngập theo `ward/event_window`, có thể huấn luyện mô hình đã hiệu
 chỉnh và công bố xác suất. Train/test phải tách theo toàn bộ trận mưa hoặc theo
@@ -627,8 +660,17 @@ Còn mở:
 - **K1:** định nghĩa định lượng cho “trên 100 mm/h kéo dài nhiều giờ”;
 - **K3:** quy tắc event 6 giờ khô đã gắn version `wet_gt_0_1mm_six_dry_hours_v1`,
   chưa hiệu chỉnh với trận mưa Hà Nội;
-- **K4:** archive đã có soil moisture ERA5/IFS; SMI và ET vẫn chưa thành KPI;
-- **K5:** nguồn nhãn sự kiện để hiệu chỉnh POD/FAR/CSI;
+- **K4:** archive đã có soil moisture ERA5/IFS; ET chưa thành KPI. SMI đã có
+  trong `fct_flood_training_feature` (chuẩn hoá p10–p90 theo ô lưới × tháng từ
+  `gold.fct_rain_climatology`). Giá trị THÔ không dùng được: trong trận
+  07/10/2025 nó nằm phẳng ở 0,430–0,439 và đã gần bão hoà trước khi mưa bắt
+  đầu; cùng số đó sau chuẩn hoá cho SMI ≈ 0,95;
+- **K5:** đường dẫn nhãn đã dựng —
+  `seeds/flood_observation_seed.csv` → `gold.fct_flood_event_observation` →
+  `gold.fct_flood_training_feature` → `gold.fct_flood_backtest_metric`, với
+  thang nguồn A–D và cờ `is_training_eligible`. **Seed hiện còn RỖNG**, nên
+  POD/FAR/CSI chưa có số; toàn bộ chuỗi đã kiểm chứng bằng fixture, chưa kiểm
+  chứng bằng sự kiện thật;
 - **K6:** có pin forecast model để tăng tính tái lập hay tiếp tục Best Match và
   quản lý thay đổi bằng vintage/metadata.
 

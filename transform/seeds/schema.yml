@@ -41,6 +41,58 @@ seeds:
       - name: longitude
         tests: [not_null]
 
+  - name: flood_event_observations_seed
+    description: >
+      Quan sát ngập THỰC TẾ, sinh bởi `make fetch-flood-observations` từ bảng
+      Flourish nhúng trong bài tường thuật VnExpress ngày 07/10/2025.
+      Khác `hanoi_flood_points_seed`: file đó là DANH MỤC điểm có nguy cơ theo
+      QĐ 2280, file này là BẰNG CHỨNG một địa điểm đã ngập vào một thời điểm.
+
+      Không sửa tay. Mọi dòng gắn với đúng một `source_visualisation_version`;
+      script từ chối ghi nếu version Flourish đổi mà chưa được review.
+
+      GIỚI HẠN NHÃN — 122/123 dòng là nhãn dương. Đây là danh sách điểm ĐANG
+      ngập, nên nó đo được recall (POD) nhưng KHÔNG đo được FAR hay CSI: luật
+      "báo động mọi nơi" cũng đạt POD = 1,0 trên tập này. Vắng mặt trong bài báo
+      KHÔNG phải bằng chứng không ngập — báo chí chỉ đăng điểm nổi bật. Nhãn âm
+      đáng tin phải đến từ danh sách toàn thành phố của cơ quan chức năng.
+    columns:
+      - name: observation_id
+        description: "Khoá quan sát, ví dụ VNE_20251007_001"
+        tests: [unique, not_null]
+      - name: event_id
+        description: "Gom các quan sát cùng một trận mưa"
+        tests: [not_null]
+      - name: location_name_raw
+        description: "Địa điểm ĐÚNG NGUYÊN VĂN nguồn; chưa gắn được phường"
+        tests: [not_null]
+      - name: observed_at_local
+        description: >
+          ISO-8601 kèm offset +07:00, suy từ cụm "lúc 6h30" trong cột lưu thông.
+          RỖNG khi nguồn không ghi giờ — không được đoán.
+      - name: is_flooded
+        description: "false chỉ khi nguồn ghi rõ nước đã rút"
+        tests: [not_null]
+      - name: traffic_status
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['receded', 'passable', 'slow', 'diverted', 'impassable', 'unknown']
+      - name: source_grade
+        description: >
+          A = báo cáo Sở Xây dựng/Ban Duy tu; B = báo chí dẫn nguyên bảng chính
+          thức; C = bài báo có ảnh, thời gian và địa điểm cụ thể;
+          D = mạng xã hội hoặc phản ánh chưa xác minh.
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['A', 'B', 'C', 'D']
+      - name: source_url
+        tests: [not_null]
+      - name: source_visualisation_version
+        description: "Version Flourish — đổi số này là đổi nội dung nguồn"
+        tests: [not_null]
+
   - name: hanoi_flood_points_seed
     description: >
       Danh mục điểm úng ngập Hà Nội được trích xuất và đối chiếu từ Quyết định

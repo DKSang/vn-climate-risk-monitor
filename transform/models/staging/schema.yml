@@ -104,3 +104,26 @@ models:
           - accepted_values:
               values: ['active', 'inactive']
 
+  - name: stg_seed__flood_observation
+    description: >
+      View mỏng cho quan sát ngập từ seed Flourish/VnExpress. Giữ nguyên các cột
+      `*_raw` để mọi phép suy diễn từ câu chữ tiếng Việt còn đối chiếu được.
+      `ward_code` hiện luôn NULL — nguồn ghi địa điểm theo cột mốc đường, chưa
+      geocode được sang phường.
+    columns:
+      - name: observation_id
+        tests: [unique, not_null]
+      - name: event_id
+        tests: [not_null]
+      - name: is_flooded
+        tests: [not_null]
+      - name: observed_at_precision
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['hour', 'unknown']
+      - name: source_grade
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['A', 'B', 'C', 'D']
