@@ -7,16 +7,26 @@
 #}
 
 {#
-    Cửa sổ của phase hiện tại. Thêm 48/72 khi làm drought.
+    Cửa sổ của phase hiện tại.
+
+    48/72 giờ là điều kiện tiền kỳ (đất đã bão hoà, lưu vực chưa kịp rút) —
+    đầu vào bắt buộc cho feature nguy cơ ngập, không chỉ cho drought. Trận
+    07/10/2025 là ví dụ: `rain_1h_mm` đỉnh toàn thành phố chỉ 24,8 mm nên mọi
+    ngưỡng 1 giờ đều im, trong khi mưa dồn nhiều ngày mới là thứ gây ngập.
+
+    Trên FORECAST, horizon chỉ dài 72 giờ và rolling không được đi qua ranh giới
+    vintage, nên `rain_72h_mm` chỉ non-null ở đúng giờ cuối horizon và
+    `rain_48h_mm` từ giờ thứ 48 trở đi. NULL ở đây là đúng nghĩa "cửa sổ thiếu
+    giờ", không phải lỗi.
 
     Phải là MACRO chứ không phải `{% set %}` ở cấp file: dbt chỉ export block
     `macro` từ macro-paths, biến top-level không nhìn thấy được từ model.
 
-    Đổi danh sách này thì lookback incremental của `fct_rain_archive_hourly` cũng phải
-    đổi theo (max(windows) − 1 giờ) — nó nằm ở `{% set lookback %}` trong model.
+    Lookback incremental của các fact hourly SUY RA từ danh sách này
+    (max(windows) − 1 giờ), không phải gõ tay — xem `{% set lookback %}`.
 #}
 {% macro rain_windows() %}
-    {{ return([1, 3, 6, 12, 24]) }}
+    {{ return([1, 3, 6, 12, 24, 48, 72]) }}
 {% endmacro %}
 
 
