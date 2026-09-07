@@ -131,6 +131,17 @@ def test_every_shipped_config_is_loadable() -> None:
         assert config.sources
 
 
+def test_rain_gold_soft_delete_covers_forecast_bridge_keys() -> None:
+    """Bridge có ba model; nguồn anti-join không được chỉ liệt kê hai archive."""
+    config = ProcessConfig.from_yaml(Path("processing/rain_gold.yml"))
+    bridge_rule = next(
+        rule for rule in config.soft_delete if rule.target == "gold.bridge_ward_grid"
+    )
+
+    assert "ecmwf_ifs_fc" in bridge_rule.key_source_sql
+    assert "LPAD(CAST(ward_code AS VARCHAR), 5, '0')" in bridge_rule.key_source_sql
+
+
 def test_cli_module_is_importable() -> None:
     """Hồi quy: script từng tên `scripts/processing.py` và tự che package
     `processing` (thư mục script đứng đầu sys.path) — mọi lệnh đều ImportError."""

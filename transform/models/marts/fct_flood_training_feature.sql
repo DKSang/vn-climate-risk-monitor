@@ -145,6 +145,41 @@ vulnerability AS (
        AND prior.observed_at_utc < l.observed_at_utc
        AND prior.is_active = TRUE
     GROUP BY l.observation_id
+),
+
+catalogue_by_ward AS (
+    /*
+        `dim_flood_point` có thể có nhiều điểm trong cùng một phường. Join trực
+        tiếp dimension này vào grain observation sẽ nhân dòng (đã thấy hai
+        điểm ở Thanh Xuân và hai điểm ở Yên Hoà). Aggregate về đúng một dòng
+        mỗi ward trước khi nối để bảo toàn grain `observation_id`.
+
+        `catalogue_rain_scenario` lấy kịch bản nhạy nhất trong phường; drainage
+        basin chỉ công bố một tên khi mọi điểm cùng lưu vực, nếu không ghi rõ
+        `multiple` thay vì chọn ngẫu nhiên một dòng.
+    */
+    SELECT
+        ward_code,
+        COUNT(*) AS catalogue_point_count,
+        CASE
+            WHEN COUNT(DISTINCT drainage_basin) = 1 THEN MIN(drainage_basin)
+            ELSE 'multiple'
+        END AS drainage_basin,
+        CASE MIN(
+            CASE rain_scenario
+                WHEN 'scenario_50_70mm' THEN 1
+                WHEN 'scenario_70_100mm' THEN 2
+                WHEN 'scenario_over_100mm' THEN 3
+                ELSE 4
+            END
+        )
+            WHEN 1 THEN 'scenario_50_70mm'
+            WHEN 2 THEN 'scenario_70_100mm'
+            WHEN 3 THEN 'scenario_over_100mm'
+        END AS catalogue_rain_scenario
+    FROM {{ ref('dim_flood_point') }}
+    WHERE is_active = TRUE AND status = 'active'
+    GROUP BY ward_code
 )
 
 SELECT
@@ -202,11 +237,12 @@ SELECT
     v.historical_flood_frequency,
     v.historical_mean_depth_cm,
     v.historical_impassable_rate,
-    fp.drainage_basin,
-    fp.rain_scenario AS catalogue_rain_scenario,
+    catalogue.drainage_basin,
+    catalogue.catalogue_rain_scenario,
+    COALESCE(catalogue.catalogue_point_count, 0) AS catalogue_point_count,
     -- Chỉ báo 0/1 chứ không phải BOOLEAN: cột này tồn tại để đi vào tổng có
     -- trọng số của V, và phải cùng kiểu với cột cùng tên ở fct_flood_risk_score.
-    CAST(CASE WHEN fp.point_id IS NOT NULL THEN 1.0 ELSE 0.0 END AS DOUBLE)
+    CAST(CASE WHEN catalogue.ward_code IS NOT NULL THEN 1.0 ELSE 0.0 END AS DOUBLE)
         AS is_known_flood_point,
 
     -- ── Dải kịch bản hiện hành, để so mô hình với ngưỡng đang dùng ──────
@@ -226,6 +262,5 @@ LEFT JOIN {{ ref('fct_rain_climatology') }} clim
     Điểm danh mục QĐ 2280 ở CÙNG phường. Nguồn quan sát không ghi point_id, và
     ghép theo tên đoạn đường thì không đáng tin, nên chỉ dùng được ở mức phường.
 #}
-LEFT JOIN {{ ref('dim_flood_point') }} fp
-    ON fp.ward_code = l.ward_code
-   AND fp.is_active = TRUE
+LEFT JOIN catalogue_by_ward catalogue
+    ON catalogue.ward_code = l.ward_code

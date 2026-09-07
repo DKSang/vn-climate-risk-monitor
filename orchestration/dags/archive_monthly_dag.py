@@ -15,7 +15,7 @@ from datetime import UTC, datetime
 
 from airflow import DAG
 from airflow.operators.bash import BashOperator
-from common import DEFAULT_ARGS, POOL, PROJECT_DIR
+from common import DEFAULT_ARGS, POOL, PROJECT_DIR, PROVERO_ARCHIVE_CMD
 
 archive_args = {
     **DEFAULT_ARGS,
@@ -55,7 +55,15 @@ with DAG(
         bash_command='uv run load-sources "open_meteo_archive open_meteo_ifs"',
     )
 
-    # 3. Quality check cho layer staging archive
+    # 3a. Provero quality gate: quét bảng staging archive ngay sau load
+    quality_provero_archive = BashOperator(
+        task_id="quality_provero_archive",
+        pool=POOL,
+        cwd=PROJECT_DIR,
+        bash_command=PROVERO_ARCHIVE_CMD,
+    )
+
+    # 3b. Quality check tổng quan cho layer staging archive
     quality_archive = BashOperator(
         task_id="quality_archive",
         pool=POOL,
@@ -107,6 +115,7 @@ with DAG(
     (
         fetch_archive
         >> load_archive
+        >> quality_provero_archive
         >> quality_archive
         >> dbt_seed
         >> transform_silver

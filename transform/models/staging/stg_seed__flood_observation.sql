@@ -52,7 +52,14 @@ geocode AS (
         longitude,
         ward_code,
         geocode_match_type,
-        geocode_verified
+        geocode_verified,
+        anchor_type,
+        confidence AS geocode_confidence,
+        coordinate_basis,
+        needs_manual_validation,
+        NULLIF(TRIM(verified_at_utc), '') AS verified_at_utc,
+        NULLIF(TRIM(verification_method), '') AS verification_method,
+        review_note
     FROM {{ ref('flood_observation_geocode_seed') }}
 )
 
@@ -86,6 +93,13 @@ SELECT
     g.latitude,
     g.longitude,
     g.geocode_match_type,
+    g.anchor_type,
+    g.geocode_confidence,
+    g.coordinate_basis,
+    COALESCE(g.needs_manual_validation, TRUE) AS needs_manual_validation,
+    CAST(g.verified_at_utc AS TIMESTAMPTZ) AS geocode_verified_at_utc,
+    g.verification_method,
+    g.review_note AS geocode_review_note,
     COALESCE(g.geocode_verified, FALSE) AS geocode_verified,
     -- CHỈ nhận phường đã được người soát. Toạ độ chưa soát vẫn giữ để hiển thị.
     CASE WHEN g.geocode_verified THEN g.ward_code END AS ward_code

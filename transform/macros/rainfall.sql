@@ -86,8 +86,10 @@
     CASE
         WHEN {{ column }} IS NULL THEN NULL
         WHEN {{ column }} > 100 THEN 'over_100'
-        WHEN {{ column }} >= 50 THEN 'from_50_to_100'
-        ELSE 'below_50'
+        WHEN {{ column }} >= 70 THEN 'from_70_to_100'
+        WHEN {{ column }} >= 50 THEN 'from_50_to_under_70'
+        WHEN {{ column }} >= 30 THEN 'from_30_to_under_50'
+        ELSE 'below_30'
     END
 {% endmacro %}
 
@@ -95,9 +97,11 @@
 {% macro vn_rain_band_24h(column) %}
     CASE
         WHEN {{ column }} IS NULL THEN NULL
-        WHEN {{ column }} > 400 THEN 'over_400'
-        WHEN {{ column }} > 200 THEN 'over_200_to_400'
-        WHEN {{ column }} >= 100 THEN 'from_100_to_200'
-        ELSE 'below_100'
+        WHEN {{ column }} > 300 THEN 'over_300'
+        WHEN {{ column }} > 200 THEN 'from_200_to_300'
+        WHEN {{ column }} >= 150 THEN 'from_150_to_under_200'
+        WHEN {{ column }} >= 100 THEN 'from_100_to_under_150'
+        WHEN {{ column }} >= 50 THEN 'from_50_to_under_100'
+        ELSE 'below_50'
     END
 {% endmacro %}

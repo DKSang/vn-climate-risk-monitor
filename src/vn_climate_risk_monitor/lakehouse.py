@@ -36,6 +36,7 @@ def get_connection(
     *,
     catalog_name: str = PRIMARY_CATALOG,
     read_only: bool = False,
+    snapshot_version: int | None = None,
 ) -> duckdb.DuckDBPyConnection:
     """
     Return a DuckDB connection with the DuckLake catalog attached.
@@ -46,6 +47,9 @@ def get_connection(
         Name for the DuckLake catalog.
     read_only : bool
         If True, attach catalog in read-only mode (for serving layer).
+    snapshot_version : int | None
+        Nếu có, attach DuckLake tại đúng snapshot catalog này. Dùng cho serving
+        để toàn bộ bảng trong một request cùng nhìn một trạng thái đã publish.
 
     Returns
     -------
@@ -90,12 +94,20 @@ def get_connection(
     #    <data_path>/<schema>/<table>, nên silver.stg_weather_archive_hourly nằm ở
     #    s3://<bucket>/silver/stg_weather_archive_hourly/ — không cần catalog riêng để
     #    điều khiển path như bản hai-catalog trước đây.
-    read_only_option = ", READ_ONLY" if read_only else ""
+    attach_options = [
+        f"DATA_PATH 's3://{minio.bucket}'",
+        f"METADATA_SCHEMA '{PRIMARY_METADATA_SCHEMA}'",
+    ]
+    if snapshot_version is not None:
+        if snapshot_version < 0:
+            raise ValueError("snapshot_version phải là số không âm")
+        attach_options.append(f"SNAPSHOT_VERSION {snapshot_version}")
+    if read_only:
+        attach_options.append("READ_ONLY")
     pg_conn_str = postgres.ducklake_connection_string
     con.execute(
         f"ATTACH 'ducklake:postgres:{pg_conn_str}' "
-        f"AS {catalog_name} (DATA_PATH 's3://{minio.bucket}', "
-        f"METADATA_SCHEMA '{PRIMARY_METADATA_SCHEMA}'{read_only_option});"
+        f"AS {catalog_name} ({', '.join(attach_options)});"
     )
 
     # 3) Use catalog by default

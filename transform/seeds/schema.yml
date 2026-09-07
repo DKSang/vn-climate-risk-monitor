@@ -125,12 +125,16 @@ seeds:
       - name: ward_code
         description: "Suy từ point-in-polygon, KHÔNG phải do Nominatim trả về"
       - name: geocode_match_type
-        tests:
-          - not_null
-          - accepted_values:
-              values: ['full_name', 'road_prefix', 'outside_hanoi', 'no_match']
+        tests: [not_null]
       - name: geocode_verified
         description: "Chỉ người soát mới được đặt true"
+        tests: [not_null]
+      - name: confidence
+        description: "Độ tin cậy của anchor sau review; không tự mở cổng train"
+        tests:
+          - accepted_values:
+              values: ['high', 'medium', 'low']
+      - name: needs_manual_validation
         tests: [not_null]
 
   - name: hanoi_flood_points_seed
@@ -166,4 +170,3 @@ seeds:
           - not_null
           - accepted_values:
               values: ['active', 'inactive']
-

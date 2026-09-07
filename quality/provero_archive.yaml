@@ -1,0 +1,23 @@
+# Kiểm tra chất lượng bronze archive — chạy NGAY SAU `make load`, chỗ dbt không với tới
+# (autoloader ghi bronze archive ngoài đồ thị dbt).
+#
+# type: ducklake -> connector riêng trong autoloader/provero_ducklake.py, ATTACH
+# catalog trước khi query. KHÔNG glob Parquet: glob đọc cả dòng đã xoá và file
+# của snapshot cũ.
+
+source:
+  type: ducklake
+  connection: "ducklake:postgres:dbname=vnclimate host=127.0.0.1 port=5432 user=vnclimate password=vnclimate"
+  table: catalog1.silver.stg_weather_archive_hourly
+
+checks:
+  - row_count:
+      min: 1
+  - not_null: [grid_latitude, grid_longitude, valid_time_utc, weather_model]
+  - range:
+      column: precipitation_mm
+      min: 0
+      max: 500
+  - accepted_values:
+      column: weather_model
+      values: ['era5', 'ecmwf_ifs']

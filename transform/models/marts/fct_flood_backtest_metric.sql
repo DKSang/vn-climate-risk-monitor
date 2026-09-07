@@ -82,7 +82,7 @@ rule_outcome AS (
         NULL,
         event_id,
         is_flooded,
-        vn_rain_band_24h <> 'below_100',
+        vn_rain_band_24h NOT IN ('below_50', 'from_50_to_under_100'),
         NULL
     FROM predicted
 
@@ -104,6 +104,8 @@ SELECT
     threshold_value,
     event_id,
     COUNT(*) AS observation_count,
+    COUNT(*) FILTER (WHERE is_flooded) AS positive_observation_count,
+    COUNT(*) FILTER (WHERE NOT is_flooded) AS negative_observation_count,
     COUNT(*) FILTER (WHERE is_flooded AND predicted_flood) AS hit_count,
     COUNT(*) FILTER (WHERE is_flooded AND NOT predicted_flood) AS miss_count,
     COUNT(*) FILTER (WHERE NOT is_flooded AND predicted_flood) AS false_alarm_count,
@@ -115,20 +117,32 @@ SELECT
     CAST(COUNT(*) FILTER (WHERE is_flooded AND predicted_flood) AS DOUBLE)
         / NULLIF(COUNT(*) FILTER (WHERE is_flooded), 0) AS pod,
 
-    -- FAR = F / (H + F), trên tập đã quan sát.
-    CAST(COUNT(*) FILTER (WHERE NOT is_flooded AND predicted_flood) AS DOUBLE)
-        / NULLIF(COUNT(*) FILTER (WHERE predicted_flood), 0) AS far,
+    -- FAR chỉ được công bố khi tập đánh giá có nhãn âm. Tập toàn dương trả
+    -- NULL thay vì 0: không quan sát được false alarm không có nghĩa là mô
+    -- hình không tạo false alarm ngoài tập bài báo.
+    CASE WHEN COUNT(*) FILTER (WHERE NOT is_flooded) > 0
+        THEN CAST(
+            COUNT(*) FILTER (WHERE NOT is_flooded AND predicted_flood) AS DOUBLE
+        ) / NULLIF(COUNT(*) FILTER (WHERE predicted_flood), 0)
+    END AS far,
 
     -- CSI = H / (H + M + F).
-    CAST(COUNT(*) FILTER (WHERE is_flooded AND predicted_flood) AS DOUBLE)
-        / NULLIF(COUNT(*) FILTER (WHERE is_flooded OR predicted_flood), 0) AS csi,
+    CASE WHEN COUNT(*) FILTER (WHERE is_flooded) > 0
+               AND COUNT(*) FILTER (WHERE NOT is_flooded) > 0
+        THEN CAST(
+            COUNT(*) FILTER (WHERE is_flooded AND predicted_flood) AS DOUBLE
+        ) / NULLIF(COUNT(*) FILTER (WHERE is_flooded OR predicted_flood), 0)
+    END AS csi,
 
     -- Brier chỉ có nghĩa với luật cho ra số liên tục, và chỉ khi số đó đã được
     -- hiệu chỉnh thành xác suất. Ở version hiện tại nó CHƯA — giữ cột để theo
     -- dõi thay đổi giữa các version, không để công bố.
-    AVG(POWER(
-        predicted_probability - CASE WHEN is_flooded THEN 1.0 ELSE 0.0 END, 2
-    )) AS brier_score,
+    CASE WHEN COUNT(*) FILTER (WHERE is_flooded) > 0
+               AND COUNT(*) FILTER (WHERE NOT is_flooded) > 0
+        THEN AVG(POWER(
+            predicted_probability - CASE WHEN is_flooded THEN 1.0 ELSE 0.0 END, 2
+        ))
+    END AS brier_score,
 
     '{{ flood_risk_version() }}' AS risk_model_version,
     {{ processing_updated_at() }} AS _updated_at
