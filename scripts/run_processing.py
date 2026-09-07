@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """CLI cho processing framework: chạy, xem, và rewind checkpoint có audit.
 
-    run             chạy dbt và CHỈ advance checkpoint khi dbt exit 0
+    run             chạy dbt (incremental/full-refresh), checkpoint chỉ advance khi xanh
     status          checkpoint hiện tại + vài run gần nhất
     reprocess-from  kéo checkpoint lùi để tính lại (thay cho UPDATE tay)
     abandon         đóng run RUNNING mồ côi
@@ -83,6 +83,9 @@ def parse_timestamp(value: str) -> datetime:
 
 # ── commands ─────────────────────────────────────────────────────────────────
 def cmd_run(args: argparse.Namespace) -> int:
+    if args.full_refresh and not (args.reason and args.reason.strip()):
+        raise SystemExit("--full-refresh cần --reason để audit")
+
     config = load_config(args.process_key)
     select = None if args.full_graph else (args.select or config.runner.select)
     install_signal_handlers()
@@ -124,7 +127,12 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     try:
         result = run_process(
-            config=config, repository=repository, execute=execute
+            config=config,
+            repository=repository,
+            execute=execute,
+            force_full_refresh=args.full_refresh,
+            actor=actor(),
+            reason=args.reason,
         )
     finally:
         connection.close()  # type: ignore[attr-defined]
@@ -281,6 +289,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--full-graph",
         action="store_true",
         help="bỏ qua runner.select, build toàn bộ project",
+    )
+    run.add_argument(
+        "--full-refresh",
+        action="store_true",
+        help="rebuild toàn bộ model đã select; không xóa checkpoint",
+    )
+    run.add_argument(
+        "--reason",
+        help="lý do audit; bắt buộc khi dùng --full-refresh",
     )
     run.set_defaults(func=cmd_run)
 

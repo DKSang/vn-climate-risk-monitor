@@ -17,10 +17,12 @@ GET + PUT JSON lên `bronze/files` trên MinIO (`fetch.land`, song song qua
 vào retry phản ứng của `land()` khi gặp 429); `autoloader` liệt kê storage, checkpoint Postgres
 (một discovery run / nguồn, lease khi load), micro-batch, nạp staging DuckLake
 (`catalog1.silver.stg_*`) bằng SQL trong `sources/*.yml` + `*.sql`. Staging là
-append-only — mọi vintage được giữ nguyên; dedup theo (ô lưới, giờ) và MERGE
-change-aware thực hiện ở intermediate `silver.int_weather_archive_hourly`. Forecast chạy
+append-only; dedup theo grain nghiệp vụ và MERGE
+change-aware thực hiện ở intermediate. Forecast chạy
 production hằng giờ cho đủ 126 phường/xã (9.072 dòng staging hourly, không
-rescued row). Archive: ERA5 trước 2017 (12 ô) + ECMWF IFS từ 2017 (48 ô);
+rescued row). Silver/Gold giữ từng logical run hoàn chỉnh để audit/backtest;
+view Gold `fct_rain_forecast_current_hourly` phục vụ riêng run mới nhất.
+Archive: ERA5 trước 2017 (12 ô) + ECMWF IFS từ 2017 (48 ô);
 năm 2000 đã land đủ 1.106.784 ward-hour; backfill 2001–nay vận hành dần theo
 quota Free API, không chạy burst cả lịch sử.
 

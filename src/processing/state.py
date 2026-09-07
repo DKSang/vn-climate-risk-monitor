@@ -77,6 +77,8 @@ class ProcessingRepository:
         target_ref: str,
         started_at: datetime,
         bounds: Mapping[str, object],
+        actor: str = "runner",
+        reason: str | None = None,
     ) -> UUID:
         """Mở một run RUNNING. Chỉ cho phép một run/process cùng lúc."""
         run_id = uuid4()
@@ -86,8 +88,9 @@ class ProcessingRepository:
                     """
                     INSERT INTO processing.processing_runs (
                         processing_run_id, process_key, scope, target_ref,
-                        started_at_utc, status, bounds, checkpoint_candidate
-                    ) VALUES (%s, %s, %s, %s, %s, 'RUNNING', %s, %s)
+                        started_at_utc, status, bounds, checkpoint_candidate,
+                        actor, reason
+                    ) VALUES (%s, %s, %s, %s, %s, 'RUNNING', %s, %s, %s, %s)
                     """,
                     (
                         run_id,
@@ -100,6 +103,8 @@ class ProcessingRepository:
                         # time, không phải end time. Row đến trong lúc run chạy sẽ
                         # được lần sau nhặt, thay vì bị nhảy qua.
                         started_at,
+                        actor,
+                        reason,
                     ),
                 )
         except psycopg.errors.UniqueViolation as error:

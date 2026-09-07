@@ -5,7 +5,7 @@
 - Cửa sổ đọc: Tự động lùi 2 tháng đến hiện tại để vét late-arriving data.
 - Idempotency: Planner tự động bỏ qua tháng đã đủ giờ trong Bronze.
 - Flow trọn vẹn: Fetch -> Autoloader -> Quality -> Seed -> Transform Silver
-  (change-aware merge) -> Transform Gold -> Quality Gold -> Clean snapshots.
+  (change-aware merge) -> Transform Gold -> Quality Gold.
 - Khóa tài nguyên: Sử dụng pool `lakehouse_single_writer_pool` (1 slot).
 """
 
@@ -103,15 +103,7 @@ with DAG(
         bash_command="uv run python scripts/healthcheck.py --scope archive --require-gold",
     )
 
-    # 8. Dọn dẹp snapshot cũ và file mồ côi trên MinIO (Parquet retention)
-    cleanup_lake = BashOperator(
-        task_id="cleanup_lake",
-        pool=POOL,
-        cwd=PROJECT_DIR,
-        bash_command="uv run python scripts/clean_lake.py",
-    )
-
-    # Pipeline tuần tự: fetch -> load -> quality -> seed -> silver -> gold -> check -> cleanup
+    # Maintenance chạy ở DAG lakehouse_maintenance_daily, không gắn với build.
     (
         fetch_archive
         >> load_archive
@@ -121,5 +113,4 @@ with DAG(
         >> transform_silver
         >> transform_gold
         >> healthcheck_gold
-        >> cleanup_lake
     )

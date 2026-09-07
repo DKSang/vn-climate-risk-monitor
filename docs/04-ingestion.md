@@ -349,6 +349,13 @@ response order. Array lệch độ
 dài, field mới hoặc giá trị sai type được giữ trong `_rescued_data`. JSON root,
 location count hoặc `hourly.time` vi phạm contract làm file `FAILED`.
 
+Sau staging, dbt trích `forecast_run_id` từ thư mục
+`run_YYYYMMDDTHHMMSS` trong `_source_file`. Silver/Gold giữ grain
+`forecast_run_id × grid_cell_id × valid_time_utc`; chỉ run đủ 126 location ×
+`OPEN_METEO_FORECAST_HOURS` mới được publish. Dashboard/API đọc
+`gold.fct_rain_forecast_current_hourly`, còn bảng history không bị prune khi
+horizon hết hạn.
+
 ## 13. Recovery matrix
 
 | Điểm lỗi | PostgreSQL | MinIO | Recovery |

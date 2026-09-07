@@ -1,4 +1,4 @@
-.PHONY: bootstrap bootstrap-env bootstrap-geography up down logs backup-metadata restore-metadata map-grid fetch-forecast fetch-archive backfill-archive load forecast-pipeline archive-pipeline quality quality-forecast quality-archive health health-alert seed dbt dbt-test freshness transform transform-forecast dbt-docs serve-api clean-lake lint airflow-init airflow-logs airflow-shell
+.PHONY: bootstrap bootstrap-env bootstrap-geography up down logs backup-metadata restore-metadata map-grid fetch-forecast fetch-archive backfill-archive load forecast-pipeline archive-pipeline quality quality-forecast quality-archive health health-alert seed dbt dbt-test freshness transform transform-forecast processing-full-refresh dbt-docs serve-api maintain-lake clean-lake lint airflow-init airflow-logs airflow-shell
 
 # ==== Setup ====
 bootstrap-env:
@@ -64,14 +64,14 @@ load:
 	uv run load-sources $(SOURCE)
 
 # Pipeline production tuần tự. Make dừng ngay nếu một bước lỗi, nên quality fail
-# sẽ chặn dbt build và không publish Silver/Gold từ Bronze không đạt chuẩn.
-# Forecast dừng ở Bronze: phase này chưa có Gold forecast (xem
-# docs/superpowers/plans/2026-09-03-lean-medallion.md §8). Vẫn fetch + nạp đều
-# để khi thêm nhánh Gold thì đã có sẵn lịch sử, không phải backfill lại.
+# sẽ chặn dbt build. Silver/Gold giữ forecast vintage; current serving view chỉ
+# chiếu logical run mới nhất.
 forecast-pipeline:
 	$(MAKE) fetch-forecast EXEC=1
 	$(MAKE) load SOURCE=open_meteo_forecast
 	$(MAKE) quality-forecast
+	$(MAKE) transform-forecast
+	$(MAKE) health SCOPE=forecast REQUIRE_GOLD=1
 
 # Bồi đuôi cả ERA5/IFS, chặn transform khi Bronze/control plane không đạt chuẩn.
 archive-pipeline:
@@ -81,7 +81,7 @@ archive-pipeline:
 	$(MAKE) transform
 	$(MAKE) health SCOPE=archive REQUIRE_GOLD=1
 
-# ==== Data quality: Provero quét bronze NGAY SAU load ====
+# ==== Data quality: Provero quét staging NGAY SAU load ====
 # dbt không với tới staging vì autoloader ghi ngoài đồ thị dbt.
 # Đọc QUA catalog DuckLake (không glob Parquet — glob thấy cả dòng đã xoá).
 #
@@ -144,6 +144,7 @@ transform: seed
 	uv run python scripts/run_processing.py run rain_gold
 
 transform-forecast:
+	uv run python scripts/run_processing.py run forecast_silver
 	uv run python scripts/run_processing.py run forecast_gold
 
 # Tiến độ + lịch sử run của một process.
@@ -155,6 +156,16 @@ processing-status:
 processing-rewind:
 	uv run python scripts/run_processing.py reprocess-from $(PROCESS) \
 		--from "$(FROM)" --reason "$(REASON)"
+
+# Migration có audit cho thay đổi business rule/schema trên model incremental.
+# Ví dụ: make processing-full-refresh PROCESS=forecast_gold \
+#   SELECT='fct_rain_forecast_hourly+' REASON='rain band v2'
+SELECT ?=
+processing-full-refresh:
+	@test -n "$(strip $(REASON))" || \
+		(echo "REASON là bắt buộc cho full refresh" >&2; exit 2)
+	uv run python scripts/run_processing.py run $(PROCESS) --full-refresh \
+		--reason "$(REASON)" $(if $(strip $(SELECT)),--select "$(SELECT)",)
 
 dbt-docs:
 	cd transform && uv run dbt docs generate --profiles-dir . && uv run dbt docs serve --profiles-dir .
@@ -201,9 +212,12 @@ airflow-shell:
 	docker compose exec airflow bash
 
 # ==== Bảo trì lakehouse ====
-# on-run-end trong dbt_project.yml đã tự dọn sau mỗi lần build, NHƯNG giữ lại
-# 7 ngày snapshot để còn time-travel -> file của các build trong 7 ngày vẫn nằm đó.
-# Target này squash sạch: bỏ toàn bộ lịch sử snapshot, chỉ giữ phiên bản hiện tại.
+# Retention thường kỳ: giữ snapshot 7 ngày; file chỉ xóa sau 2 ngày
+# nằm trong deletion queue. DAG daily gọi cùng lệnh này.
+maintain-lake:
+	uv run python scripts/maintain_lake.py
+
+# Emergency squash: xóa toàn bộ time-travel, chỉ giữ current version.
 clean-lake:
 	uv run python scripts/clean_lake.py
 

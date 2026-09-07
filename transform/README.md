@@ -5,15 +5,15 @@ model Silver/Gold được lưu trong DuckLake (Postgres metadata, MinIO Parquet
 
 ## Rainfall forecast KPI
 
-- `silver.forecast_hourly`: snapshot forecast hoàn chỉnh mới nhất, không trộn
-  logical retrieval slot.
-- `silver.bridge_hanoi_ward_forecast_grid`: centroid phường → returned forecast
-  grid gần nhất trong snapshot.
-- `gold.fct_rainfall_forecast_hourly`: rolling 1/3/6/12/24/48/72 giờ, band QĐ 2280
+- `silver.int_weather_forecast_hourly`: lịch sử các retrieval run hoàn chỉnh,
+  grain `forecast_run_id × grid_cell_id × valid_time_utc`.
+- `gold.bridge_ward_grid`: centroid phường → returned forecast grid gần nhất.
+- `gold.fct_rain_forecast_hourly`: lịch sử forecast-vintage, rolling
+  1/3/6/12/24/48/72 giờ, band QĐ 2280
   và dải mưa QĐ 18.
-- `gold.fct_rainfall_forecast_summary`: totals và peaks trong horizon tương lai.
-- hai model `gold.fct_ward_rainfall_forecast_*`: projection forcing từ grid sang
-  126 phường.
+- `gold.fct_rain_forecast_current_hourly`: view serving của run mới nhất, chỉ
+  giữ các giờ chưa hết hạn.
+- `gold.fct_flood_risk_score`: projection forcing từ grid sang 126 phường.
 
 ## Historical và climate KPI
 
@@ -77,6 +77,24 @@ Từ thư mục repository:
 
 ```bash
 make transform
+```
+
+Khi business rule/schema của model incremental thay đổi, chạy migration
+full-refresh qua processing framework để giữ audit và checkpoint an toàn:
+
+```bash
+make processing-full-refresh PROCESS=rain_gold \
+  SELECT='fct_rain_archive_hourly+' REASON='rain band v2'
+```
+
+Khi triển khai migration thêm `forecast_run_id`, full-refresh cả hai process
+forecast một lần; các lượt hourly sau đó quay lại incremental:
+
+```bash
+make processing-full-refresh PROCESS=forecast_silver \
+  REASON='migrate forecast to vintage history'
+make processing-full-refresh PROCESS=forecast_gold \
+  REASON='migrate forecast to vintage history'
 ```
 
 Hoặc từ thư mục `transform/`:

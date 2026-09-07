@@ -23,7 +23,8 @@ Tài liệu này hướng dẫn kiến trúc lớp phục vụ (Serving Layer) v
 ```text
                ┌────────────────────────────────────────────────────────┐
                │              Gold Marts (DuckLake / S3)                │
-               │  - fct_rain_forecast_hourly                            │
+               │  - fct_rain_forecast_hourly (history)                  │
+               │  - fct_rain_forecast_current_hourly (serving view)     │
                │  - dim_ward / dim_flood_point / bridge_ward_grid       │
                └──────────────────────────┬─────────────────────────────┘
                                           │

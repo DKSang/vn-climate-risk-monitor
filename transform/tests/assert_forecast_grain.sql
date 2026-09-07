@@ -1,7 +1,6 @@
--- Grain của lớp curated forecast là (grid_cell_id, valid_time_utc).
--- Giữ dự báo mới nhất cho mỗi valid_time_utc của từng ô lưới.
--- Dedup hỏng thì fct_rain_forecast_hourly nhân đôi dữ liệu.
-SELECT grid_cell_id, valid_time_utc, COUNT(*) AS rows_at_grain
+-- Mỗi retrieval run giữ riêng cùng một valid_time để audit/backtest vintage.
+-- Dedup chỉ được loại requested point trùng returned grid trong cùng run.
+SELECT forecast_run_id, grid_cell_id, valid_time_utc, COUNT(*) AS rows_at_grain
 FROM {{ ref('int_weather_forecast_hourly') }}
-GROUP BY grid_cell_id, valid_time_utc
+GROUP BY forecast_run_id, grid_cell_id, valid_time_utc
 HAVING COUNT(*) > 1

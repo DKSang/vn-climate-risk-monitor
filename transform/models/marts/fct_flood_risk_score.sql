@@ -31,11 +31,8 @@ WITH ward_forecast AS (
     /*
         CHỈ horizon hiện hành.
 
-        `fct_rain_forecast_hourly` là incremental và giữ lại mọi vintage đã
-        chạy, nên không lọc thì bảng này chấm điểm cả những dự báo đã hết hạn
-        từ nhiều tháng trước và trộn chúng vào cùng một bảng — đúng thứ
-        docs/05 §3.4 cấm. Ranh giới "từ giờ hiện tại trở đi" là cùng định nghĩa
-        mà lớp serving đang dùng (`_CURRENT_HORIZON_CTE`).
+        View current tách khỏi bảng history để risk score không trộn
+        nhiều forecast run cho cùng valid_time.
     */
     SELECT
         bwg.ward_code,
@@ -47,7 +44,7 @@ WITH ward_forecast AS (
         f.hanoi_rain_scenario_band,
         f.vn_rain_band_12h,
         f.vn_rain_band_24h
-    FROM {{ ref('fct_rain_forecast_hourly') }} f
+    FROM {{ ref('fct_rain_forecast_current_hourly') }} f
     JOIN {{ ref('bridge_ward_grid') }} bwg
         ON bwg.grid_cell_id = f.grid_cell_id
        AND bwg.weather_model = 'ecmwf_ifs_fc'

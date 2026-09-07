@@ -1,6 +1,6 @@
 /*
-    MART — mưa dự báo theo ô lưới × giờ, kèm cửa sổ trượt và dải kịch bản.
-    Grain: (grid_cell_id, valid_time_utc)
+    MART HISTORY — mưa dự báo theo vintage × ô lưới × giờ.
+    Rolling partition theo forecast_run_id để không trộn hai vintage.
 */
 
 {{ config(
@@ -22,13 +22,14 @@ WITH source AS (
         change_column = '_updated_at',
         expand_backward = lookback,
         expand_forward = lookback,
-        keys = ['grid_cell_id']
+        keys = ['forecast_run_id', 'grid_cell_id']
     ) }}
 ),
 
 windowed AS (
     SELECT
         grid_cell_id,
+        forecast_run_id,
         valid_time_utc,
         precipitation_mm,
         rain_mm,
@@ -38,14 +39,20 @@ windowed AS (
         _source_file,
         _ingested_at,
         _updated_at,
-        {{ rolling_rain_sums(windows, partition_by='grid_cell_id') }}
+        {{ rolling_rain_sums(
+            windows,
+            partition_by='forecast_run_id, grid_cell_id'
+        ) }}
     FROM source
 ),
 
 published AS (
     SELECT
-        MD5(CONCAT_WS('|', grid_cell_id, CAST(valid_time_utc AS VARCHAR)))
+        MD5(CONCAT_WS(
+            '|', forecast_run_id, grid_cell_id, CAST(valid_time_utc AS VARCHAR)
+        ))
             AS rain_forecast_hourly_key,
+        forecast_run_id,
         grid_cell_id,
         valid_time_utc,
         CAST(valid_time_utc AS DATE) AS forecast_date,

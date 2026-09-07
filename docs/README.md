@@ -53,9 +53,12 @@ make fetch-forecast EXEC=1   # land dự báo slot giờ hiện tại
 make load                    # autoloader nạp file raw vào silver.stg_*
 make transform               # dbt build qua processing framework
 make processing-status       # checkpoint + lịch sử run
+make processing-full-refresh PROCESS=rain_gold \
+  SELECT='fct_rain_archive_hourly+' REASON='rain band v2'
 make quality                 # Provero quét silver staging
 make backfill-archive        # fetch+load archive theo năm
-make clean-lake              # squash lakehouse, bỏ lịch sử snapshot
+make clean-lake              # emergency: squash lakehouse, bỏ time-travel
+make maintain-lake           # snapshot 7 ngày, file deletion grace 2 ngày
 make dbt-docs                # sinh và mở dbt docs
 ```
 

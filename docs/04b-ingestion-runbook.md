@@ -241,11 +241,12 @@ khi `lease_expires_at_utc` quá hạn (mặc định 300s) — chỉ cần chờ
 ### Hết dung lượng MinIO
 
 ```bash
-make clean-lake     # squash snapshot, bỏ file Parquet của phiên bản cũ
+make maintain-lake  # retention bình thường: snapshot 7d, file grace 2d
+make clean-lake     # emergency: squash snapshot, bỏ time-travel
 ```
 
-Mất time-travel, giữ bản hiện tại. `on-run-end` của dbt đã tự dọn với chính sách
-giữ 7 ngày; lệnh này là dọn mạnh tay.
+`maintain-lake` là đường production. `clean-lake` mất time-travel và chỉ
+dùng khi thiếu disk nghiêm trọng.
 
 ## Thêm nguồn mới
 
@@ -312,10 +313,11 @@ discovery:{timestamp}` mỗi lần load. Một run `SUCCEEDED` / nguồn
 (`logical_key=discovery`) nhận thêm file PENDING. Lease trên `PROCESSING` vẫn
 là crash recovery (flock chỉ chống hai process sống cùng lúc).
 
-**Bronze INSERT, dedup và MERGE change-aware ở Silver (2026-08-22, refactor 2026-09-03).**
-Không MERGE theo row id ở Bronze: forecast và archive giữ MỌI vintage trong bảng
-staging `silver.stg_*` (mỗi vintage là dữ liệu phân tích), và dedup theo (ô lưới, giờ)
-kèm MERGE change-aware thực hiện ở intermediate `silver.int_weather_archive_hourly`. Chi phí: re-land
+**Bronze INSERT, dedup và MERGE change-aware ở Silver (2026-08-22, refactor 2026-09-07).**
+Không MERGE theo row id ở staging. Archive và forecast staging đều giữ dài hạn.
+Forecast dedup theo `(forecast_run_id, model, ô lưới, valid_time)` để không ghi
+đè các vintage; archive dedup theo `(model, ô lưới, valid_time)`. MERGE
+change-aware thực hiện ở intermediate. Chi phí: re-land
 cùng tháng làm staging phình (đo 2026-08-21: 3.062.736 dòng thô cho 1.106.784
 khóa duy nhất) — chấp nhận vì Parquet trên MinIO local gần như miễn phí.
 

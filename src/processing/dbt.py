@@ -69,6 +69,11 @@ def build_command(
         "--vars",
         json.dumps(build_vars(bounds)),
     ]
+    # Cờ dbt thật phải khớp với processing bounds. Chỉ set var=false là
+    # đủ cho materialization custom hiện tại, nhưng không đủ cho package/model
+    # dùng semantics full-refresh chuẩn của dbt.
+    if not bounds.is_incremental:
+        command.append("--full-refresh")
     if select:
         command += ["--select", *select.split()]
     return command

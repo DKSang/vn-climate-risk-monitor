@@ -1,10 +1,9 @@
 /*
-    INTERMEDIATE — một dòng hiện hành cho mỗi (ô lưới forecast, valid_time).
-    (Lớp SILVER_CLEAN trong Silver Layer Flow: dedup + upsert change-aware.)
+    INTERMEDIATE — lịch sử forecast vintage theo
+    (forecast_run_id, ô lưới forecast, valid_time).
 
-    Giữ dự báo MỚI NHẤT cho mỗi valid_time_utc của từng ô lưới.
-    Khi một đợt fetch mới có dự báo cập nhật cho cùng giờ, nó sẽ ghi đè bản cũ
-    nếu _row_hash thay đổi.
+    Mỗi logical run được giữ để audit và backtest forecast sau này.
+    Chỉ run đủ 126 location × forecast_hours mới được publish.
 */
 
 {{ config(
@@ -35,6 +34,7 @@ WITH staged AS (
         showers_mm,
         precipitation_probability_pct,
         weather_code,
+        forecast_run_id,
         _source_file,
         _ingested_at
     FROM {{ ref('stg_open_meteo__weather_forecast_hourly') }}
@@ -45,12 +45,37 @@ WITH staged AS (
     ) }}
 ),
 
--- Grain là (model, ô, valid_time_utc). Lần ingest MỚI NHẤT thắng (latest forecast).
+run_hours AS (
+    SELECT
+        forecast_run_id,
+        valid_time_utc,
+        COUNT(*) AS locations
+    FROM staged
+    WHERE forecast_run_id <> ''
+    GROUP BY forecast_run_id, valid_time_utc
+),
+
+complete_runs AS (
+    SELECT forecast_run_id
+    FROM run_hours
+    GROUP BY forecast_run_id
+    HAVING COUNT(*) = {{ var('forecast_expected_hours', 72) }}
+       AND MIN(locations) = {{ var('forecast_expected_locations', 126) }}
+       AND MAX(locations) = {{ var('forecast_expected_locations', 126) }}
+),
+
+-- Các requested point có thể trùng returned grid; dedup trong TỪNG run.
 deduplicated AS (
     SELECT *
     FROM staged
+    WHERE forecast_run_id IN (SELECT forecast_run_id FROM complete_runs)
     QUALIFY ROW_NUMBER() OVER (
-        PARTITION BY weather_model, grid_latitude, grid_longitude, valid_time_utc
+        PARTITION BY
+            forecast_run_id,
+            weather_model,
+            grid_latitude,
+            grid_longitude,
+            valid_time_utc
         ORDER BY
             _ingested_at DESC,
             _source_file DESC
@@ -64,6 +89,7 @@ incoming AS (
     SELECT
         MD5(CONCAT_WS(
             '|',
+            forecast_run_id,
             {{ grid_cell_id('weather_model', 'grid_latitude', 'grid_longitude') }},
             CAST(valid_time_utc AS VARCHAR)
         )) AS weather_forecast_hourly_key,
@@ -80,6 +106,7 @@ incoming AS (
             COALESCE(CAST({{ column }} AS VARCHAR), ''){{ "," if not loop.last }}
             {%- endfor %}
         )) AS _row_hash,
+        forecast_run_id,
         _source_file,
         _ingested_at
     FROM deduplicated

@@ -248,6 +248,59 @@ def test_all_checkpoints_present_is_incremental() -> None:
     }
 
 
+def test_forced_full_refresh_keeps_checkpoint_for_audit_but_omits_bound() -> None:
+    checkpoint = at(10, 0)
+
+    bounds = compute_bounds(
+        build_config(),
+        {"archive_hourly": checkpoint},
+        at(11, 0),
+        force_full_refresh=True,
+    )
+
+    assert bounds.is_incremental is False
+    assert bounds.sources[0].checkpoint_before == checkpoint
+    assert bounds.sources[0].lower_bound is None
+
+
+def test_forced_full_refresh_requires_reason() -> None:
+    repository = FakeRepository(
+        clock=[at(11, 0)], checkpoints={"archive_hourly": at(10, 0)}
+    )
+
+    with pytest.raises(ValueError, match="reason"):
+        run_process(
+            config=build_config(),
+            repository=repository,
+            execute=lambda b: None,
+            force_full_refresh=True,
+        )
+
+    assert repository.begun == []
+
+
+def test_forced_full_refresh_is_audited_and_advances_on_success() -> None:
+    repository = FakeRepository(
+        clock=[at(11, 0), at(11, 5)],
+        checkpoints={"archive_hourly": at(10, 0)},
+    )
+    seen: list[Any] = []
+
+    run_process(
+        config=build_config(),
+        repository=repository,
+        execute=seen.append,
+        force_full_refresh=True,
+        actor="deployer",
+        reason="rain band v2",
+    )
+
+    assert seen[0].is_incremental is False
+    assert repository.begun[0]["actor"] == "deployer"
+    assert repository.begun[0]["reason"] == "rain band v2"
+    assert repository.checkpoints["archive_hourly"] == at(11, 0)
+
+
 # ── audit ─────────────────────────────────────────────────────────────────────
 def test_run_records_bounds_for_audit() -> None:
     repository = FakeRepository(
