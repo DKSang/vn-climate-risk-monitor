@@ -14,8 +14,9 @@ thiếu nhãn. Nominatim với địa chỉ dạng cột mốc đường ("ĐLTL
 rất dễ trả về một kết quả TRÔNG hợp lý nhưng sai. `is_training_eligible` vì vậy
 chỉ nhận dòng đã được người xác nhận.
 
-Chạy lại script là AN TOÀN: dòng đã `geocode_verified = true` được giữ nguyên,
-không bị hỏi lại và không bị ghi đè.
+Chạy lại script là AN TOÀN: mặc định mọi dòng đã có đều được giữ nguyên để
+không xoá review đang làm dở. Chỉ `--refresh-unverified` mới hỏi lại các dòng
+chưa xác nhận; dòng `geocode_verified = true` luôn được giữ nguyên.
 """
 
 from __future__ import annotations
@@ -58,6 +59,18 @@ CSV_FIELDS = (
     "geocode_match_type",
     "geocode_verified",
     "review_note",
+    "anchor_type",
+    "confidence",
+    "coordinate_basis",
+    "coordinate_changed_from_input",
+    "ward_changed_from_input",
+    "original_latitude",
+    "original_longitude",
+    "original_ward_code",
+    "original_ward_name",
+    "needs_manual_validation",
+    "verified_at_utc",
+    "verification_method",
 )
 
 
@@ -195,6 +208,14 @@ def main() -> None:
         default=0,
         help="Chỉ geocode N dòng đầu (để thử nhanh); 0 = tất cả",
     )
+    parser.add_argument(
+        "--refresh-unverified",
+        action="store_true",
+        help=(
+            "Geocode lại cả dòng chưa verified. Mặc định giữ nguyên mọi dòng đã "
+            "có để không xoá review_note/anchor thủ công còn đang chờ duyệt."
+        ),
+    )
     arguments = parser.parse_args()
 
     with arguments.observations.open(encoding="utf-8") as handle:
@@ -203,19 +224,24 @@ def main() -> None:
         raise SystemExit(f"{arguments.observations} rỗng — chạy fetch trước")
 
     existing = read_existing(arguments.output)
-    kept = sum(1 for row in existing.values() if is_verified(row))
+    verified_count = sum(1 for row in existing.values() if is_verified(row))
     connection = ward_lookup_connection()
 
     pending = [
         row
         for row in observations
-        if not is_verified(existing.get(row["observation_id"], {}))
+        if row["observation_id"] not in existing
+        or (
+            arguments.refresh_unverified
+            and not is_verified(existing.get(row["observation_id"], {}))
+        )
     ]
     if arguments.limit:
         pending = pending[: arguments.limit]
 
     print(
-        f"{len(observations)} quan sát · giữ nguyên {kept} dòng đã xác nhận · "
+        f"{len(observations)} quan sát · giữ nguyên {len(existing)} dòng "
+        f"({verified_count} đã xác nhận) · "
         f"geocode {len(pending)} dòng (~{len(pending) * 2 * 1.1 / 60:.0f} phút tối đa)"
     )
 
@@ -248,6 +274,18 @@ def main() -> None:
             # LUÔN false. Chỉ người soát mới được đổi thành true.
             "geocode_verified": "false",
             "review_note": "",
+            "anchor_type": result.match_type,
+            "confidence": "",
+            "coordinate_basis": "nominatim",
+            "coordinate_changed_from_input": "false",
+            "ward_changed_from_input": "false",
+            "original_latitude": "",
+            "original_longitude": "",
+            "original_ward_code": "",
+            "original_ward_name": "",
+            "needs_manual_validation": "true",
+            "verified_at_utc": "",
+            "verification_method": "",
         }
         if index % 20 == 0:
             print(f"  … {index}/{len(pending)}")
@@ -257,9 +295,14 @@ def main() -> None:
         for row in observations
         if row["observation_id"] in results
     ]
+    verified_after = sum(1 for row in ordered if is_verified(row))
     arguments.output.parent.mkdir(parents=True, exist_ok=True)
     with arguments.output.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=CSV_FIELDS)
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=CSV_FIELDS,
+            lineterminator="\n",
+        )
         writer.writeheader()
         writer.writerows(ordered)
 
@@ -267,8 +310,9 @@ def main() -> None:
         f"\nĐã ghi {len(ordered)} dòng vào {arguments.output}\n"
         f"  Nominatim trả kết quả : {matched}/{len(pending)}\n"
         f"  Rơi đúng vào 126 phường: {ward_hit}/{len(pending)}\n"
-        f"\nMỌI dòng đang geocode_verified=false. Soát tay rồi đổi thành true;\n"
-        f"chỉ dòng true mới vào tập huấn luyện. Chạy lại script không đụng chúng."
+        f"  Đã xác nhận           : {verified_after}/{len(ordered)}\n"
+        "\nChỉ dòng geocode_verified=true mới vào tập huấn luyện; "
+        "chạy lại mặc định giữ nguyên toàn bộ review."
     )
 
 

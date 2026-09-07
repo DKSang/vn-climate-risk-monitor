@@ -53,6 +53,19 @@ seeds:
   transform:
     +database: catalog1
     +schema: seed
+    # Artifact audit trung gian để người review; canonical seed ở dưới mới là
+    # input của DAG. Không publish nhầm file này thành một bảng production.
+    hanoi_flood_regeocoded_123_audit:
+      +enabled: false
+    ward_grid_map_seed:
+      +column_types:
+        model: VARCHAR
+        ward_code: VARCHAR
+        ward_latitude: DOUBLE
+        ward_longitude: DOUBLE
+        grid_latitude: DOUBLE
+        grid_longitude: DOUBLE
+        elevation_m: DOUBLE
     ward_coordinates_seed:
       +column_types:
         location_key: INTEGER
@@ -120,6 +133,18 @@ seeds:
         geocode_match_type: VARCHAR
         geocode_verified: BOOLEAN
         review_note: VARCHAR
+        anchor_type: VARCHAR
+        confidence: VARCHAR
+        coordinate_basis: VARCHAR
+        coordinate_changed_from_input: BOOLEAN
+        ward_changed_from_input: BOOLEAN
+        original_latitude: DOUBLE
+        original_longitude: DOUBLE
+        original_ward_code: VARCHAR
+        original_ward_name: VARCHAR
+        needs_manual_validation: BOOLEAN
+        verified_at_utc: VARCHAR
+        verification_method: VARCHAR
 
 # KHÔNG có thư mục `bronze/` trong models: Bronze là việc của autoloader, dbt
 # chỉ ĐỌC qua `source()`. Ranh giới đó giữ ingest và transform tách bạch —

@@ -49,9 +49,17 @@ services:
       PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@vnclimate.org}
       PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-vnclimate}
       PGADMIN_CONFIG_SERVER_MODE: 'False'
+      PGADMIN_SERVER_JSON_FILE: /tmp/servers.json
+      PGADMIN_SERVERS_JSON: >-
+        {"Servers":{"1":{"Name":"vnclimate (DuckLake Catalog)","Group":"Servers","Host":"postgres","Port":5432,"MaintenanceDB":"${POSTGRES_DB:-vnclimate}","Username":"${POSTGRES_USER:-vnclimate}","SSLMode":"prefer"}}}
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        printf '%s\n' "$$PGADMIN_SERVERS_JSON" > "$$PGADMIN_SERVER_JSON_FILE"
+        exec /entrypoint.sh
     volumes:
       - pgadmin_data:/var/lib/pgadmin
-      - ./scripts/pgadmin_servers.json:/pgadmin4/servers.json:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -97,6 +105,7 @@ services:
       DUCKLAKE_METADATA_SCHEMA: ducklake
       DUCKLAKE_DSN: "ducklake:postgres:dbname=${POSTGRES_DB:-vnclimate} host=postgres port=5432 user=${POSTGRES_USER:-vnclimate} password=${POSTGRES_PASSWORD:-vnclimate}"
       PROJECT_DIR: /project
+      ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}
       # Dùng venv riêng trong container để tránh đụng quyền với .venv của host (UID 1000 vs 50000)
       UV_PROJECT_ENVIRONMENT: /tmp/project_venv
     volumes:
@@ -110,6 +119,40 @@ services:
       timeout: 10s
       retries: 5
       start_period: 60s
+
+  dashboard:
+    image: ghcr.io/astral-sh/uv:python3.13-bookworm-slim
+    restart: unless-stopped
+    ports:
+      - "${DASHBOARD_PORT:-8501}:8501"
+    working_dir: /project
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_DB: ${POSTGRES_DB:-vnclimate}
+      POSTGRES_USER: ${POSTGRES_USER:-vnclimate}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-vnclimate}
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      MINIO_BUCKET: ${MINIO_BUCKET:-vn-climate}
+      MINIO_SECURE: "false"
+      DUCKLAKE_ALIAS: catalog1
+      DUCKLAKE_DATA_PATH: s3://${MINIO_BUCKET:-vn-climate}
+      DUCKLAKE_METADATA_SCHEMA: ducklake
+      DASHBOARD_PORT: ${DASHBOARD_PORT:-8501}
+    volumes:
+      - .:/project
+    command: >
+      sh -c "uv sync --frozen &&
+             uv run streamlit run serving/dashboard/app.py
+             --server.port ${DASHBOARD_PORT:-8501}
+             --server.address 0.0.0.0"
 
 volumes:
   postgres_data:

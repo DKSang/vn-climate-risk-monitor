@@ -10,7 +10,7 @@ models:
         tests:
           - not_null
           - accepted_values:
-              values: ['era5', 'ecmwf_ifs']
+              values: ['era5', 'ecmwf_ifs', 'ecmwf_ifs_fc']
       - name: grid_latitude
         tests: [not_null]
       - name: grid_longitude
@@ -88,7 +88,7 @@ models:
         tests: [not_null]
 
   - name: bridge_ward_grid
-    description: "Phường ↔ ô lưới theo model. 252 dòng, đủ để join lúc query"
+    description: "Phường ↔ ô lưới theo model, gồm cả mesh forecast hiện hành"
     columns:
       - name: ward_grid_key
         tests: [unique, not_null]
@@ -136,9 +136,14 @@ models:
         description: "Cổng duy nhất vào tập huấn luyện; chỉ người soát đặt true"
         tests: [not_null]
       - name: geocode_match_type
+        description: "Kiểu anchor sau geocode/review; không đồng nghĩa với độ tin cậy"
+        tests: [not_null]
+      - name: geocode_confidence
         tests:
           - accepted_values:
-              values: ['full_name', 'road_prefix', 'outside_hanoi', 'no_match']
+              values: ['high', 'medium', 'low']
+      - name: needs_manual_validation
+        tests: [not_null]
       - name: observed_at_utc
         description: "NULL khi nguồn không ghi giờ; không suy đoán"
       - name: is_flooded
@@ -256,6 +261,11 @@ models:
         tests: [not_null]
       - name: observation_count
         tests: [not_null]
+      - name: negative_observation_count
+        description: >
+          Khi bằng 0, FAR/CSI/Brier bắt buộc NULL: bài báo chỉ cho nhãn dương,
+          không đủ bằng chứng để đo cảnh báo giả.
+        tests: [not_null]
 
   - name: fct_rain_archive_hourly
     description: >
@@ -281,10 +291,14 @@ models:
         tests:
           - accepted_values:
               values: ['below_50', 'from_50_to_under_70', 'from_70_to_100', 'over_100']
+      - name: vn_rain_band_12h
+        tests:
+          - accepted_values:
+              values: ['below_30', 'from_30_to_under_50', 'from_50_to_under_70', 'from_70_to_100', 'over_100']
       - name: vn_rain_band_24h
         tests:
           - accepted_values:
-              values: ['below_100', 'from_100_to_200', 'over_200_to_400', 'over_400']
+              values: ['below_50', 'from_50_to_under_100', 'from_100_to_under_150', 'from_150_to_under_200', 'from_200_to_300', 'over_300']
 
   - name: fct_rain_archive_daily
     description: "Mưa theo ô lưới × ngày (UTC, Archive). Full refresh từ fct_rain_archive_hourly"
@@ -340,7 +354,11 @@ models:
         tests:
           - accepted_values:
               values: ['below_50', 'from_50_to_under_70', 'from_70_to_100', 'over_100']
+      - name: vn_rain_band_12h
+        tests:
+          - accepted_values:
+              values: ['below_30', 'from_30_to_under_50', 'from_50_to_under_70', 'from_70_to_100', 'over_100']
       - name: vn_rain_band_24h
         tests:
           - accepted_values:
-              values: ['below_100', 'from_100_to_200', 'over_200_to_400', 'over_400']
+              values: ['below_50', 'from_50_to_under_100', 'from_100_to_under_150', 'from_150_to_under_200', 'from_200_to_300', 'over_300']

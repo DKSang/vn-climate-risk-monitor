@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import tempfile
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
@@ -82,6 +83,25 @@ def run_dbt(
 ) -> None:
     """Chạy dbt; exit code khác 0 ném lỗi để runner KHÔNG advance checkpoint."""
     command = build_command(bounds, select=select)
-    completed = runner(command, cwd=project_dir, check=False)
+    # Repo được bind-mount vào Airflow với UID khác host. Nếu dbt dùng mặc định
+    # ``transform/logs/dbt.log``, một file 0644 do host tạo sẽ làm mọi retry lỗi
+    # PermissionError trước cả khi SQL được chạy; compiled artifact trong
+    # ``transform/target`` cũng có cùng vấn đề. Log chuẩn vẫn được Airflow thu từ
+    # stdout, còn log/artifact tạm đặt ở /tmp để không phụ thuộc owner bind mount.
+    environment = os.environ.copy()
+    environment.setdefault(
+        "DBT_LOG_PATH", str(Path(tempfile.gettempdir()) / "vn-climate-dbt-logs")
+    )
+    environment.setdefault(
+        "DBT_TARGET_PATH", str(Path(tempfile.gettempdir()) / "vn-climate-dbt-target")
+    )
+    Path(environment["DBT_LOG_PATH"]).mkdir(parents=True, exist_ok=True)
+    Path(environment["DBT_TARGET_PATH"]).mkdir(parents=True, exist_ok=True)
+    completed = runner(
+        command,
+        cwd=project_dir,
+        check=False,
+        env=environment,
+    )
     if completed.returncode != 0:
         raise DbtBuildError(command, completed.returncode)

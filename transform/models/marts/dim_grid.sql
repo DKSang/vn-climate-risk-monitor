@@ -10,7 +10,27 @@
     tags = ['dim']
 ) }}
 
-WITH observed AS (
+WITH observations AS (
+    SELECT
+        grid_cell_id,
+        weather_model,
+        grid_latitude,
+        grid_longitude,
+        valid_time_utc
+    FROM {{ ref('int_weather_archive_hourly') }}
+
+    UNION ALL
+
+    SELECT
+        grid_cell_id,
+        weather_model,
+        grid_latitude,
+        grid_longitude,
+        valid_time_utc
+    FROM {{ ref('int_weather_forecast_hourly') }}
+),
+
+observed AS (
     SELECT
         grid_cell_id,
         weather_model,
@@ -19,7 +39,7 @@ WITH observed AS (
         MIN(valid_time_utc) AS first_observed_utc,
         MAX(valid_time_utc) AS last_observed_utc,
         COUNT(*) AS observation_hours
-    FROM {{ ref('int_weather_archive_hourly') }}
+    FROM observations
     GROUP BY grid_cell_id, weather_model, grid_latitude, grid_longitude
 ),
 

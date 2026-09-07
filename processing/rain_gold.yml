@@ -34,5 +34,14 @@ soft_delete:
   - target: gold.bridge_ward_grid
     business_key: [ward_code, weather_model]
     key_source_sql: |
-      SELECT ward_code, model AS weather_model
+      SELECT
+        LPAD(CAST(ward_code AS VARCHAR), 5, '0') AS ward_code,
+        model AS weather_model
       FROM catalog1.seed.ward_grid_map_seed
+      UNION ALL
+      -- Forecast map cũng được materialize trong bridge_ward_grid. Nếu bỏ 126
+      -- key này, anti-join hiểu nhầm toàn bộ mesh forecast đã bị xoá và guard
+      -- chặn rain_gold ở 126/378 dòng sau khi dbt đã chạy thành công.
+      SELECT commune_code AS ward_code, 'ecmwf_ifs_fc' AS weather_model
+      FROM catalog1.seed.ward_coordinates_seed
+      WHERE province_code = '01'

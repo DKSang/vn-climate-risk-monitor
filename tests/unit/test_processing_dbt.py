@@ -116,3 +116,5 @@ def test_zero_exit_returns_quietly() -> None:
     run_dbt(bounds(lower=at(9, 45)), project_dir=Path("transform"), runner=fake)
 
     assert calls[0]["cwd"] == Path("transform")
+    assert calls[0]["env"]["DBT_LOG_PATH"].endswith("vn-climate-dbt-logs")
+    assert calls[0]["env"]["DBT_TARGET_PATH"].endswith("vn-climate-dbt-target")

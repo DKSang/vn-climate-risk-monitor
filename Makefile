@@ -92,10 +92,12 @@ archive-pipeline:
 #
 # Trả exit code 1 khi có check fail -> dùng làm cổng chặn trong CI được.
 _PROVERO_FORECAST = DUCKLAKE_ALIAS=catalog1 DUCKLAKE_DATA_PATH=s3://$(or $(MINIO_BUCKET),vn-climate) DUCKLAKE_METADATA_SCHEMA=ducklake uv run provero run -c quality/provero.yaml --no-optimize --no-store
+_PROVERO_ARCHIVE  = DUCKLAKE_ALIAS=catalog1 DUCKLAKE_DATA_PATH=s3://$(or $(MINIO_BUCKET),vn-climate) DUCKLAKE_METADATA_SCHEMA=ducklake uv run provero run -c quality/provero_archive.yaml --no-optimize --no-store
 
 # Gate đầy đủ cho vận hành tay: Provero forecast + mọi nguồn + Gold/control/disk.
 quality:
 	$(_PROVERO_FORECAST)
+	$(_PROVERO_ARCHIVE)
 	uv run python scripts/healthcheck.py --scope all --require-gold
 
 # Gate trước transform trong pipeline forecast: không phụ thuộc backfill archive.
@@ -105,6 +107,7 @@ quality-forecast:
 
 # Gate Bronze archive/IFS và checkpoint.
 quality-archive:
+	$(_PROVERO_ARCHIVE)
 	uv run python scripts/healthcheck.py --scope archive
 
 SCOPE ?= all
@@ -160,6 +163,13 @@ dbt-docs:
 serve-api:
 	uv run uvicorn serving.api.app.main:app --host 0.0.0.0 --port $${PORT:-8000}
 
+# Chạy giao diện Streamlit dashboard
+serve-dashboard:
+	uv run streamlit run serving/dashboard/app.py --server.port $${DASHBOARD_PORT:-8501} --server.address 0.0.0.0
+
+fetch-geojson:
+	uv run python scripts/fetch_hanoi_geojson.py
+
 # Nhãn ngập từ bảng Flourish nhúng trong bài tường thuật VnExpress 07/10/2025.
 # Script DỪNG nếu version Flourish đổi hoặc invariant 123 dòng/122 ngập không
 # khớp — nguồn báo chí có thể được sửa sau khi đăng, và một seed nhãn tự đổi
@@ -169,10 +179,12 @@ fetch-flood-observations:
 
 # Geocode NHÁP cho quan sát ngập: Nominatim + point-in-polygon trên 126 ranh
 # giới phường. Mọi dòng ghi ra đều `geocode_verified=false` — phải soát tay rồi
-# đổi thành true, vì chỉ dòng true mới vào tập huấn luyện. Chạy lại an toàn:
-# dòng đã xác nhận được giữ nguyên, không hỏi lại và không bị ghi đè.
+# đổi thành true, vì chỉ dòng true mới vào tập huấn luyện. Chạy lại mặc định
+# giữ nguyên mọi review đang có; truyền
+# GEOCODE_ARGS=--refresh-unverified khi thực sự muốn thay đề xuất chưa duyệt.
+GEOCODE_ARGS ?=
 geocode-flood-observations:
-	uv run python -m vn_climate_risk_monitor.flood_geocode
+	uv run python -m vn_climate_risk_monitor.flood_geocode $(GEOCODE_ARGS)
 
 # ==== Airflow (orchestration) ====
 airflow-init:

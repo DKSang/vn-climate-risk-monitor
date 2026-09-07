@@ -14,7 +14,9 @@
 {{ config(materialized = 'view') }}
 
 SELECT
-    ward_code,
+    -- DuckDB suy luận cột CSV này là số nếu không ép kiểu; LPAD giữ mã hành
+    -- chính 5 ký tự để join đúng với dim_ward (ví dụ 00004, không phải 4).
+    LPAD(CAST(ward_code AS VARCHAR), 5, '0') AS ward_code,
     model AS weather_model,
     {{ grid_cell_id(
         'model',

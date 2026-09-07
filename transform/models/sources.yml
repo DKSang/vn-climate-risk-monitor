@@ -17,6 +17,9 @@ sources:
           phân biệt bằng `weather_model`: era5 (0,25°, 2000–2016) và ecmwf_ifs
           (~9km, 2017→nay). Append-only: giữ mọi phiên bản đã fetch của cùng grain.
         loaded_at_field: _ingested_at
+        freshness:
+          warn_after: {count: 96, period: hour}
+          error_after: {count: 168, period: hour}
         columns:
           - name: weather_model
             tests:
@@ -39,6 +42,9 @@ sources:
           Forecast run theo giờ từ Open-Meteo API. Append-only, do autoloader ghi.
           Mỗi run trả về chuỗi giờ tương lai (valid_time_utc).
         loaded_at_field: _ingested_at
+        freshness:
+          warn_after: {count: 12, period: hour}
+          error_after: {count: 26, period: hour}
         columns:
           - name: valid_time_utc
             tests: [not_null]

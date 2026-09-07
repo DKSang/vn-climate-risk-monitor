@@ -16,8 +16,8 @@ Theo dõi rủi ro **ngập úng / lũ / hạn hán** cho Hà Nội, chi tiết 
 | 4c | Open-Meteo Archive | [04c-open-meteo-archive.md](04c-open-meteo-archive.md) | ✅ Monthly incremental + year partition + tail |
 | 5 | Clean, Transform & KPI | [05-kpi-methodology.md](05-kpi-methodology.md) | ✅ Gold forecast + baseline lịch sử + event + replay · không công bố xác suất ngập (K5) |
 | 6 | Lưu trữ — single source of truth | [06-storage-modeling.md](06-storage-modeling.md) | ✅ Gold SSOT, `dim_grid`, watermark control, SCD2 từ 2025-07-01 |
-| 7 | Data Quality & Observability | `07-data-quality.md` | 🟡 ingestion health có · model observability chưa làm |
-| 8 | Make it accessible | `08-serving-bi.md` | ⬜ |
+| 7 | Data Quality & Observability | [07-data-quality.md](07-data-quality.md) | ✅ Provero (Forecast + Archive), dbt tests, Healthcheck collector, Airflow callback alerting |
+| 8 | Make it accessible | [08-serving-bi.md](08-serving-bi.md) | ✅ Streamlit Dashboard (Bản đồ PyDeck 72h + Drill-down phường/điểm ngập) |
 | 9 | Governance & Continuous Improvement | `09-governance.md` | ⬜ |
 
 ## Trạng thái hệ thống (2026-09-03)
