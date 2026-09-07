@@ -142,6 +142,18 @@ def test_rain_gold_soft_delete_covers_forecast_bridge_keys() -> None:
     assert "LPAD(CAST(ward_code AS VARCHAR), 5, '0')" in bridge_rule.key_source_sql
 
 
+def test_forecast_processing_has_separate_silver_and_gold_checkpoints() -> None:
+    silver = ProcessConfig.from_yaml(Path("processing/forecast_silver.yml"))
+    gold = ProcessConfig.from_yaml(Path("processing/forecast_gold.yml"))
+
+    assert silver.source_refs == ("stg_weather_forecast",)
+    assert silver.runner.select == (
+        "stg_open_meteo__weather_forecast_hourly int_weather_forecast_hourly"
+    )
+    assert gold.source_refs == ("int_weather_forecast_hourly",)
+    assert gold.runner.select == "bridge_ward_grid fct_rain_forecast_hourly+"
+
+
 def test_cli_module_is_importable() -> None:
     """Hồi quy: script từng tên `scripts/processing.py` và tự che package
     `processing` (thư mục script đứng đầu sys.path) — mọi lệnh đều ImportError."""
@@ -154,3 +166,12 @@ def test_cli_module_is_importable() -> None:
 
     assert result.returncode == 0, result.stderr
     assert "reprocess-from" in result.stdout
+
+    run_help = subprocess.run(
+        [sys.executable, "scripts/run_processing.py", "run", "--help"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert run_help.returncode == 0, run_help.stderr
+    assert "--full-refresh" in run_help.stdout

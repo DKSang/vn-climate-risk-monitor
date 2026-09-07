@@ -1,8 +1,9 @@
 """Truy vấn Gold marts cho Streamlit trên một DuckLake snapshot nhất quán.
 
-Table forecast có grain ``grid_cell_id × valid_time_utc`` và MERGE cập nhật từng
-dòng. Vì dòng không đổi giữ nguyên ``_ingested_at``, timestamp đó không phải batch
-ID và tuyệt đối không được dùng để lọc toàn bộ horizon.
+Table forecast lưu lịch sử ở grain
+``forecast_run_id × grid_cell_id × valid_time_utc``. Dashboard chỉ đọc view
+current của retrieval run mới nhất. Request pin DuckLake snapshot để các query
+trong cùng trang không nhìn thấy hai lần publish khác nhau.
 """
 
 from __future__ import annotations
@@ -39,7 +40,7 @@ _CURRENT_HORIZON_CTE = """
             MIN(valid_time_utc) AS starts_at_utc,
             MAX(valid_time_utc) AS ends_at_utc,
             MAX(_ingested_at) AS updated_at_utc
-        FROM gold.fct_rain_forecast_hourly
+        FROM gold.fct_rain_forecast_current_hourly
         WHERE valid_time_utc >= DATE_TRUNC('hour', CURRENT_TIMESTAMP)
     )
 """
@@ -212,7 +213,7 @@ def load_forecast_metadata(
                     WHERE p.is_active = TRUE AND p.status = 'active'
                 ) AS flood_point_count
             FROM current_horizon h
-            LEFT JOIN gold.fct_rain_forecast_hourly f
+            LEFT JOIN gold.fct_rain_forecast_current_hourly f
                 ON f.valid_time_utc BETWEEN h.starts_at_utc AND h.ends_at_utc
             LEFT JOIN gold.bridge_ward_grid b
                 ON b.grid_cell_id = f.grid_cell_id
@@ -719,7 +720,7 @@ def load_forecast_hours(snapshot_version: int | None = None) -> list[datetime]:
             _CURRENT_HORIZON_CTE
             + """
             SELECT DISTINCT f.valid_time_utc
-            FROM gold.fct_rain_forecast_hourly f
+            FROM gold.fct_rain_forecast_current_hourly f
             CROSS JOIN current_horizon h
             WHERE f.valid_time_utc BETWEEN h.starts_at_utc AND h.ends_at_utc
             ORDER BY f.valid_time_utc
@@ -764,7 +765,7 @@ def load_forecast_by_hour(
                 risk.risk_score,
                 risk.risk_model_version,
                 f.valid_time_utc
-            FROM gold.fct_rain_forecast_hourly f
+            FROM gold.fct_rain_forecast_current_hourly f
             JOIN gold.bridge_ward_grid bwg
               ON bwg.grid_cell_id = f.grid_cell_id
              AND bwg.weather_model = $1
@@ -811,7 +812,7 @@ def load_forecast_hour_summary(
                     f.hanoi_rain_scenario_band,
                     f.vn_rain_band_12h,
                     f.vn_rain_band_24h
-                FROM gold.fct_rain_forecast_hourly f
+                FROM gold.fct_rain_forecast_current_hourly f
                 JOIN gold.bridge_ward_grid bwg
                   ON bwg.grid_cell_id = f.grid_cell_id
                  AND bwg.weather_model = $1
@@ -935,7 +936,7 @@ def load_flood_points_for_hour(
               ON bwg.ward_code = p.ward_code
              AND bwg.weather_model = $1
              AND bwg.is_active = TRUE
-            LEFT JOIN gold.fct_rain_forecast_hourly f
+            LEFT JOIN gold.fct_rain_forecast_current_hourly f
               ON f.grid_cell_id = bwg.grid_cell_id
              AND f.valid_time_utc = $2
             WHERE p.is_active = TRUE AND p.status = 'active'
@@ -968,7 +969,7 @@ def load_ward_forecast_timeseries(
                 f.rain_12h_mm,
                 f.rain_24h_mm,
                 f.hanoi_rain_scenario_band
-            FROM gold.fct_rain_forecast_hourly f
+            FROM gold.fct_rain_forecast_current_hourly f
             JOIN gold.bridge_ward_grid bwg
               ON bwg.grid_cell_id = f.grid_cell_id
              AND bwg.weather_model = $1
@@ -999,7 +1000,7 @@ def load_ward_forecast_summary(
                 SELECT
                     f.*,
                     ROW_NUMBER() OVER (ORDER BY f.valid_time_utc) AS hour_number
-                FROM gold.fct_rain_forecast_hourly f
+                FROM gold.fct_rain_forecast_current_hourly f
                 JOIN gold.bridge_ward_grid bwg
                   ON bwg.grid_cell_id = f.grid_cell_id
                  AND bwg.weather_model = $1
@@ -1059,7 +1060,7 @@ def load_ward_flood_context(
             + """
             , peak AS (
                 SELECT MAX(f.rain_1h_mm) AS peak_1h_mm
-                FROM gold.fct_rain_forecast_hourly f
+                FROM gold.fct_rain_forecast_current_hourly f
                 JOIN gold.bridge_ward_grid bwg
                   ON bwg.grid_cell_id = f.grid_cell_id
                  AND bwg.weather_model = $1

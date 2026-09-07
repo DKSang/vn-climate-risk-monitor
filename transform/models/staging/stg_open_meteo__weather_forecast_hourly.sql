@@ -21,6 +21,11 @@ SELECT
     weather_code,
     timezone,
     utc_offset_seconds,
+    REGEXP_EXTRACT(
+        _source_file,
+        '/incremental/[0-9]{4}/[0-9]{2}/[0-9]{2}/[0-9]{2}/(run_[0-9]{8}T[0-9]{6})/',
+        1
+    )                                                   AS forecast_run_id,
     _source_file,
     _ingested_at
 FROM {{ source('silver_staging', 'stg_weather_forecast') }}

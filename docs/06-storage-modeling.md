@@ -250,10 +250,14 @@ Cổng: chưa review thì không fact. Map nearest `dim_grid` theo `(weather_mod
 
 ## 10. Retention
 
-- Bronze files + Bronze tables: giữ, append.
-- Gold snapshots: expire 7 ngày (`on-run-end`).
-- Silver: view, không snapshot.
-- Không TTL JSON.
+- Archive raw/staging: giữ dài hạn để replay parser và historical model.
+- Forecast raw/staging: giữ dài hạn để replay parser và đối chiếu source.
+- Forecast Intermediate/Gold: giữ lịch sử theo
+  `(forecast_run_id, grid_cell_id, valid_time_utc)`; view current chỉ chọn run
+  mới nhất và loại giờ đã hết hạn cho serving.
+- DuckLake snapshots: expire sau 7 ngày; Parquet scheduled for deletion chờ
+  thêm 2 ngày trước cleanup.
+- Maintenance chạy trong DAG riêng, không chạy qua dbt `on-run-end`.
 
 ## 11. Definition of Done
 

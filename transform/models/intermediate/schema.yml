@@ -33,16 +33,19 @@ models:
 
   - name: int_weather_forecast_hourly
     description: >
-      CURATED — dự báo mới nhất cho mỗi (ô lưới forecast, valid_time_utc).
-      Table incremental với MERGE change-aware.
+      CURATED HISTORY — một dòng cho mỗi logical forecast run × ô lưới
+      × valid_time. Chỉ publish run đủ 126 locations × 72 giờ.
     columns:
       - name: weather_forecast_hourly_key
-        description: "MD5(grid_cell_id | valid_time_utc) — merge key"
+        description: "MD5(forecast_run_id | grid_cell_id | valid_time_utc)"
         tests: [unique, not_null]
       - name: _row_hash
         tests: [not_null]
       - name: _updated_at
-        description: "Chỉ nhích khi _row_hash đổi. Watermark của forecast Gold trên cột này."
+        description: "Thời điểm vintage được publish vào Silver."
+        tests: [not_null]
+      - name: forecast_run_id
+        description: "Logical retrieval run từ path raw, ví dụ run_20260907T101500"
         tests: [not_null]
       - name: is_active
         tests: [not_null]

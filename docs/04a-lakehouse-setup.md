@@ -73,10 +73,12 @@ Không dùng prefix `raw/` hoặc `landing/`.
 
 ## Bảo trì
 
-dbt `on-run-end` expire snapshot cũ hơn bảy ngày và cleanup file không còn được
-snapshot tham chiếu. Lệnh này không quản lý object trong `bronze/files`.
+Maintenance tách khỏi dbt build: snapshot kỹ thuật giữ bảy ngày, file Parquet
+đã được lên lịch xóa chờ thêm hai ngày. Việc này không xóa lịch sử forecast
+đang còn hiệu lực trong table; Raw/Staging forecast cũng được giữ để replay.
 
 ```bash
+make maintain-lake
 make clean-lake
 ```
 

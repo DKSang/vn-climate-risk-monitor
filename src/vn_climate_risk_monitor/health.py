@@ -155,8 +155,7 @@ def _check_forecast_coverage(connection: Any) -> CheckResult:
         return _result(
             "forecast.complete_run", "FAIL", "Thiếu gold.dim_ward; chạy make transform"
         )
-    complete_runs = _scalar(
-        connection,
+    run = connection.execute(
         """
         WITH source_rows AS (
             SELECT
@@ -176,28 +175,59 @@ def _check_forecast_coverage(connection: Any) -> CheckResult:
             WHERE run_name <> ''
             QUALIFY _ingested_at = MAX(_ingested_at) OVER (PARTITION BY _source_file)
         ),
+        latest_run AS (
+            SELECT run_name
+            FROM latest_file_ingests
+            GROUP BY run_name
+            ORDER BY MAX(_ingested_at) DESC, run_name DESC
+            LIMIT 1
+        ),
         run_hours AS (
             SELECT run_name, valid_time_utc, COUNT(*) AS locations
             FROM latest_file_ingests
+            WHERE run_name = (SELECT run_name FROM latest_run)
             GROUP BY run_name, valid_time_utc
         ),
         wards AS (
             SELECT COUNT(*) AS expected FROM gold.dim_ward
         )
-        SELECT COUNT(*)
-        FROM (
-            SELECT run_name
-            FROM run_hours CROSS JOIN wards
-            GROUP BY run_name, expected
-            HAVING MIN(locations) = expected AND MAX(locations) = expected
-        )
+        SELECT
+            run_name,
+            COUNT(*) AS forecast_hours,
+            MIN(locations) AS minimum_locations,
+            MAX(locations) AS maximum_locations,
+            expected
+        FROM run_hours CROSS JOIN wards
+        GROUP BY run_name, expected
         """,
+    ).fetchone()
+    if run is None:
+        return _result(
+            "forecast.complete_run",
+            "FAIL",
+            "Không tìm thấy forecast run hợp lệ trong _source_file",
+        )
+
+    run_name, hours, minimum_locations, maximum_locations, expected_locations = run
+    expected_hours = load_settings().open_meteo.forecast_hours
+    complete = (
+        hours == expected_hours
+        and minimum_locations == expected_locations
+        and maximum_locations == expected_locations
     )
     return _result(
         "forecast.complete_run",
-        "PASS" if complete_runs and complete_runs > 0 else "FAIL",
-        f"{complete_runs or 0} run forecast có đủ phường ở mọi giờ",
-        complete_runs=complete_runs or 0,
+        "PASS" if complete else "FAIL",
+        (
+            f"{run_name}: {hours}/{expected_hours} giờ, "
+            f"{minimum_locations}–{maximum_locations}/{expected_locations} phường"
+        ),
+        run_name=run_name,
+        forecast_hours=hours,
+        expected_hours=expected_hours,
+        minimum_locations=minimum_locations,
+        maximum_locations=maximum_locations,
+        expected_locations=expected_locations,
     )
 
 
@@ -280,7 +310,7 @@ def _check_mapping(connection: Any) -> CheckResult:
     )
 
 
-def _check_gold(connection: Any) -> list[CheckResult]:
+def _check_archive_gold(connection: Any) -> list[CheckResult]:
     """Fact mưa lõi: có tồn tại, có dòng, và grain không trùng.
 
     CỐ Ý không kiểm freshness ở phase này: pipeline mới chỉ có lịch sử, nên
@@ -306,6 +336,53 @@ def _check_gold(connection: Any) -> list[CheckResult]:
             "PASS" if duplicates == 0 else "FAIL",
             f"{duplicates:,} khóa rain_archive_hourly bị trùng",
             duplicate_keys=duplicates,
+        ),
+    ]
+
+
+def _check_forecast_gold(connection: Any) -> list[CheckResult]:
+    """View serving chỉ chứa latest run/current horizon; history ở table riêng."""
+    relation = "gold.fct_rain_forecast_current_hourly"
+    if not _relation_exists(connection, relation):
+        return [
+            _result(
+                "forecast.gold.exists", "FAIL", f"Không tìm thấy {relation}"
+            )
+        ]
+    rows, distinct_keys, expired, first_hour, last_hour = connection.execute(
+        f"""
+        SELECT
+            COUNT(*),
+            COUNT(DISTINCT rain_forecast_hourly_key),
+            COUNT(*) FILTER (
+                WHERE valid_time_utc < DATE_TRUNC('hour', CURRENT_TIMESTAMP)
+            ),
+            MIN(valid_time_utc),
+            MAX(valid_time_utc)
+        FROM {relation}
+        """
+    ).fetchone()
+    duplicates = rows - distinct_keys
+    return [
+        _result(
+            "forecast.gold.rows",
+            "PASS" if rows > 0 else "FAIL",
+            f"{rows:,} dòng trong current horizon" if rows else "Bảng rỗng",
+            row_count=rows,
+            first_hour=first_hour,
+            last_hour=last_hour,
+        ),
+        _result(
+            "forecast.gold.grain",
+            "PASS" if duplicates == 0 else "FAIL",
+            f"{duplicates:,} khóa forecast bị trùng",
+            duplicate_keys=duplicates,
+        ),
+        _result(
+            "forecast.gold.current_horizon",
+            "PASS" if expired == 0 else "FAIL",
+            f"{expired:,} dòng đã hết hạn trong current view",
+            expired_rows=expired,
         ),
     ]
 
@@ -403,7 +480,7 @@ def collect_health(
                 ):
                     checks.append(_check_forecast_coverage(connection))
                 if require_gold:
-                    checks.extend(_check_gold(connection))
+                    checks.extend(_check_forecast_gold(connection))
             if scope in {"archive", "all"}:
                 # era5 và ecmwf_ifs dùng CHUNG một bảng staging, phân biệt bằng
                 # cột `weather_model`, nên một check thay cho hai. Độ phủ theo
@@ -420,6 +497,8 @@ def collect_health(
                     checks.append(_check_archive_coverage(connection))
                     checks.append(_check_archive_duplicates(connection))
                     checks.append(_check_mapping(connection))
+                    if require_gold:
+                        checks.extend(_check_archive_gold(connection))
                 elif require_gold:
                     checks.append(
                         _result(

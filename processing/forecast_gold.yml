@@ -10,5 +10,7 @@ checkpoint:
   safety_lag: 15 minutes
 
 runner:
-  # Chạy staging + intermediate + gold mart cho forecast
-  select: "stg_open_meteo__weather_forecast_hourly int_weather_forecast_hourly fct_rain_forecast_hourly"
+  # Gold history incremental; selector + refresh cả current serving view và
+  # các downstream table dùng latest run. Bridge được refresh để theo mesh
+  # best_match của run mới nhất.
+  select: "bridge_ward_grid fct_rain_forecast_hourly+"

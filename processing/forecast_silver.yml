@@ -1,0 +1,15 @@
+process_key: forecast_silver
+target: silver.int_weather_forecast_hourly
+scope: production
+
+sources:
+  - ref: stg_weather_forecast
+    change_column: _ingested_at
+
+checkpoint:
+  safety_lag: 15 minutes
+
+runner:
+  # Forecast Silver sở hữu checkpoint staging -> curated history.
+  # Gold có checkpoint riêng trên _updated_at của bảng intermediate này.
+  select: "stg_open_meteo__weather_forecast_hourly int_weather_forecast_hourly"

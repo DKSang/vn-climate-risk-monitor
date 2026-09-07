@@ -88,7 +88,14 @@ def test_command_passes_vars_as_json_and_select() -> None:
 
 
 def test_command_without_select_builds_whole_project() -> None:
-    assert "--select" not in build_command(bounds(lower=None))
+    command = build_command(bounds(lower=None))
+
+    assert "--select" not in command
+    assert "--full-refresh" in command
+
+
+def test_incremental_command_does_not_pass_full_refresh() -> None:
+    assert "--full-refresh" not in build_command(bounds(lower=at(9, 45)))
 
 
 class _Completed:

@@ -22,6 +22,12 @@ clean-targets:         # directories to be removed by `dbt clean`
   - "target"
   - "dbt_packages"
 
+vars:
+  # Cùng biến mà fetcher dùng; completeness gate không được hard-code lệch với
+  # số giờ thực sự yêu cầu từ Open-Meteo.
+  forecast_expected_hours: "{{ env_var('OPEN_METEO_FORECAST_HOURS', '72') }}"
+  forecast_expected_locations: 126
+
 
 # Configuring models
 # Full documentation: https://docs.getdbt.com/docs/configuring-models
@@ -29,16 +35,9 @@ clean-targets:         # directories to be removed by `dbt clean`
 # In this example config, we tell dbt to build all models in the example/
 # directory as views. These settings can be overridden in the individual model
 # files using the `{{ config(...) }}` macro.
-# Bảo trì lakehouse tự động sau mỗi lần chạy dbt.
-#
-# Vì sao cần: dbt materialize bằng create-then-swap, nên mỗi lần build sẽ để lại
-# file Parquet của phiên bản cũ trên MinIO. Không dọn thì rác tích luỹ vô hạn.
-#
-# Giữ lại 7 ngày snapshot để vẫn time-travel được (DuckLake), chỉ xoá file
-# không còn snapshot nào tham chiếu.
-on-run-end:
-  - "CALL ducklake_expire_snapshots('catalog1', older_than => now() - INTERVAL 7 DAY)"
-  - "CALL ducklake_cleanup_old_files('catalog1', cleanup_all => true)"
+# DuckLake maintenance KHÔNG nằm trong on-run-end: test/build hourly không được
+# kiêm nhiệm expire snapshot hay xóa Parquet. DAG lakehouse_maintenance_daily
+# giữ snapshot 7 ngày và chỉ cleanup file đã chờ đủ grace period.
 
 # Seed: file CSV tĩnh, version-control cùng code.
 #

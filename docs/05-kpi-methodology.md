@@ -149,9 +149,9 @@ Ví dụ profile ERA5/ERA5-Land:
 - Logical slot trong `_source_file` là thời điểm hệ thống lấy snapshot, không phải
   model run time do nhà cung cấp công bố.
 - Rolling KPI forecast không được trộn record từ các logical slot khác nhau.
-- Live Best Match không bảo đảm một model cố định qua thời gian. MVP chỉ phục vụ
-  snapshot hiện hành; khi K6 hoặc một use case backtest vintage được chốt mới mở
-  rộng ingestion contract cho model, endpoint và retrieval metadata.
+- Live Best Match không bảo đảm một model cố định qua thời gian. Vì vậy history
+  giữ rõ `forecast_run_id`, weather model và `_source_file`; lớp serving chỉ
+  chiếu run mới nhất, còn backtest có thể đọc các run cũ.
 
 ## 4. Bộ KPI MVP
 
@@ -533,21 +533,20 @@ theo lead-time `0–6h`, `6–24h`, `24–48h` và theo mùa.
 
 ### 11.1 Silver forecast hourly
 
-MVP không tạo `silver.forecast_hourly_vintage`. Bronze vẫn giữ `_source_file` và
-`_ingested_at`; Silver chọn logical slot mới nhất có đủ đúng 6 batch production,
-dedup retry theo source object rồi gom các requested point trùng returned grid.
+Silver giữ mọi logical retrieval run có đủ số giờ và đủ 126 location. Giá trị
+`forecast_run_id` lấy từ thư mục `run_YYYYMMDDTHHMMSS` trong `_source_file`;
+dedup các requested point trùng returned grid chỉ diễn ra bên trong từng run.
 
 Grain hiện tại:
 
 ```text
-forecast_snapshot_id × grid_cell_id × valid_time_utc
+forecast_run_id × grid_cell_id × valid_time_utc
 ```
 
 Cột hiện tại:
 
 ```text
-forecast_snapshot_id
-as_of_utc
+forecast_run_id
 grid_cell_id
 grid_latitude
 grid_longitude
@@ -557,20 +556,20 @@ rain_mm
 showers_mm
 precipitation_probability_pct nullable
 weather_code
-source_object_keys
+_source_file
 _ingested_at
 ```
 
 Requested coordinate không cần lặp trên từng dòng: mapping forecast dùng
-returned grid gần nhất trong chính snapshot hiện hành. Contract vintage đầy
-đủ chỉ bổ sung khi có consumer cần đánh giá lịch sử forecast.
+returned grid gần nhất trong run hiện hành. Toàn bộ run cũ vẫn còn trong table
+để audit và backtest; consumer vận hành đọc view current thay vì tự chọn run.
 
 ### 11.2 Gold rainfall KPI
 
 Grain forecast KPI:
 
 ```text
-forecast_snapshot_id × grid_cell_id × as_of_utc × valid_time_utc
+forecast_run_id × grid_cell_id × valid_time_utc
 ```
 
 Phường là projection từ grid:
@@ -586,9 +585,9 @@ mapping khi có polygon-grid intersection.
 Metadata KPI trên Gold:
 
 ```text
-forecast_snapshot_id
+forecast_run_id
 hanoi_rain_scenario_band
-source_object_keys   # snapshot grain — fct_rainfall_forecast_summary
+_source_file
 ```
 
 `rain_*h_mm IS NULL` nghĩa là cửa sổ incomplete; không lưu thêm
@@ -609,8 +608,8 @@ lặp trên từng grid-hour.
 
 ## 13. Definition of Done cho KPI
 
-- Có Silver hourly giữ một snapshot hoàn chỉnh, returned grid và source-object
-  lineage; không trộn logical slot.
+- Có Silver hourly giữ các run hoàn chỉnh, returned grid và source-object
+  lineage; rolling không trộn logical run.
 - Tính đúng `R1/R3/R6/R12/R24/R48/R72` trên fixture có kết quả biết trước.
 - Thiếu một giờ làm rolling incomplete, không biến thành mưa 0.
 - Không cộng trùng precipitation/rain/showers.

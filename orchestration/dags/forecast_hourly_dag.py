@@ -2,7 +2,7 @@
 
 Đặc tính:
 - Cadence: Hàng giờ vào phút thứ 15 (`15 * * * *`).
-- Flow tuần tự: fetch -> load staging -> provero quality -> healthcheck.
+- Flow tuần tự: fetch -> load -> quality -> Silver history -> Gold history/current.
 - Cổng chặn: Nếu quality gate hoặc healthcheck fail, pipeline dừng lại ngay.
 - Khóa tài nguyên: Sử dụng pool `lakehouse_single_writer_pool` (1 slot) để
   tránh xung đột ghi DuckLake hoặc dẫm quota với job archive.
@@ -51,20 +51,46 @@ with DAG(
         bash_command=PROVERO_CMD,
     )
 
-    # 4. Transform: chạy forecast_gold process (staging view -> intermediate -> fct_rain_forecast_hourly)
-    transform_forecast = BashOperator(
-        task_id="transform_forecast",
-        pool=POOL,
-        cwd=PROJECT_DIR,
-        bash_command="uv run python scripts/run_processing.py run forecast_gold",
-    )
-
-    # 5. Kiểm tra sức khỏe pipeline forecast
-    healthcheck = BashOperator(
-        task_id="healthcheck_forecast",
+    # 3b. Chặn latest run không đủ 126 phường x forecast_hours.
+    quality_forecast = BashOperator(
+        task_id="quality_forecast",
         pool=POOL,
         cwd=PROJECT_DIR,
         bash_command="uv run python scripts/healthcheck.py --scope forecast",
     )
 
-    fetch_forecast >> load_staging >> quality_provero >> transform_forecast >> healthcheck
+    # 4. Silver: checkpoint staging -> Intermediate change-aware.
+    transform_forecast_silver = BashOperator(
+        task_id="transform_forecast_silver",
+        pool=POOL,
+        cwd=PROJECT_DIR,
+        bash_command="uv run python scripts/run_processing.py run forecast_silver",
+    )
+
+    # 5. Gold history incremental; downstream current view/risk table refresh theo.
+    transform_forecast_gold = BashOperator(
+        task_id="transform_forecast_gold",
+        pool=POOL,
+        cwd=PROJECT_DIR,
+        bash_command="uv run python scripts/run_processing.py run forecast_gold",
+    )
+
+    # 6. Kiểm tra sức khỏe pipeline forecast
+    healthcheck = BashOperator(
+        task_id="healthcheck_forecast",
+        pool=POOL,
+        cwd=PROJECT_DIR,
+        bash_command=(
+            "uv run python scripts/healthcheck.py --scope forecast --require-gold"
+        ),
+    )
+
+    (
+        fetch_forecast
+        >> load_staging
+        >> quality_provero
+        >> quality_forecast
+        >> transform_forecast_silver
+        >> transform_forecast_gold
+        >> healthcheck
+    )

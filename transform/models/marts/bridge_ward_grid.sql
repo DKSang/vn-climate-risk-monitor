@@ -1,7 +1,7 @@
 /*
     MART — cầu nối phường ↔ ô lưới, theo từng model.
 
-    378 dòng ở snapshot hiện tại (archive + forecast). Nhỏ đến mức mọi câu hỏi
+    378 dòng cho các model hiện hành (archive + forecast). Nhỏ đến mức mọi câu hỏi
     theo GIỜ ở cấp phường chỉ cần join bảng
     này với `fct_rain_archive_hourly` lúc query — không cần một fact phường×giờ nhân bản
     26 triệu dòng giống hệt nhau (126 phường chỉ có 12 hoặc 48 giá trị khác
@@ -30,19 +30,24 @@ WITH archive_map AS (
     FROM {{ ref('stg_seed__ward_grid') }}
 ),
 
--- Forecast best_match có thể đổi mesh. Lấy tập ô của horizon hiện hành rồi
--- ánh xạ centroid phường tới tâm ô gần nhất; với snapshot hiện tại kết quả
+-- Forecast best_match có thể đổi mesh. Lấy tập ô của run mới nhất rồi
+-- ánh xạ centroid phường tới tâm ô gần nhất; với run hiện tại kết quả
 -- khớp đủ 126/126 với phép snap API đã lưu cho IFS.
+latest_forecast_run AS (
+    SELECT forecast_run_id
+    FROM {{ ref('int_weather_forecast_hourly') }}
+    GROUP BY forecast_run_id
+    ORDER BY MAX(_ingested_at) DESC, forecast_run_id DESC
+    LIMIT 1
+),
+
 current_forecast_grids AS (
     SELECT DISTINCT
         grid_cell_id,
         grid_latitude,
         grid_longitude
     FROM {{ ref('int_weather_forecast_hourly') }}
-    WHERE valid_time_utc = (
-        SELECT MAX(valid_time_utc)
-        FROM {{ ref('int_weather_forecast_hourly') }}
-    )
+    WHERE forecast_run_id = (SELECT forecast_run_id FROM latest_forecast_run)
 ),
 
 forecast_ranked AS (

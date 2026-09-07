@@ -92,8 +92,15 @@ def compute_bounds(
     config: ProcessConfig,
     checkpoints: dict[str, datetime | None],
     run_started_at: datetime,
+    *,
+    force_full_refresh: bool = False,
 ) -> Bounds:
-    """checkpoint − safety_lag. Không có checkpoint = None = full refresh."""
+    """checkpoint − safety_lag; full refresh giữ checkpoint chỉ để audit.
+
+    ``force_full_refresh`` không xóa hay rewind checkpoint. Nó chỉ bỏ lower
+    bound trong run hiện tại; run thành công vẫn advance checkpoint theo
+    cùng state machine như incremental.
+    """
     lag = config.checkpoint.safety_lag
     return Bounds(
         run_started_at=run_started_at,
@@ -104,7 +111,10 @@ def compute_bounds(
                 checkpoint_before=checkpoints.get(source.ref),
                 lower_bound=(
                     checkpoints[source.ref] - lag
-                    if checkpoints.get(source.ref) is not None
+                    if (
+                        not force_full_refresh
+                        and checkpoints.get(source.ref) is not None
+                    )
                     else None
                 ),
             )
@@ -118,6 +128,9 @@ def run_process(
     config: ProcessConfig,
     repository: Any,
     execute: Callable[[Bounds], Mapping[str, int | None] | None],
+    force_full_refresh: bool = False,
+    actor: str = "runner",
+    reason: str | None = None,
 ) -> ProcessingResult:
     """Chạy transform một lần và chỉ advance checkpoint khi nó thành công.
 
@@ -125,13 +138,21 @@ def run_process(
     ghi cùng run. Trả ``None`` cũng hợp lệ — metrics là tuỳ chọn, không phải
     điều kiện để run được coi là thành công.
     """
+    if force_full_refresh and not (reason and reason.strip()):
+        raise ValueError("full refresh cần reason để audit")
+
     run_started_at = repository.control_now()
     checkpoints = repository.read_checkpoints(
         process_key=config.process_key,
         scope=config.scope,
         source_refs=config.source_refs,
     )
-    bounds = compute_bounds(config, checkpoints, run_started_at)
+    bounds = compute_bounds(
+        config,
+        checkpoints,
+        run_started_at,
+        force_full_refresh=force_full_refresh,
+    )
 
     run_id = repository.begin_run(
         process_key=config.process_key,
@@ -139,6 +160,8 @@ def run_process(
         target_ref=config.target,
         started_at=run_started_at,
         bounds=bounds.as_json(),
+        actor=actor,
+        reason=reason.strip() if reason else None,
     )
     try:
         metrics = execute(bounds)

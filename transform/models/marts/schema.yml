@@ -332,12 +332,13 @@ models:
 
   - name: fct_rain_forecast_hourly
     description: >
-      Mưa theo ô lưới × giờ (Forecast) + cửa sổ trượt 1/3/6/12/24/48/72h + dải
-      kịch bản. Horizon dài 72 giờ nên `rain_48h_mm`/`rain_72h_mm` chỉ non-null
-      ở phần cuối horizon — rolling không được đi qua ranh giới vintage.
+      Lịch sử mưa forecast theo run × ô lưới × giờ, có rolling
+      1/3/6/12/24/48/72h. Rolling partition theo run, không trộn vintage.
     columns:
       - name: rain_forecast_hourly_key
         tests: [unique, not_null]
+      - name: forecast_run_id
+        tests: [not_null]
       - name: grid_cell_id
         tests:
           - not_null
@@ -362,3 +363,13 @@ models:
         tests:
           - accepted_values:
               values: ['below_50', 'from_50_to_under_100', 'from_100_to_under_150', 'from_150_to_under_200', 'from_200_to_300', 'over_300']
+
+  - name: fct_rain_forecast_current_hourly
+    description: "View chỉ current horizon của logical forecast run mới nhất"
+    columns:
+      - name: rain_forecast_hourly_key
+        tests: [unique, not_null]
+      - name: forecast_run_id
+        tests: [not_null]
+      - name: valid_time_utc
+        tests: [not_null]
