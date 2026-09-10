@@ -1,8 +1,9 @@
+-- depends_on: {{ ref('stg_open_meteo__weather_forecast_hourly') }}
 /*
     INTERMEDIATE — lịch sử forecast vintage theo
     (forecast_run_id, ô lưới forecast, valid_time).
 
-    Mỗi logical run được giữ để audit và backtest forecast sau này.
+    Mỗi logical run được giữ để audit revision và persistence.
     Chỉ run đủ 126 location × forecast_hours mới được publish.
 */
 

@@ -1,14 +1,6 @@
 # Kiến trúc hệ thống
 
-> **Đã thay thế một phần (2026-09-03).** Kiến trúc chốt hiện tại ở
-> [plan lean medallion](superpowers/plans/2026-09-03-lean-medallion.md) và
-> [plan Silver Layer Flow](superpowers/plans/2026-09-03-silver-layer-flow.md):
-> MỘT catalog DuckLake (`catalog1`), Bronze chỉ còn là landing zone raw file,
-> bảng append-only của autoloader nay là `silver.stg_*`.
-> Phần mô tả `bronze_store` / hai catalog / các model gold cũ trong tài liệu
-> này KHÔNG còn đúng.
-
-**Hanoi Flood & Climate Risk Monitor** · v2.0 · 2026-08-21
+**Hanoi Flood & Climate Risk Monitor** · v2.2 · 2026-09-08
 
 ## Kiến trúc tổng thể
 
@@ -26,7 +18,8 @@ Autoloader: file ledger (`ingestion`) + INSERT staging (`catalog1.silver.stg_*`)
             ▼
 DuckLake (catalog1)
   ├── Silver: staging (`stg_*`) + intermediate curated (`int_weather_archive_hourly`, change-aware MERGE)
-  └── Gold: marts (`dim_*`, `bridge_*`, `fct_*`)
+  └── Gold: marts (`dim_*`, `bridge_*`, `fct_*`), gồm forecast history/current
+      và `fct_rain_pressure_alert`
             │
             ▼
 dbt quality gate → serving
@@ -44,6 +37,11 @@ MVP là **portfolio production-like, zero-cost**:
 - toàn bộ runtime là phần mềm open-source; không phụ thuộc managed service trả phí;
 - pipeline phải có schedule, restart/retry, checkpoint, idempotency, quality gate,
   health check, metrics và runbook recovery;
+- Airflow và dashboard chạy từ image build theo `uv.lock`; không bind-mount
+  source production hoặc cài dependency lại khi khởi động;
+- image nền được pin cả version lẫn digest; container ứng dụng chạy non-root;
+- Compose đưa password/key qua `/run/secrets`, application đọc biến `*_FILE`;
+  secret không nằm trong `docker inspect` environment;
 - persistent volume và backup metadata phải tách khỏi vòng đời container;
 - không triển khai Kubernetes, multi-region, active-active hoặc high availability;
 - nguồn Free API không có uptime guarantee, vì vậy hệ thống chỉ cam kết best-effort
@@ -57,14 +55,14 @@ thương mại phải review lại giấy phép và deployment profile.
 
 | Layer | Contract | Ví dụ |
 |---|---|---|
-| Bronze files | Response nguồn nguyên bản, immutable; checksum ở PostgreSQL | `bronze/files/open_meteo/...` |
+| Bronze files | Response nguồn nguyên bản, immutable; ETag/size ở file ledger | `bronze/files/open_meteo/...` |
 | Silver staging | Parse cấu trúc, giữ mọi record/vintage, chưa validate | `silver.stg_weather_forecast` |
 | Silver curated | Type, validate, dedup, late data, mapping và join | `silver.int_weather_archive_hourly` |
 | Gold | Dimensional model, KPI và aggregate nghiệp vụ | `gold.fct_rain_archive_hourly` |
 
-Bronze có thể explode array nguồn thành grain nguyên tử vì payload nguyên bản đã
-được giữ trong `bronze/files`. Không được lọc, dedup hay áp business rule tại
-Bronze.
+Silver staging có thể explode array nguồn thành grain nguyên tử vì payload
+nguyên bản đã được giữ trong `bronze/files`. Không được lọc, dedup hay áp
+business rule khi land raw object; các quy tắc đó thuộc Silver curated.
 
 ## Naming
 
@@ -86,8 +84,9 @@ gold.dim_grid
 gold.dim_ward
 gold.bridge_ward_grid
 gold.fct_rain_archive_hourly
-gold.fct_rain_archive_daily
-gold.fct_ward_rain_archive_daily
+gold.fct_rain_forecast_hourly              forecast history theo vintage
+gold.fct_rain_forecast_current_hourly      serving view của run mới nhất
+gold.fct_rain_pressure_alert               tín hiệu áp lực mưa vận hành
 ```
 
 Tiền tố `stg_` đánh dấu lớp staging append-only (vật lý) hoặc view mỏng
@@ -100,19 +99,19 @@ dùng `dim_`/`fct_`/`bridge_` theo dimensional modeling.
 data layer. Hai schema TÁCH BIỆT vì trả lời hai câu hỏi khác nhau:
 
 ```text
-ingestion.ingestion_runs      ┐  File này đã vào Bronze chưa?
+ingestion.ingestion_runs      ┐  File này đã commit vào Silver staging chưa?
 ingestion.ingestion_files     ┘  (file checkpoint)
 
-processing.processing_state   ┐  Process này đã xử lý Bronze tới mốc nào?
-processing.processing_runs    ┘  (processing checkpoint)
+processing.processing_state   ┐  Process này đã xử lý upstream tới mốc nào?
+processing.processing_runs    ┘  (checkpoint + Gold published snapshot)
 ```
 
-Trộn chúng là cách chắc chắn nhất để một trong hai câu trả lời sai: cùng một bảng
-Bronze có thể nuôi nhiều process với tiến độ hoàn toàn khác nhau, nên checkpoint
-xử lý thuộc về PROCESS chứ không thuộc về source.
+Trộn chúng là cách chắc chắn nhất để một trong hai câu trả lời sai: cùng một
+upstream có thể nuôi nhiều process với tiến độ khác nhau, nên checkpoint xử
+lý thuộc về PROCESS chứ không thuộc về source.
 
-`ingestion.gold_watermarks` deprecated 2026-09-03 — xem
-[06-storage-modeling](06-storage-modeling.md#43-control-table-gold--schema-processing).
+Processing checkpoint hiện hành được mô tả trong
+[06-storage-modeling](06-storage-modeling.md#4-processing-checkpoint).
 
 Hai bảng `ingestion` giữ checkpoint file và một discovery run ổn định / nguồn
 (`logical_key=discovery`). File ledger: `object_key`, status, retry, lease,
@@ -121,9 +120,9 @@ SHA-256, không mint logical run theo timestamp mỗi lần load.
 
 Fetch land JSON lên MinIO, không đăng ký control plane. Autoloader liệt kê
 storage, gắn file mới vào run `SUCCEEDED` của nguồn, claim kèm lease, `INSERT`
-Bronze bằng SQL. PostgreSQL và DuckLake không có distributed transaction:
-commit Bronze trước, rồi `COMMITTED`; crash giữa chừng thì lease hết hạn, claim
-lại, INSERT lặp (at-least-once; Silver dedup).
+Silver staging bằng SQL. PostgreSQL và DuckLake không có distributed
+transaction: commit staging trước, rồi đánh file `COMMITTED`; crash giữa chừng thì
+lease hết hạn, claim lại, INSERT lặp (at-least-once; Silver curated dedup).
 
 Pattern học Auto Loader, thu gọn cho single-node:
 
@@ -134,11 +133,11 @@ Pattern học Auto Loader, thu gọn cho single-node:
 - `_rescued_data` trong SQL transform cho giá trị không ép kiểu được;
 - available-now micro-batch.
 
-Parser và Bronze schema không generic: mỗi source giữ contract/table riêng.
+Parser và Silver staging schema không generic: mỗi source giữ contract/table riêng.
 Silver là nơi conform forecast, archive và observation về semantic dùng chung.
 Archive source files dùng source-time layout `backfill/year=YYYY/month=MM`;
 year plan là planning group, monthly window là logical recovery checkpoint, còn
-month × location batch là file checkpoint. Bronze table partition vật lý theo
+month × location batch là file checkpoint. Silver staging table partition vật lý theo
 `year(observed_time_utc)`.
 
 ## Materialization
@@ -159,7 +158,8 @@ prefix `__dbt_tmp` rồi chỉ rename metadata.
 - `dbt build` là quality gate trước Gold.
 - Test `assert_gold_is_readable` buộc đọc cột VARCHAR từ Parquet, tránh green giả
   khi chỉ `COUNT(*)` từ catalog metadata.
-- JSON trong `bronze/files` và Bronze history cho phép replay khi parser/schema thay đổi.
+- JSON trong `bronze/files` và Silver staging history cho phép replay khi
+  parser/schema thay đổi.
 
 ## Trạng thái triển khai
 
@@ -177,12 +177,10 @@ prefix `__dbt_tmp` rồi chỉ rename metadata.
 
 Chưa có:
 
-- serving / dashboard người dùng (Bước 8);
-- hiệu chỉnh xác suất ngập với nhãn sự kiện (K5).
+- mô hình xác suất/độ sâu ngập đã hiệu chỉnh;
 
 Chi tiết cây code: [03a-repo-structure.md](03a-repo-structure.md). Ingestion hiện hành:
-[04b-ingestion-runbook.md](04b-ingestion-runbook.md). Ghi chép thiết kế/khảo sát API cũ:
-[04-ingestion.md](04-ingestion.md). Phương pháp KPI:
+[04b-ingestion-runbook.md](04b-ingestion-runbook.md). Phương pháp KPI:
 [05-kpi-methodology.md](05-kpi-methodology.md).
 
 ## Tham khảo

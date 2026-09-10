@@ -11,7 +11,8 @@ models:
         tests:
           - not_null
           - accepted_values:
-              values: ['era5', 'ecmwf_ifs']
+              arguments:
+                values: ['era5', 'ecmwf_ifs']
       - name: valid_time_utc
         tests: [not_null]
       - name: grid_latitude
@@ -32,7 +33,8 @@ models:
         tests:
           - not_null
           - accepted_values:
-              values: ['ecmwf_ifs_fc']
+              arguments:
+                values: ['ecmwf_ifs_fc']
       - name: valid_time_utc
         tests: [not_null]
       - name: grid_latitude
@@ -65,13 +67,15 @@ models:
         tests:
           - not_null
           - relationships:
-              to: ref('stg_seed__ward')
-              field: ward_code
+              arguments:
+                to: ref('stg_seed__ward')
+                field: ward_code
       - name: weather_model
         tests:
           - not_null
           - accepted_values:
-              values: ['era5', 'ecmwf_ifs']
+              arguments:
+                values: ['era5', 'ecmwf_ifs']
       - name: grid_cell_id
         tests: [not_null]
 
@@ -93,7 +97,8 @@ models:
         tests:
           - not_null
           - accepted_values:
-              values: ['scenario_50_70mm', 'scenario_70_100mm', 'scenario_over_100mm']
+              arguments:
+                values: ['scenario_50_70mm', 'scenario_70_100mm', 'scenario_over_100mm']
       - name: latitude
         tests: [not_null]
       - name: longitude
@@ -102,7 +107,8 @@ models:
         tests:
           - not_null
           - accepted_values:
-              values: ['active', 'inactive']
+              arguments:
+                values: ['active', 'inactive']
 
   - name: stg_seed__flood_observation
     description: >
@@ -121,9 +127,11 @@ models:
         tests:
           - not_null
           - accepted_values:
-              values: ['hour', 'unknown']
+              arguments:
+                values: ['hour', 'unknown']
       - name: source_grade
         tests:
           - not_null
           - accepted_values:
-              values: ['A', 'B', 'C', 'D']
+              arguments:
+                values: ['A', 'B', 'C', 'D']

@@ -33,6 +33,7 @@ from serving.dashboard.ui import (
     navigation,
     number,
     page_header,
+    pressure_score_label,
     to_local_naive,
 )
 
@@ -54,8 +55,8 @@ if not wards:
 page_header(
     "Ward intelligence",
     "Chi tiết phường/xã",
-    "Chọn một địa bàn để đọc forecast từng giờ, tổng mưa trong horizon và điều kiện "
-    "kích hoạt của các điểm úng ngập liên quan.",
+    "Chọn một địa bàn để đọc lượng mưa dự kiến phía trước, tín hiệu áp lực "
+    "và điều kiện kích hoạt của các điểm úng ngập liên quan.",
     f"Forecast S{table_snapshot_version} · {local_time(metadata.get('updated_at_utc'), '%H:%M · %d/%m')}",
 )
 
@@ -101,9 +102,9 @@ metric_strip(
             local_time(summary.get("peak_time_utc"), "%H:%M · %d/%m"),
         ),
         (
-            "Xác suất mưa cao nhất",
-            f"{number(summary.get('max_probability_pct')):.0f}%",
-            "Open-Meteo",
+            "Áp lực mưa đầu horizon",
+            str(summary.get("pressure_level") or "Chưa có"),
+            pressure_score_label(summary.get("pressure_score")),
         ),
     ]
 )
@@ -120,14 +121,22 @@ with chart_col:
     st.markdown(f"### Diễn biến mưa · {ward_name}")
     metric_choice = st.radio(
         "Chỉ số hiển thị",
-        ("Mưa từng giờ", "Tích lũy trượt 6 giờ", "Tích lũy trượt 24 giờ"),
+        ("Mưa từng giờ", "Mưa dự kiến 6 giờ tới", "Mưa dự kiến 24 giờ tới"),
         horizontal=True,
         label_visibility="collapsed",
     )
     field, mark, label = {
         "Mưa từng giờ": ("precipitation_mm", "bar", "Mưa trong giờ (mm)"),
-        "Tích lũy trượt 6 giờ": ("rain_6h_mm", "line", "Mưa trượt 6 giờ (mm)"),
-        "Tích lũy trượt 24 giờ": ("rain_24h_mm", "line", "Mưa trượt 24 giờ (mm)"),
+        "Mưa dự kiến 6 giờ tới": (
+            "forecast_next_6h_mm",
+            "line",
+            "Mưa dự kiến 6 giờ tới (mm)",
+        ),
+        "Mưa dự kiến 24 giờ tới": (
+            "forecast_next_24h_mm",
+            "line",
+            "Mưa dự kiến 24 giờ tới (mm)",
+        ),
     }[metric_choice]
 
     base = alt.Chart(df_ts).encode(
@@ -173,8 +182,9 @@ with chart_col:
     )
     st.altair_chart(chart.properties(height=410), width="stretch")
     st.caption(
-        "Mưa từng giờ là lượng trong khoảng một giờ kết thúc tại timestamp. "
-        "Cửa sổ 6/24 giờ là tổng trượt (t−H, t], không phải tổng H giờ kế tiếp."
+        "Mưa từng giờ là lượng forecast tại timestamp. Cửa sổ 6/24 giờ là "
+        "tổng sau timestamp hiện tại đến H giờ kế tiếp; NULL ở đuôi horizon nghĩa "
+        "là chưa đủ dữ liệu forecast."
     )
 
 with detail_col:
@@ -252,11 +262,11 @@ with st.expander("Bảng dữ liệu forecast theo giờ"):
             "Giờ Hà Nội",
             "precipitation_mm",
             "precipitation_probability_pct",
-            "rain_6h_mm",
-            "rain_24h_mm",
+            "forecast_next_6h_mm",
+            "forecast_next_24h_mm",
         ]
     ].copy()
-    table.columns = ["Giờ Hà Nội", "Mưa giờ", "Xác suất", "Trượt 6h", "Trượt 24h"]
+    table.columns = ["Giờ Hà Nội", "Mưa giờ", "Xác suất", "Mưa tới 6h", "Mưa tới 24h"]
     st.dataframe(
         table,
         hide_index=True,
@@ -267,8 +277,8 @@ with st.expander("Bảng dữ liệu forecast theo giờ"):
             "Xác suất": st.column_config.ProgressColumn(
                 min_value=0, max_value=100, format="%.0f%%"
             ),
-            "Trượt 6h": st.column_config.NumberColumn(format="%.1f mm"),
-            "Trượt 24h": st.column_config.NumberColumn(format="%.1f mm"),
+            "Mưa tới 6h": st.column_config.NumberColumn(format="%.1f mm"),
+            "Mưa tới 24h": st.column_config.NumberColumn(format="%.1f mm"),
         },
     )
 

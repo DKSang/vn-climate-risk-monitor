@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """CLI cho processing framework: chạy, xem, và rewind checkpoint có audit.
 
-    run             chạy dbt (incremental/full-refresh), checkpoint chỉ advance khi xanh
-    status          checkpoint hiện tại + vài run gần nhất
-    reprocess-from  kéo checkpoint lùi để tính lại (thay cho UPDATE tay)
-    abandon         đóng run RUNNING mồ côi
-    migrate         chuyển ingestion.gold_watermarks → processing_state
+run             chạy dbt (incremental/full-refresh), checkpoint chỉ advance khi xanh
+status          checkpoint hiện tại + vài run gần nhất
+reprocess-from  kéo checkpoint lùi để tính lại (thay cho UPDATE tay)
+abandon         đóng run RUNNING mồ côi
+migrate         chuyển ingestion.gold_watermarks → processing_state
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ from processing import (
 from processing.softdelete import SoftDeleteResult
 from processing.state import connect_control_plane
 from vn_climate_risk_monitor.config import load_settings
-from vn_climate_risk_monitor.lakehouse import get_connection
+from vn_climate_risk_monitor.lakehouse import PRIMARY_CATALOG, get_connection
 
 PROCESSING_DIR = Path("processing")
 TRANSFORM_DIR = Path("transform")
@@ -110,13 +110,19 @@ def cmd_run(args: argparse.Namespace) -> int:
                         now=bounds.run_started_at,  # type: ignore[attr-defined]
                     )
                 )
-            row = lakehouse.execute(
-                f"SELECT COUNT(*) FROM {config.target}"
+            row = lakehouse.execute(f"SELECT COUNT(*) FROM {config.target}").fetchone()
+            snapshot_row = lakehouse.execute(
+                f"SELECT MAX(snapshot_id) FROM {PRIMARY_CATALOG}.snapshots()"
             ).fetchone()
         finally:
             lakehouse.close()
         return {
             "target_row_count": None if row is None else int(row[0]),
+            "published_snapshot_id": (
+                None
+                if snapshot_row is None or snapshot_row[0] is None
+                else int(snapshot_row[0])
+            ),
             "rows_deactivated": (
                 sum(d.deactivated for d in deletions) if deletions else None
             ),
@@ -172,11 +178,26 @@ def cmd_status(args: argparse.Namespace) -> int:
         print(f"  {source_ref}: {checkpoint or '(chưa có — full refresh)'}")
     print("  runs:")
     for run in runs:
-        (_id, status, started, completed, candidate, who, reason, etype, emsg,
-         rows, off, on) = run
+        (
+            _id,
+            status,
+            started,
+            completed,
+            candidate,
+            who,
+            reason,
+            etype,
+            emsg,
+            rows,
+            snapshot,
+            off,
+            on,
+        ) = run
         line = f"    {status:<9} {started} → {completed or '...'}  ckpt={candidate}"
         if rows is not None:
             line += f"  rows={rows:,}"
+        if snapshot is not None:
+            line += f"  snapshot=S{snapshot}"
         if off or on:
             line += f"  soft_delete(-{off or 0}/+{on or 0})"
         if reason:

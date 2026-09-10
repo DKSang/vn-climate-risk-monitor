@@ -51,11 +51,10 @@ seeds:
       Không sửa tay. Mọi dòng gắn với đúng một `source_visualisation_version`;
       script từ chối ghi nếu version Flourish đổi mà chưa được review.
 
-      GIỚI HẠN NHÃN — 122/123 dòng là nhãn dương. Đây là danh sách điểm ĐANG
-      ngập, nên nó đo được recall (POD) nhưng KHÔNG đo được FAR hay CSI: luật
-      "báo động mọi nơi" cũng đạt POD = 1,0 trên tập này. Vắng mặt trong bài báo
-      KHÔNG phải bằng chứng không ngập — báo chí chỉ đăng điểm nổi bật. Nhãn âm
-      đáng tin phải đến từ danh sách toàn thành phố của cơ quan chức năng.
+      GIỚI HẠN COVERAGE — 122/123 dòng ghi nhận trạng thái ngập. Vắng mặt trong
+      bài báo KHÔNG phải bằng chứng không ngập vì báo chí chỉ đăng các điểm nổi
+      bật. Dataset này chỉ dùng để đối chiếu archive replay, không dùng để hiệu
+      chỉnh hoặc đánh giá pressure signal.
     columns:
       - name: observation_id
         description: "Khoá quan sát, ví dụ VNE_20251007_001"
@@ -77,7 +76,8 @@ seeds:
         tests:
           - not_null
           - accepted_values:
-              values: ['receded', 'passable', 'slow', 'diverted', 'impassable', 'unknown']
+              arguments:
+                values: ['receded', 'passable', 'slow', 'diverted', 'impassable', 'unknown']
       - name: source_grade
         description: >
           A = báo cáo Sở Xây dựng/Ban Duy tu; B = báo chí dẫn nguyên bảng chính
@@ -86,7 +86,8 @@ seeds:
         tests:
           - not_null
           - accepted_values:
-              values: ['A', 'B', 'C', 'D']
+              arguments:
+                values: ['A', 'B', 'C', 'D']
       - name: source_url
         tests: [not_null]
       - name: source_visualisation_version
@@ -102,10 +103,9 @@ seeds:
       Tách khỏi `flood_event_observations_seed.csv` vì file đó do máy sinh và bị
       ghi đè mỗi lần fetch lại; gộp chung thì công soát tay mất sạch.
 
-      `geocode_verified` là cổng duy nhất: chỉ dòng `true` mới vào
-      `is_training_eligible`. Script LUÔN ghi `false` và không bao giờ tự đổi
-      thành `true` — gán sai phường nghĩa là sai ô lưới, sai lượng mưa, nhãn
-      hỏng, mà nhãn hỏng tệ hơn thiếu nhãn.
+      `geocode_verified` là cổng duy nhất: chỉ dòng `true` mới có thể vào
+      archive replay. Script LUÔN ghi `false` và không bao giờ tự đổi thành
+      `true` — gán sai phường nghĩa là hiển thị sai vị trí.
 
       Đọc `geocode_match_type` khi soát:
         full_name     — khớp cả cụm mô tả, đáng tin nhất
@@ -120,8 +120,9 @@ seeds:
           - unique
           - not_null
           - relationships:
-              to: ref('flood_event_observations_seed')
-              field: observation_id
+              arguments:
+                to: ref('flood_event_observations_seed')
+                field: observation_id
       - name: ward_code
         description: "Suy từ point-in-polygon, KHÔNG phải do Nominatim trả về"
       - name: geocode_match_type
@@ -130,10 +131,11 @@ seeds:
         description: "Chỉ người soát mới được đặt true"
         tests: [not_null]
       - name: confidence
-        description: "Độ tin cậy của anchor sau review; không tự mở cổng train"
+        description: "Độ tin cậy của anchor sau review; không tự mở cổng replay"
         tests:
           - accepted_values:
-              values: ['high', 'medium', 'low']
+              arguments:
+                values: ['high', 'medium', 'low']
       - name: needs_manual_validation
         tests: [not_null]
 
@@ -157,7 +159,8 @@ seeds:
         tests:
           - not_null
           - accepted_values:
-              values: ['scenario_50_70mm', 'scenario_70_100mm', 'scenario_over_100mm']
+              arguments:
+                values: ['scenario_50_70mm', 'scenario_70_100mm', 'scenario_over_100mm']
       - name: latitude
         description: "Vĩ độ WGS84 của điểm úng ngập"
         tests: [not_null]
@@ -169,4 +172,5 @@ seeds:
         tests:
           - not_null
           - accepted_values:
-              values: ['active', 'inactive']
+              arguments:
+                values: ['active', 'inactive']

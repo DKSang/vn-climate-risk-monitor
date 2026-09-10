@@ -1,19 +1,9 @@
 /*
     MART — quan sát ngập đã xác nhận, theo địa điểm × thời điểm × nguồn.
 
-    Grain: `observation_id`. Đây là NHÃN, không phải feature: mọi cột ở đây đến
-    từ báo cáo/bài báo, không có cột nào suy ra từ Open-Meteo.
-
-    Bảng này là thứ docs/05 §14 gọi là K5 — nguồn nhãn sự kiện để hiệu chỉnh
-    POD/FAR/CSI. Trước khi có nó, dự án không có cách nào biết một ngưỡng mưa là
-    đúng hay sai.
-
-    ─── Cảnh báo về thành phần nhãn ────────────────────────────────────────
-    Nguồn đầu tiên (bảng VnExpress 07/10/2025) là DANH SÁCH ĐIỂM ĐANG NGẬP:
-    122/123 dòng là nhãn dương. Một tập gần như toàn dương đo được RECALL (POD)
-    nhưng KHÔNG đo được FAR hay CSI — luật "báo động ở mọi nơi" cũng đạt
-    POD = 1,0 trên tập này. Muốn có nhãn âm đáng tin cần danh sách toàn thành
-    phố do cơ quan chức năng công bố, không phải bài báo.
+    Grain: `observation_id`. Mọi cột ở đây đến từ báo cáo/bài báo, không có cột
+    nào suy ra từ Open-Meteo. Bảng chỉ phục vụ đối chiếu trên archive replay;
+    không phải feature huấn luyện hay đầu vào của pressure signal.
 
     Incremental để một lần sửa nguồn (đính chính độ sâu, hạ hạng nguồn) không
     xoá lịch sử các dòng còn lại.
@@ -70,7 +60,7 @@ SELECT
     o.source_visualisation_version,
     o.source_updated_at_utc,
     {#
-        Cờ dùng-được-để-huấn-luyện, tách khỏi is_flooded. Cần CẢ BA:
+        Cờ dùng được cho archive replay, tách khỏi is_flooded. Cần CẢ BA:
 
         - hạng A/B/C: hạng D (mạng xã hội chưa xác minh) chưa kiểm chứng được;
         - biết rõ GIỜ: ghép mưa 1h với một nhãn "sáng 7/10" là gán sai thời
@@ -84,7 +74,7 @@ SELECT
         o.source_grade IN ('A', 'B', 'C')
         AND o.observed_at_precision = 'hour'
         AND o.ward_code IS NOT NULL
-    ) AS is_training_eligible,
+    ) AS is_replay_eligible,
     TRUE AS is_active,
     CAST(NULL AS TIMESTAMPTZ) AS _deactivated_at,
     {{ processing_updated_at() }} AS _updated_at

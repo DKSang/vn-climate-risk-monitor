@@ -27,7 +27,12 @@ SCENARIO_SHORT_LABELS = {
 
 SCENARIO_COLORS = {
     "below_50": [75, 85, 99, 100],  # Xám than mờ hơn (#4B5563, ~40% alpha)
-    "from_50_to_under_70": [250, 204, 21, 190],  # Vàng hổ phách cảnh báo (#FACC15, ~75% alpha)
+    "from_50_to_under_70": [
+        250,
+        204,
+        21,
+        190,
+    ],  # Vàng hổ phách cảnh báo (#FACC15, ~75% alpha)
     "from_70_to_100": [249, 115, 22, 215],  # Cam đậm nguy cơ cao (#F97316, ~84% alpha)
     "over_100": [239, 68, 68, 240],  # Đỏ rực đặc biệt nguy hiểm (#EF4444, ~94% alpha)
 }
@@ -51,8 +56,8 @@ POINT_SCENARIO_LABELS = {
     "scenario_over_100mm": "Trên 100 mm/giờ",
 }
 
-POINT_TRIGGERED_COLOR = [6, 182, 212, 255]     # Cyan neon rực sáng (#06B6D4)
-POINT_INACTIVE_COLOR = [100, 116, 139, 140]     # Xám phiến mờ (#64748B)
+POINT_TRIGGERED_COLOR = [6, 182, 212, 255]  # Cyan neon rực sáng (#06B6D4)
+POINT_INACTIVE_COLOR = [100, 116, 139, 140]  # Xám phiến mờ (#64748B)
 
 MAP_STYLES: dict[str, str] = {
     "Tối (Dark Matter)": "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json",
@@ -78,12 +83,12 @@ RAIN_INDICATORS: dict[str, dict] = {
         "max_key": "max_rain_24h_mm",
         "summary_key": "elevated_ward_count_24h",
         "colors": {
-            "below_50": [75, 85, 99, 100],               # Xám than mờ
-            "from_50_to_under_100": [56, 189, 248, 170], # Xanh da trời (#38BDF8)
-            "from_100_to_under_150": [250, 204, 21, 190],# Vàng cảnh báo (#FACC15)
-            "from_150_to_under_200": [249, 115, 22, 215],# Cam nguy cơ cao (#F97316)
-            "from_200_to_300": [239, 68, 68, 235],       # Đỏ rất nguy hiểm (#EF4444)
-            "over_300": [168, 85, 247, 245],             # Tím cực đoan (#A855F7)
+            "below_50": [75, 85, 99, 100],  # Xám than mờ
+            "from_50_to_under_100": [56, 189, 248, 170],  # Xanh da trời (#38BDF8)
+            "from_100_to_under_150": [250, 204, 21, 190],  # Vàng cảnh báo (#FACC15)
+            "from_150_to_under_200": [249, 115, 22, 215],  # Cam nguy cơ cao (#F97316)
+            "from_200_to_300": [239, 68, 68, 235],  # Đỏ rất nguy hiểm (#EF4444)
+            "over_300": [168, 85, 247, 245],  # Tím cực đoan (#A855F7)
         },
         "labels": {
             "below_50": "Dưới 50 mm/24 giờ",
@@ -111,11 +116,11 @@ RAIN_INDICATORS: dict[str, dict] = {
         "max_key": "max_rain_12h_mm",
         "summary_key": "elevated_ward_count_12h",
         "colors": {
-            "below_30": [75, 85, 99, 100],               # Xám than mờ
+            "below_30": [75, 85, 99, 100],  # Xám than mờ
             "from_30_to_under_50": [56, 189, 248, 170],  # Xanh da trời (#38BDF8)
             "from_50_to_under_70": [250, 204, 21, 190],  # Vàng cảnh báo (#FACC15)
-            "from_70_to_100": [249, 115, 22, 215],       # Cam nguy cơ cao (#F97316)
-            "over_100": [239, 68, 68, 240],              # Đỏ rất nguy hiểm (#EF4444)
+            "from_70_to_100": [249, 115, 22, 215],  # Cam nguy cơ cao (#F97316)
+            "over_100": [239, 68, 68, 240],  # Đỏ rất nguy hiểm (#EF4444)
         },
         "labels": {
             "below_30": "Dưới 30 mm/12 giờ",
@@ -205,6 +210,17 @@ def rain_label(value: object) -> str:
         return f"{result:.1f} mm" if math.isfinite(result) else "Không có dữ liệu"
     except (TypeError, ValueError):
         return "Không có dữ liệu"
+
+
+def pressure_score_label(value: object, *, digits: int = 0) -> str:
+    """Hiển thị pressure score mà không biến NULL thành 0/100."""
+    try:
+        result = float(value)
+        return (
+            f"{result:.{digits}f}/100" if math.isfinite(result) else "Không đủ dữ liệu"
+        )
+    except (TypeError, ValueError):
+        return "Không đủ dữ liệu"
 
 
 def legend_row(legend: tuple[tuple[str, str, str], ...]) -> None:

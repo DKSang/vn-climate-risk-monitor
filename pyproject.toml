@@ -6,7 +6,7 @@ readme = "README.md"
 authors = [
     { name = "Antigravity", email = "antigravity@bmad-method.org" }
 ]
-requires-python = ">=3.13"
+requires-python = ">=3.12"
 dependencies = [
     # ── Lakehouse (DuckDB compute + MinIO storage) ──
     "duckdb>=1.5.5",
@@ -15,6 +15,8 @@ dependencies = [
 
     # ── Transform (dbt + DuckDB) ──
     "dbt-duckdb>=1.11.0",
+    # Data-quality gates are part of the production pipelines.
+    "provero>=0.2.1",
 
     # ── Runtime configuration + read-only operational API ──
     "python-dotenv>=1.1.0",
@@ -30,7 +32,6 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    "provero>=0.2.1",
     "pytest>=8.3.0",
     # Render macro dbt trong unit test, không cần DuckDB/Postgres chạy thật.
     "jinja2>=3.1.0",

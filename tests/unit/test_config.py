@@ -67,3 +67,37 @@ def test_open_meteo_settings_reject_invalid_integer(
         load_settings()
 
     load_settings.cache_clear()
+
+
+def test_secrets_can_be_loaded_from_files(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    postgres = tmp_path / "postgres_password"
+    minio = tmp_path / "minio_secret_key"
+    postgres.write_text("postgres-from-file\n", encoding="utf-8")
+    minio.write_text("minio-from-file\n", encoding="utf-8")
+    monkeypatch.delenv("POSTGRES_PASSWORD", raising=False)
+    monkeypatch.delenv("MINIO_SECRET_KEY", raising=False)
+    monkeypatch.setenv("POSTGRES_PASSWORD_FILE", str(postgres))
+    monkeypatch.setenv("MINIO_SECRET_KEY_FILE", str(minio))
+    load_settings.cache_clear()
+
+    settings = load_settings()
+
+    assert settings.postgres.password == "postgres-from-file"
+    assert settings.minio.secret_key == "minio-from-file"
+    load_settings.cache_clear()
+
+
+def test_secret_file_takes_precedence_over_environment(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    secret = tmp_path / "postgres_password"
+    secret.write_text("from-file\n", encoding="utf-8")
+    monkeypatch.setenv("POSTGRES_PASSWORD", "from-environment")
+    monkeypatch.setenv("POSTGRES_PASSWORD_FILE", str(secret))
+    load_settings.cache_clear()
+
+    assert load_settings().postgres.password == "from-file"
+
+    load_settings.cache_clear()

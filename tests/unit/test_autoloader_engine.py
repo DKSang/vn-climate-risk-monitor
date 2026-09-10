@@ -73,7 +73,9 @@ class FakeCheckpoint:
     def ensure_source_run(self, **_: Any) -> FakeAttempt:
         return self.source_attempt
 
-    def register_file(self, *, object_key: str, attempt_id: UUID | None = None, **_: Any) -> UUID:
+    def register_file(
+        self, *, object_key: str, attempt_id: UUID | None = None, **_: Any
+    ) -> UUID:
         file_id = uuid4()
         self.files[object_key] = {
             "file_id": file_id,
@@ -180,9 +182,7 @@ def build_loader(
 
 
 def test_loads_every_discovered_file(tmp_path: Path) -> None:
-    loader = build_loader(
-        tmp_path, ["raw/a.json", "raw/b.json"], batch_size=10
-    )
+    loader = build_loader(tmp_path, ["raw/a.json", "raw/b.json"], batch_size=10)
     result = loader.load()
 
     assert result.discovered == 2
@@ -216,9 +216,7 @@ def test_later_discovery_keeps_the_same_attempt(tmp_path: Path) -> None:
     assert len(attempt_ids) == 1
 
 
-@pytest.mark.parametrize(
-    ("batch_size", "expected_batches"), [(1, 5), (3, 3), (10, 3)]
-)
+@pytest.mark.parametrize(("batch_size", "expected_batches"), [(1, 5), (3, 3), (10, 3)])
 def test_poison_file_does_not_block_healthy_files(
     tmp_path: Path, batch_size: int, expected_batches: int
 ) -> None:
@@ -241,9 +239,7 @@ def test_poison_file_does_not_block_healthy_files(
     assert result.rows_inserted == 200
     assert result.batches == expected_batches
     committed_keys = {
-        key
-        for key, meta in checkpoint.files.items()
-        if meta["status"] == "COMMITTED"
+        key for key, meta in checkpoint.files.items() if meta["status"] == "COMMITTED"
     }
     assert committed_keys == {"raw/good_1.json", "raw/good_2.json"}
     assert checkpoint.files["raw/poison.json"]["status"] == "FAILED"

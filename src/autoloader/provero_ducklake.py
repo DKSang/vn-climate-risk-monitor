@@ -35,9 +35,23 @@ giao diện connector, nên autoloader không phụ thuộc provero.
 from __future__ import annotations
 
 import os
+import re
 from typing import Any
 
 import duckdb
+
+from vn_climate_risk_monitor.config import load_settings
+
+
+def _sql_literal(value: str) -> str:
+    """Quote a trusted configuration value as one DuckDB string literal."""
+    return "'" + value.replace("'", "''") + "'"
+
+
+def _identifier(value: str) -> str:
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", value):
+        raise ValueError(f"DuckLake alias không hợp lệ: {value!r}")
+    return value
 
 
 class DuckLakeConnection:
@@ -74,12 +88,20 @@ class DuckLakeConnector:
         # provero/connectors/factory.py::create_connector), không phải
         # `connection` như tên trường trong YAML.
         self.database = database
-        # Ưu tiên DUCKLAKE_DSN từ biến môi trường để hỗ trợ môi trường container/Docker
-        # nơi host DB là 'postgres' thay vì '127.0.0.1' trong file YAML tĩnh.
-        self.catalog_dsn = os.getenv("DUCKLAKE_DSN") or connection_string or ""
-        self.alias = os.getenv("DUCKLAKE_ALIAS", "catalog1")
-        self.data_path = os.getenv("DUCKLAKE_DATA_PATH", "")
+        settings = load_settings()
+        # Env override phục vụ container; connection_string giữ compatibility
+        # với Provero. Local mặc định dùng cùng typed settings với app.
+        self.catalog_dsn = (
+            os.getenv("DUCKLAKE_DSN")
+            or connection_string
+            or f"ducklake:postgres:{settings.postgres.ducklake_connection_string}"
+        )
+        self.alias = _identifier(os.getenv("DUCKLAKE_ALIAS", "catalog1"))
+        self.data_path = os.getenv(
+            "DUCKLAKE_DATA_PATH", f"s3://{settings.minio.bucket}"
+        )
         self.metadata_schema = os.getenv("DUCKLAKE_METADATA_SCHEMA", "ducklake")
+        self.minio = settings.minio
 
     def connect(self) -> DuckLakeConnection:
         conn = duckdb.connect(
@@ -91,15 +113,13 @@ class DuckLakeConnector:
             },
         )
         conn.execute("INSTALL httpfs; LOAD httpfs; INSTALL ducklake; LOAD ducklake;")
-        endpoint = os.getenv("MINIO_ENDPOINT", "127.0.0.1:9000")
-        use_ssl = os.getenv("MINIO_SECURE", "false").lower() in {"1", "true", "yes"}
         conn.execute(
             "CREATE OR REPLACE SECRET object_store ("
             "TYPE S3,"
-            f" KEY_ID '{os.getenv('MINIO_ACCESS_KEY', 'minioadmin')}',"
-            f" SECRET '{os.getenv('MINIO_SECRET_KEY', 'minioadmin')}',"
-            f" ENDPOINT '{endpoint}',"
-            f" USE_SSL {'true' if use_ssl else 'false'},"
+            f" KEY_ID {_sql_literal(self.minio.access_key)},"
+            f" SECRET {_sql_literal(self.minio.secret_key)},"
+            f" ENDPOINT {_sql_literal(self.minio.endpoint)},"
+            f" USE_SSL {'true' if self.minio.secure else 'false'},"
             " URL_STYLE 'path')"
         )
         if not self.catalog_dsn:
@@ -107,10 +127,12 @@ class DuckLakeConnector:
                 "Thiếu DSN catalog DuckLake: đặt `connection:` trong provero.yaml "
                 "hoặc biến môi trường DUCKLAKE_DSN"
             )
-        options = [f"DATA_PATH '{self.data_path}'"] if self.data_path else []
-        options.append(f"METADATA_SCHEMA '{self.metadata_schema}'")
+        options = (
+            [f"DATA_PATH {_sql_literal(self.data_path)}"] if self.data_path else []
+        )
+        options.append(f"METADATA_SCHEMA {_sql_literal(self.metadata_schema)}")
         conn.execute(
-            f"ATTACH IF NOT EXISTS '{self.catalog_dsn}' AS {self.alias} "
+            f"ATTACH IF NOT EXISTS {_sql_literal(self.catalog_dsn)} AS {self.alias} "
             f"({', '.join(options)})"
         )
         return DuckLakeConnection(conn)

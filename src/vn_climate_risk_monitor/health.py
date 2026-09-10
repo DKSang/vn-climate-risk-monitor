@@ -45,7 +45,9 @@ class HealthReport:
         return asdict(self)
 
     def to_json(self, *, indent: int | None = 2) -> str:
-        return json.dumps(self.to_dict(), ensure_ascii=False, indent=indent, default=str)
+        return json.dumps(
+            self.to_dict(), ensure_ascii=False, indent=indent, default=str
+        )
 
 
 def _result(
@@ -319,7 +321,9 @@ def _check_archive_gold(connection: Any) -> list[CheckResult]:
     """
     relation = "gold.fct_rain_archive_hourly"
     if not _relation_exists(connection, relation):
-        return [_result("gold.rain_hourly.exists", "FAIL", f"Không tìm thấy {relation}")]
+        return [
+            _result("gold.rain_hourly.exists", "FAIL", f"Không tìm thấy {relation}")
+        ]
     rows, distinct_keys = connection.execute(
         f"SELECT COUNT(*), COUNT(DISTINCT rain_archive_hourly_key) FROM {relation}"
     ).fetchone()
@@ -341,15 +345,26 @@ def _check_archive_gold(connection: Any) -> list[CheckResult]:
 
 
 def _check_forecast_gold(connection: Any) -> list[CheckResult]:
-    """View serving chỉ chứa latest run/current horizon; history ở table riêng."""
-    relation = "gold.fct_rain_forecast_current_hourly"
-    if not _relation_exists(connection, relation):
+    """Current view và pressure alert phải được publish cùng forecast run."""
+    current_relation = "gold.fct_rain_forecast_current_hourly"
+    alert_relation = "gold.fct_rain_pressure_alert"
+    if not _relation_exists(connection, current_relation):
         return [
             _result(
-                "forecast.gold.exists", "FAIL", f"Không tìm thấy {relation}"
+                "forecast.gold.current_exists",
+                "FAIL",
+                f"Không tìm thấy {current_relation}",
             )
         ]
-    rows, distinct_keys, expired, first_hour, last_hour = connection.execute(
+    if not _relation_exists(connection, alert_relation):
+        return [
+            _result(
+                "forecast.pressure.exists",
+                "FAIL",
+                f"Không tìm thấy {alert_relation}",
+            )
+        ]
+    current_rows, current_distinct_keys, expired, current_runs = connection.execute(
         f"""
         SELECT
             COUNT(*),
@@ -357,37 +372,116 @@ def _check_forecast_gold(connection: Any) -> list[CheckResult]:
             COUNT(*) FILTER (
                 WHERE valid_time_utc < DATE_TRUNC('hour', CURRENT_TIMESTAMP)
             ),
-            MIN(valid_time_utc),
-            MAX(valid_time_utc)
-        FROM {relation}
+            COUNT(DISTINCT forecast_run_id)
+        FROM {current_relation}
         """
     ).fetchone()
+    current_duplicates = current_rows - current_distinct_keys
+
+    rows, distinct_keys, invalid, incomplete, unknown, first_hour, last_hour = (
+        connection.execute(
+            f"""
+        SELECT
+            COUNT(*),
+            COUNT(DISTINCT rain_pressure_alert_key),
+            COUNT(*) FILTER (
+                WHERE pressure_level NOT IN ('UNKNOWN', 'NORMAL', 'WATCH', 'ELEVATED', 'HIGH')
+                   OR coverage_status NOT IN ('COMPLETE', 'PARTIAL', 'NONE')
+                   OR pressure_score < 0
+                   OR pressure_score > 100
+                   OR (pressure_level = 'NORMAL' AND coverage_status <> 'COMPLETE')
+                   OR (coverage_status = 'NONE' AND pressure_level <> 'UNKNOWN')
+                   OR (coverage_status = 'NONE' AND pressure_score IS NOT NULL)
+                   OR (coverage_status <> 'NONE' AND pressure_score IS NULL)
+                   OR (revision_direction = 'UNKNOWN' AND forecast_next_24h_mm IS NOT NULL)
+                   OR (revision_direction <> 'UNKNOWN' AND forecast_next_24h_mm IS NULL)
+            ),
+            COUNT(*) FILTER (WHERE coverage_status <> 'COMPLETE'),
+            COUNT(*) FILTER (WHERE pressure_level = 'UNKNOWN'),
+            MIN(valid_time_utc),
+            MAX(valid_time_utc)
+        FROM {alert_relation}
+        """
+        ).fetchone()
+    )
     duplicates = rows - distinct_keys
+    missing_current = _scalar(
+        connection,
+        f"""
+        SELECT COUNT(*)
+        FROM {current_relation} AS forecast
+        JOIN gold.bridge_ward_grid AS bridge
+          ON bridge.grid_cell_id = forecast.grid_cell_id
+         AND bridge.weather_model = 'ecmwf_ifs_fc'
+         AND bridge.is_active = TRUE
+        LEFT JOIN {alert_relation} AS pressure
+          ON pressure.forecast_run_id = forecast.forecast_run_id
+         AND pressure.ward_code = bridge.ward_code
+         AND pressure.valid_time_utc = forecast.valid_time_utc
+        WHERE pressure.rain_pressure_alert_key IS NULL
+        """,
+    )
     return [
         _result(
-            "forecast.gold.rows",
+            "forecast.gold.current_rows",
+            "PASS" if current_rows > 0 else "FAIL",
+            f"{current_rows:,} dòng trong current horizon"
+            if current_rows
+            else "View rỗng",
+            row_count=current_rows,
+        ),
+        _result(
+            "forecast.gold.current_grain",
+            "PASS" if current_duplicates == 0 else "FAIL",
+            f"{current_duplicates:,} khóa current forecast bị trùng",
+            duplicate_keys=current_duplicates,
+        ),
+        _result(
+            "forecast.gold.current_horizon",
+            "PASS" if expired == 0 and current_runs == 1 else "FAIL",
+            f"{expired:,} dòng hết hạn; {current_runs} forecast run",
+            expired_rows=expired,
+            forecast_run_count=current_runs,
+        ),
+        _result(
+            "forecast.pressure.rows",
             "PASS" if rows > 0 else "FAIL",
-            f"{rows:,} dòng trong current horizon" if rows else "Bảng rỗng",
+            f"{rows:,} dòng cảnh báo áp lực mưa" if rows else "Bảng rỗng",
             row_count=rows,
             first_hour=first_hour,
             last_hour=last_hour,
         ),
         _result(
-            "forecast.gold.grain",
+            "forecast.pressure.grain",
             "PASS" if duplicates == 0 else "FAIL",
-            f"{duplicates:,} khóa forecast bị trùng",
+            f"{duplicates:,} khóa pressure alert bị trùng",
             duplicate_keys=duplicates,
         ),
         _result(
-            "forecast.gold.current_horizon",
-            "PASS" if expired == 0 else "FAIL",
-            f"{expired:,} dòng đã hết hạn trong current view",
-            expired_rows=expired,
+            "forecast.pressure.contract",
+            "PASS" if invalid == 0 else "FAIL",
+            f"{invalid:,} dòng vi phạm level/score/coverage/revision",
+            invalid_rows=invalid,
+        ),
+        _result(
+            "forecast.pressure.coverage",
+            "PASS",
+            f"{incomplete:,} dòng coverage chưa đủ; {unknown:,} dòng UNKNOWN",
+            incomplete_rows=incomplete,
+            unknown_rows=unknown,
+        ),
+        _result(
+            "forecast.pressure.current_coverage",
+            "PASS" if missing_current == 0 else "FAIL",
+            f"{missing_current:,} ward-giờ current thiếu pressure cùng forecast run",
+            missing_current_rows=missing_current,
         ),
     ]
 
 
-def _check_control_plane() -> list[CheckResult]:
+def _check_control_plane(
+    *, scope: Literal["forecast", "archive", "all"], require_gold: bool
+) -> list[CheckResult]:
     settings = load_settings()
     connection = connect_control_plane(settings.postgres.ducklake_connection_string)
     try:
@@ -400,26 +494,65 @@ def _check_control_plane() -> list[CheckResult]:
             FROM ingestion.ingestion_files
             """
         ).fetchone()
+        backlog = pending + processing
+        max_backlog = int(os.getenv("HEALTH_MAX_FILE_BACKLOG", "0"))
+        checks = [
+            _result(
+                "ingestion.backlog",
+                "PASS" if backlog <= max_backlog else "WARN",
+                f"{backlog} file đang chờ/được xử lý",
+                pending_files=pending,
+                processing_files=processing,
+                allowed_backlog=max_backlog,
+            ),
+            _result(
+                "ingestion.failed_files",
+                "PASS" if failed == 0 else "FAIL",
+                f"{failed} file FAILED",
+                failed_files=failed,
+            ),
+        ]
+        if require_gold:
+            process_keys = []
+            if scope in {"forecast", "all"}:
+                process_keys.append("forecast_gold")
+            if scope in {"archive", "all"}:
+                process_keys.append("rain_gold")
+            for process_key in process_keys:
+                row = connection.execute(
+                    """
+                    SELECT run.published_snapshot_id,
+                           snapshot.snapshot_id IS NOT NULL
+                    FROM processing.processing_runs AS run
+                    LEFT JOIN ducklake.ducklake_snapshot AS snapshot
+                      ON snapshot.snapshot_id = run.published_snapshot_id
+                    WHERE run.process_key = %s
+                      AND run.scope = 'production'
+                      AND run.status = 'SUCCEEDED'
+                      AND run.published_snapshot_id IS NOT NULL
+                    ORDER BY run.completed_at_utc DESC
+                    LIMIT 1
+                    """,
+                    (process_key,),
+                ).fetchone()
+                snapshot_id = None if row is None else row[0]
+                available = bool(row and row[1])
+                checks.append(
+                    _result(
+                        f"gold.publication.{process_key}",
+                        "PASS" if available else "FAIL",
+                        (
+                            f"Snapshot S{snapshot_id} đã publish và còn đọc được"
+                            if available
+                            else "Không có snapshot từ Gold run thành công còn đọc được"
+                        ),
+                        snapshot_id=snapshot_id,
+                        snapshot_available=available,
+                    )
+                )
+        return checks
     finally:
         connection.close()
-    backlog = pending + processing
-    max_backlog = int(os.getenv("HEALTH_MAX_FILE_BACKLOG", "0"))
-    return [
-        _result(
-            "ingestion.backlog",
-            "PASS" if backlog <= max_backlog else "WARN",
-            f"{backlog} file đang chờ/được xử lý",
-            pending_files=pending,
-            processing_files=processing,
-            allowed_backlog=max_backlog,
-        ),
-        _result(
-            "ingestion.failed_files",
-            "PASS" if failed == 0 else "FAIL",
-            f"{failed} file FAILED",
-            failed_files=failed,
-        ),
-    ]
 
 
 def _check_disk() -> CheckResult:
@@ -444,7 +577,7 @@ def collect_health(
     """Collect health without raising for individual infrastructure failures."""
     checks: list[CheckResult] = [_check_disk()]
     try:
-        checks.extend(_check_control_plane())
+        checks.extend(_check_control_plane(scope=scope, require_gold=require_gold))
     except Exception as error:  # noqa: BLE001 - health must report, not crash
         checks.append(
             _result(
@@ -475,9 +608,7 @@ def collect_health(
                         freshness_hours=24,
                     )
                 )
-                if _relation_exists(
-                    connection, "catalog1.silver.stg_weather_forecast"
-                ):
+                if _relation_exists(connection, "catalog1.silver.stg_weather_forecast"):
                     checks.append(_check_forecast_coverage(connection))
                 if require_gold:
                     checks.extend(_check_forecast_gold(connection))
@@ -502,7 +633,9 @@ def collect_health(
                 elif require_gold:
                     checks.append(
                         _result(
-                            "archive.silver", "FAIL", "Thiếu silver.int_weather_archive_hourly"
+                            "archive.silver",
+                            "FAIL",
+                            "Thiếu silver.int_weather_archive_hourly",
                         )
                     )
         except Exception as error:  # noqa: BLE001

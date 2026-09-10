@@ -10,7 +10,8 @@ models:
         tests:
           - not_null
           - accepted_values:
-              values: ['era5', 'ecmwf_ifs', 'ecmwf_ifs_fc']
+              arguments:
+                values: ['era5', 'ecmwf_ifs', 'ecmwf_ifs_fc']
       - name: grid_latitude
         tests: [not_null]
       - name: grid_longitude
@@ -43,13 +44,15 @@ models:
         tests:
           - not_null
           - relationships:
-              to: ref('dim_ward')
-              field: ward_code
+              arguments:
+                to: ref('dim_ward')
+                field: ward_code
       - name: rain_scenario
         tests:
           - not_null
           - accepted_values:
-              values: ['scenario_50_70mm', 'scenario_70_100mm', 'scenario_over_100mm']
+              arguments:
+                values: ['scenario_50_70mm', 'scenario_70_100mm', 'scenario_over_100mm']
       - name: latitude
         tests: [not_null]
       - name: longitude
@@ -58,32 +61,8 @@ models:
         tests:
           - not_null
           - accepted_values:
-              values: ['active', 'inactive']
-      - name: is_active
-        tests: [not_null]
-
-  - name: bridge_flood_point_grid
-    description: "Cầu nối điểm úng ngập ↔ ô lưới thời tiết theo từng weather_model"
-    columns:
-      - name: flood_point_grid_key
-        tests: [unique, not_null]
-      - name: point_id
-        tests:
-          - not_null
-          - relationships:
-              to: ref('dim_flood_point')
-              field: point_id
-      - name: weather_model
-        tests:
-          - not_null
-          - accepted_values:
-              values: ['era5', 'ecmwf_ifs']
-      - name: grid_cell_id
-        tests:
-          - not_null
-          - relationships:
-              to: ref('dim_grid')
-              field: grid_cell_id
+              arguments:
+                values: ['active', 'inactive']
       - name: is_active
         tests: [not_null]
 
@@ -98,24 +77,25 @@ models:
         tests:
           - not_null
           - relationships:
-              to: ref('dim_ward')
-              field: ward_code
+              arguments:
+                to: ref('dim_ward')
+                field: ward_code
       - name: grid_cell_id
         tests:
           - not_null
           - relationships:
-              to: ref('dim_grid')
-              field: grid_cell_id
+              arguments:
+                to: ref('dim_grid')
+                field: grid_cell_id
       - name: ward_count_on_grid
         description: "Số phường dùng chung ô này — để xếp hạng không nhân trọng số"
         tests: [not_null]
 
   - name: fct_flood_event_observation
     description: >
-      Quan sát ngập đã xác nhận (địa điểm × thời điểm × nguồn). Đây là NHÃN —
-      nguồn K5 của docs/05 §14 — không phải feature khí tượng.
-      Nguồn đầu tiên là danh sách điểm ĐANG ngập nên gần như toàn nhãn dương:
-      đo được POD, KHÔNG đo được FAR/CSI.
+      Quan sát ngập đã xác nhận (địa điểm × thời điểm × nguồn), dùng để đối
+      chiếu trực quan trên archive replay. Không phải feature huấn luyện hoặc
+      đầu vào của pressure signal.
     columns:
       - name: observation_id
         tests: [unique, not_null]
@@ -130,10 +110,11 @@ models:
           nhãn với lượng mưa của chỗ khác.
         tests:
           - relationships:
-              to: ref('dim_ward')
-              field: ward_code
+              arguments:
+                to: ref('dim_ward')
+                field: ward_code
       - name: geocode_verified
-        description: "Cổng duy nhất vào tập huấn luyện; chỉ người soát đặt true"
+        description: "Cổng duy nhất vào archive replay; chỉ người soát đặt true"
         tests: [not_null]
       - name: geocode_match_type
         description: "Kiểu anchor sau geocode/review; không đồng nghĩa với độ tin cậy"
@@ -141,135 +122,33 @@ models:
       - name: geocode_confidence
         tests:
           - accepted_values:
-              values: ['high', 'medium', 'low']
+              arguments:
+                values: ['high', 'medium', 'low']
       - name: needs_manual_validation
         tests: [not_null]
       - name: observed_at_utc
         description: "NULL khi nguồn không ghi giờ; không suy đoán"
       - name: is_flooded
         tests: [not_null]
-      - name: is_training_eligible
+      - name: is_replay_eligible
         description: >
-          Cần cả ba: hạng A/B/C, biết rõ GIỜ, và có ward_code.
+          Có thể hiện trên replay khi đủ cả ba: hạng A/B/C, biết rõ GIỜ, và có ward_code.
         tests: [not_null]
       - name: source_grade
         tests:
           - not_null
           - accepted_values:
-              values: ['A', 'B', 'C', 'D']
+              arguments:
+                values: ['A', 'B', 'C', 'D']
       - name: traffic_status
         tests:
           - accepted_values:
-              values: ['receded', 'passable', 'slow', 'diverted', 'impassable', 'unknown']
-
-  - name: fct_flood_training_feature
-    description: >
-      Feature + nhãn cho mỗi quan sát ngập đủ điều kiện huấn luyện. Cửa sổ mưa
-      KẾT THÚC tại giờ quan sát. `historical_flood_frequency` tính
-      leave-one-event-out để không rò rỉ nhãn của chính trận đang xét.
-      Chưa có impervious_surface_ratio / relative_elevation / drainage_basin
-      sensitivity — repo không có DEM, land cover hay sơ đồ cống.
-    columns:
-      - name: observation_id
-        tests: [unique, not_null]
-      - name: event_id
-        tests: [not_null]
-      - name: location_key
-        tests: [not_null]
-      - name: grid_cell_id
-        tests:
-          - not_null
-          - relationships:
-              to: ref('dim_grid')
-              field: grid_cell_id
-      - name: weather_model
-        description: "era5 trước 2017, ecmwf_ifs từ 2017 — không trộn hai phân phối"
-        tests:
-          - not_null
-          - accepted_values:
-              values: ['era5', 'ecmwf_ifs']
-      - name: forcing_hour_utc
-        description: "Giờ archive được ghép; mọi rain_*h_mm kết thúc tại đây"
-        tests: [not_null]
-      - name: is_flooded
-        tests: [not_null]
-      - name: soil_moisture_index
-        description: "SMI docs/05 §5.2, clip 0–1 theo p10–p90 của cùng ô lưới và tháng"
-      - name: historical_flood_frequency
-        description: >
-          NULL khi địa điểm chưa từng được quan sát ở trận khác — KHÁC với 0
-          (đã quan sát và chưa từng ngập). Không được coalesce về 0.
-
-  - name: fct_rain_climatology
-    description: >
-      Phân vị mưa (p95/p99 mỗi cửa sổ) và độ ẩm đất (p10/p90) theo ô lưới ×
-      tháng lịch. Mẫu số để chuẩn hoá mọi feature về 0–1. Tách theo model qua
-      grid_cell_id — không trộn ERA5 với IFS (docs/05 §6).
-    columns:
-      - name: grid_cell_id
-        tests:
-          - not_null
-          - relationships:
-              to: ref('dim_grid')
-              field: grid_cell_id
-      - name: calendar_month
-        tests:
-          - not_null
-          - accepted_values:
-              values: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
-              quote: false
-      - name: observation_count
-        tests: [not_null]
-      - name: climatology_window_id
-        tests: [not_null]
-
-  - name: fct_flood_risk_score
-    description: >
-      Điểm rủi ro ngập theo phường × giờ trên forecast horizon HIỆN HÀNH.
-      Baseline heuristic CHƯA hiệu chỉnh (docs/05 §10.1) — nội bộ để backtest,
-      không phát hành, KHÔNG phải xác suất ngập.
-    columns:
-      - name: flood_risk_score_key
-        tests: [unique, not_null]
-      - name: ward_code
-        tests:
-          - not_null
-          - relationships:
-              to: ref('dim_ward')
-              field: ward_code
-      - name: valid_time_utc
-        tests: [not_null]
-      - name: risk_score
-        description: "Thang 0–100 để so giữa các phường trong cùng một giờ"
-        tests: [not_null]
-      - name: risk_model_version
-        tests: [not_null]
-
-  - name: fct_flood_backtest_metric
-    description: >
-      POD/FAR/CSI theo (luật, ngưỡng, trận mưa). So luật đang chạy
-      (`hanoi_1h_band`) với dải 24 giờ và điểm heuristic trên cùng tập nhãn.
-      FAR tính trên TẬP ĐÃ QUAN SÁT, không phải toàn thành phố — con số này
-      lạc quan hơn FAR thật.
-    columns:
-      - name: rule_name
-        tests:
-          - not_null
-          - accepted_values:
-              values: ['hanoi_1h_band', 'vn_24h_band', 'risk_score']
-      - name: event_id
-        tests: [not_null]
-      - name: observation_count
-        tests: [not_null]
-      - name: negative_observation_count
-        description: >
-          Khi bằng 0, FAR/CSI/Brier bắt buộc NULL: bài báo chỉ cho nhãn dương,
-          không đủ bằng chứng để đo cảnh báo giả.
-        tests: [not_null]
+              arguments:
+                values: ['receded', 'passable', 'slow', 'diverted', 'impassable', 'unknown']
 
   - name: fct_rain_archive_hourly
     description: >
-      Mưa theo ô lưới × giờ (Archive) + cửa sổ trượt 1/3/6/12/24/48/72h + dải
+      Mưa theo ô lưới × giờ (Archive) + cửa sổ trượt 1/3/6/12/24h + dải
       kịch bản. `rain_{N}h_mm` NULL = cửa sổ thiếu giờ.
     columns:
       - name: rain_archive_hourly_key
@@ -278,8 +157,9 @@ models:
         tests:
           - not_null
           - relationships:
-              to: ref('dim_grid')
-              field: grid_cell_id
+              arguments:
+                to: ref('dim_grid')
+                field: grid_cell_id
       - name: valid_time_utc
         tests: [not_null]
       - name: rain_date
@@ -290,50 +170,24 @@ models:
       - name: hanoi_rain_scenario_band
         tests:
           - accepted_values:
-              values: ['below_50', 'from_50_to_under_70', 'from_70_to_100', 'over_100']
+              arguments:
+                values: ['below_50', 'from_50_to_under_70', 'from_70_to_100', 'over_100']
       - name: vn_rain_band_12h
         tests:
           - accepted_values:
-              values: ['below_30', 'from_30_to_under_50', 'from_50_to_under_70', 'from_70_to_100', 'over_100']
+              arguments:
+                values: ['below_30', 'from_30_to_under_50', 'from_50_to_under_70', 'from_70_to_100', 'over_100']
       - name: vn_rain_band_24h
         tests:
           - accepted_values:
-              values: ['below_50', 'from_50_to_under_100', 'from_100_to_under_150', 'from_150_to_under_200', 'from_200_to_300', 'over_300']
-
-  - name: fct_rain_archive_daily
-    description: "Mưa theo ô lưới × ngày (UTC, Archive). Full refresh từ fct_rain_archive_hourly"
-    columns:
-      - name: rain_archive_daily_key
-        tests: [unique, not_null]
-      - name: grid_cell_id
-        tests:
-          - not_null
-          - relationships:
-              to: ref('dim_grid')
-              field: grid_cell_id
-      - name: rain_date
-        tests: [not_null]
-      - name: observed_hours
-        tests: [not_null]
-
-  - name: fct_ward_rain_archive_daily
-    description: "Mưa theo phường × ngày (Archive). Chiếu fct_rain_archive_daily qua bridge"
-    columns:
-      - name: ward_rain_archive_daily_key
-        tests: [unique, not_null]
-      - name: ward_code
-        tests:
-          - not_null
-          - relationships:
-              to: ref('dim_ward')
-              field: ward_code
-      - name: rain_date
-        tests: [not_null]
+              arguments:
+                values: ['below_50', 'from_50_to_under_100', 'from_100_to_under_150', 'from_150_to_under_200', 'from_200_to_300', 'over_300']
 
   - name: fct_rain_forecast_hourly
     description: >
-      Lịch sử mưa forecast theo run × ô lưới × giờ, có rolling
-      1/3/6/12/24/48/72h. Rolling partition theo run, không trộn vintage.
+      Lịch sử mưa forecast theo run × ô lưới × giờ, có rolling trailing
+      1/3/6/12/24h và các cột forecast_next_*h_mm nhìn về tương lai.
+      Rolling partition theo run, không trộn vintage.
     columns:
       - name: rain_forecast_hourly_key
         tests: [unique, not_null]
@@ -343,26 +197,40 @@ models:
         tests:
           - not_null
           - relationships:
-              to: ref('dim_grid')
-              field: grid_cell_id
+              arguments:
+                to: ref('dim_grid')
+                field: grid_cell_id
       - name: valid_time_utc
         tests: [not_null]
       - name: forecast_date
         tests: [not_null]
       - name: _updated_at
         tests: [not_null]
+      - name: forecast_next_24h_mm
+        description: "Tổng forecast trong (valid_time, valid_time + 24h]; NULL nếu thiếu horizon"
+      - name: forecast_next_1h_mm
+        description: "Tổng forecast của giờ kế tiếp sau valid_time"
+      - name: forecast_next_3h_mm
+        description: "Tổng forecast 3 giờ kế tiếp sau valid_time"
+      - name: forecast_next_6h_mm
+        description: "Tổng forecast 6 giờ kế tiếp sau valid_time"
+      - name: forecast_next_12h_mm
+        description: "Tổng forecast 12 giờ kế tiếp sau valid_time"
       - name: hanoi_rain_scenario_band
         tests:
           - accepted_values:
-              values: ['below_50', 'from_50_to_under_70', 'from_70_to_100', 'over_100']
+              arguments:
+                values: ['below_50', 'from_50_to_under_70', 'from_70_to_100', 'over_100']
       - name: vn_rain_band_12h
         tests:
           - accepted_values:
-              values: ['below_30', 'from_30_to_under_50', 'from_50_to_under_70', 'from_70_to_100', 'over_100']
+              arguments:
+                values: ['below_30', 'from_30_to_under_50', 'from_50_to_under_70', 'from_70_to_100', 'over_100']
       - name: vn_rain_band_24h
         tests:
           - accepted_values:
-              values: ['below_50', 'from_50_to_under_100', 'from_100_to_under_150', 'from_150_to_under_200', 'from_200_to_300', 'over_300']
+              arguments:
+                values: ['below_50', 'from_50_to_under_100', 'from_100_to_under_150', 'from_150_to_under_200', 'from_200_to_300', 'over_300']
 
   - name: fct_rain_forecast_current_hourly
     description: "View chỉ current horizon của logical forecast run mới nhất"
@@ -372,4 +240,56 @@ models:
       - name: forecast_run_id
         tests: [not_null]
       - name: valid_time_utc
+        tests: [not_null]
+
+  - name: fct_rain_pressure_alert
+    description: >
+      Tín hiệu cảnh báo áp lực mưa theo phường × giờ. Kết hợp forecast nhìn về
+      tương lai với độ bền và thay đổi giữa các forecast run; không phải xác
+      suất ngập hay cảnh báo thiên tai chính thức.
+    columns:
+      - name: rain_pressure_alert_key
+        tests: [unique, not_null]
+      - name: forecast_run_id
+        tests: [not_null]
+      - name: ward_code
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_ward')
+                field: ward_code
+      - name: grid_cell_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_grid')
+                field: grid_cell_id
+      - name: valid_time_utc
+        tests: [not_null]
+      - name: pressure_level
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['UNKNOWN', 'NORMAL', 'WATCH', 'ELEVATED', 'HIGH']
+      - name: pressure_score
+        description: >
+          Điểm 0–100 từ các cửa sổ hiện có; NULL khi không còn cửa sổ nào đủ giờ.
+          Không dùng NULL như giá trị 0.
+      - name: coverage_status
+        description: "Độ đầy đủ của bốn input 1/3/6/24h dùng bởi pressure signal"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['COMPLETE', 'PARTIAL', 'NONE']
+      - name: revision_direction
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['UNKNOWN', 'NEW', 'RISING', 'FALLING', 'STABLE']
+      - name: persistence_runs
         tests: [not_null]

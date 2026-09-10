@@ -319,7 +319,7 @@ def test_run_records_bounds_for_audit() -> None:
 
 
 def test_metrics_from_execute_are_recorded_with_the_run() -> None:
-    """"Run xanh nhưng bảng rỗng" chỉ thấy được nếu số dòng được ghi lại."""
+    """ "Run xanh nhưng bảng rỗng" chỉ thấy được nếu số dòng được ghi lại."""
     repository = FakeRepository(clock=[at(11, 0), at(11, 5)])
 
     run_process(
@@ -336,9 +336,7 @@ def test_execute_may_return_no_metrics() -> None:
     """Metrics là tuỳ chọn, không phải điều kiện để run thành công."""
     repository = FakeRepository(clock=[at(11, 0), at(11, 5)])
 
-    run_process(
-        config=build_config(), repository=repository, execute=lambda b: None
-    )
+    run_process(config=build_config(), repository=repository, execute=lambda b: None)
 
     assert repository.completed[0]["metrics"] is None
 

@@ -139,6 +139,7 @@ class ProcessingRepository:
                 SET status = 'SUCCEEDED',
                     completed_at_utc = %s,
                     target_row_count = %s,
+                    published_snapshot_id = %s,
                     rows_deactivated = %s,
                     rows_reactivated = %s,
                     updated_at_utc = CURRENT_TIMESTAMP
@@ -147,6 +148,7 @@ class ProcessingRepository:
                 (
                     completed_at,
                     counts.get("target_row_count"),
+                    counts.get("published_snapshot_id"),
                     counts.get("rows_deactivated"),
                     counts.get("rows_reactivated"),
                     run_id,
@@ -317,7 +319,8 @@ class ProcessingRepository:
             """
             SELECT processing_run_id, status, started_at_utc, completed_at_utc,
                    checkpoint_candidate, actor, reason, error_type, error_message,
-                   target_row_count, rows_deactivated, rows_reactivated
+                   target_row_count, published_snapshot_id,
+                   rows_deactivated, rows_reactivated
             FROM processing.processing_runs
             WHERE process_key = %s AND scope = %s
             ORDER BY started_at_utc DESC

@@ -18,14 +18,16 @@ sources:
           (~9km, 2017→nay). Append-only: giữ mọi phiên bản đã fetch của cùng grain.
         loaded_at_field: _ingested_at
         freshness:
-          warn_after: {count: 96, period: hour}
-          error_after: {count: 168, period: hour}
+          # Pipeline archive chạy hàng tháng; ngưỡng theo giờ sẽ gây alert fatigue.
+          warn_after: {count: 35, period: day}
+          error_after: {count: 45, period: day}
         columns:
           - name: weather_model
             tests:
               - not_null
               - accepted_values:
-                  values: ['era5', 'ecmwf_ifs']
+                  arguments:
+                    values: ['era5', 'ecmwf_ifs']
           - name: valid_time_utc
             tests: [not_null]
           - name: grid_latitude

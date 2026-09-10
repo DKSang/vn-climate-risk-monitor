@@ -1,6 +1,6 @@
 # Hanoi Flood & Climate Risk Monitor
 
-Lakehouse theo dõi rủi ro mưa lớn, ngập úng và proxy lũ cho Hà Nội.
+Lakehouse theo dõi mưa lớn và áp lực mưa cho Hà Nội.
 
 Đây là portfolio project vận hành production-like trên single-node với mục tiêu
 chi phí bắt buộc 0 đồng/tháng. Open-Meteo Free API chỉ được dùng cho mục đích
@@ -20,14 +20,17 @@ vào retry phản ứng của `land()` khi gặp 429); `autoloader` liệt kê s
 append-only; dedup theo grain nghiệp vụ và MERGE
 change-aware thực hiện ở intermediate. Forecast chạy
 production hằng giờ cho đủ 126 phường/xã (9.072 dòng staging hourly, không
-rescued row). Silver/Gold giữ từng logical run hoàn chỉnh để audit/backtest;
-view Gold `fct_rain_forecast_current_hourly` phục vụ riêng run mới nhất.
+rescued row). Silver/Gold giữ từng logical run hoàn chỉnh để audit revision;
+view Gold `fct_rain_forecast_current_hourly` phục vụ riêng run mới nhất; mart
+`fct_rain_pressure_alert` chuyển forecast nhìn về phía trước thành tín hiệu
+`UNKNOWN/NORMAL/WATCH/ELEVATED/HIGH` có coverage, lý do, persistence và
+revision; score là `NULL` khi không có input (không phải cảnh báo chính thức).
 Archive: ERA5 trước 2017 (12 ô) + ECMWF IFS từ 2017 (48 ô);
 năm 2000 đã land đủ 1.106.784 ward-hour; backfill 2001–nay vận hành dần theo
 quota Free API, không chạy burst cả lịch sử.
 
 ```bash
-make up                    # MinIO + PostgreSQL + pgAdmin
+make up                    # build/bật toàn bộ Compose stack
 make bootstrap             # bucket, DuckLake catalog, control plane schema
 make bootstrap-geography   # seed/build graph tối thiểu cho gold.dim_ward
 make forecast-pipeline     # fetch -> load -> quality gate -> dbt build
@@ -41,8 +44,8 @@ make quality               # Provero quét silver staging (exit 1 khi có check 
 thiết (danh mục phường đến từ `transform/seeds/*.csv`, không từ PostgreSQL) và
 build graph `+dim_ward`, không kéo các fact thời tiết vào bootstrap.
 
-Backup PostgreSQL dùng custom archive + SHA-256; thông tin kết nối và mật khẩu
-chỉ nhận qua biến môi trường, không ghi vào artifact:
+Backup lakehouse phải giữ cả PostgreSQL catalog/control plane và object MinIO.
+Thông tin kết nối và mật khẩu chỉ nhận qua biến môi trường, không ghi vào artifact:
 
 ```bash
 BACKUP_DIR=/secure/backups make backup-metadata
@@ -50,12 +53,16 @@ BACKUP_FILE=/secure/backups/vnclimate_metadata_….dump \
   RESTORE_CONFIRM=vnclimate make restore-metadata
 ```
 
+`backup-metadata` chỉ phục hồi được catalog/control plane. Với disaster recovery,
+dùng `make backup-lakehouse` vào filesystem độc lập khi mọi writer đã dừng.
+Artifact đầy đủ có checksum PostgreSQL và từng object MinIO; kiểm tra trước khi
+restore bằng `LAKEHOUSE_BACKUP_DIR=... make verify-lakehouse-backup`.
+
 Restore có tính phá huỷ đối với object hiện tại trong database đích. Hãy dừng
 cron/writer trước khi chạy; xem quy trình đầy đủ trong runbook ingestion.
 
 Xem [tài liệu kiến trúc](docs/03-architecture.md),
 [cấu trúc repository](docs/03a-repo-structure.md),
-[thiết kế ingestion](docs/04-ingestion.md),
 [runbook ingestion](docs/04b-ingestion-runbook.md) và
-[Archive ingestion](docs/04c-open-meteo-archive.md),
-[phương pháp KPI mưa/ngập](docs/05-kpi-methodology.md).
+[phương pháp KPI mưa/ngập](docs/05-kpi-methodology.md),
+[governance và continuous improvement](docs/09-governance.md).

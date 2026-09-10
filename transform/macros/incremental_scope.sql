@@ -102,12 +102,14 @@ WHERE {{ dimension }} >= (
 
 {#
     Rows thực sự BỊ ẢNH HƯỞNG, tức phần được MERGE vào bảng đích.
-    Chặn dưới KHÔNG nới lùi: row trước MIN(changed) không bị dữ liệu mới đụng tới.
+    Mặc định chặn dưới KHÔNG nới lùi. Forecast forward window có thể truyền
+    `expand_backward` để cập nhật các row trước MIN(changed) bị tác động.
 #}
 {% macro incremental_output_scope(
     relation,
     source_ref,
     dimension,
+    expand_backward='0 hours',
     expand_forward='0 hours',
     change_column='_ingested_at'
 ) %}
@@ -115,7 +117,9 @@ WHERE {{ dimension }} >= (
 {%- if lower and is_incremental() -%}
 {%- set changed = _changed_rows(relation, source_ref, change_column) -%}
 WHERE {{ dimension }} >= (
-        SELECT MIN({{ dimension }}) FROM ({{ changed }}) AS changed
+        SELECT MIN({{ dimension }})
+        {%- if expand_backward != '0 hours' %} - INTERVAL '{{ expand_backward }}'{% endif %}
+        FROM ({{ changed }}) AS changed
     )
   AND {{ dimension }} <= (
         SELECT MAX({{ dimension }}) + INTERVAL '{{ expand_forward }}'

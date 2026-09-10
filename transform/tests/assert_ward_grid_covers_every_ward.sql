@@ -1,5 +1,5 @@
--- Mỗi phường phải có đúng một ô cho MỖI model. Thiếu một dòng thì phường đó
--- biến mất khỏi fct_ward_rain_archive_daily một cách im lặng — INNER JOIN không báo gì.
+-- Mỗi phường phải có đúng một ô cho MỖI model. Thiếu một dòng làm dashboard
+-- mất địa bàn một cách im lặng vì các serving query dùng INNER JOIN.
 SELECT ward.ward_code, model.weather_model, COUNT(map.grid_cell_id) AS mappings
 FROM {{ ref('dim_ward') }} AS ward
 CROSS JOIN (SELECT DISTINCT weather_model FROM {{ ref('dim_grid') }}) AS model

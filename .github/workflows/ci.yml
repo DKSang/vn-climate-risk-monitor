@@ -15,14 +15,20 @@ concurrency:
 jobs:
   checks:
     runs-on: ubuntu-latest
+    env:
+      AIRFLOW_SECRET_KEY: ci-airflow-secret-not-for-production
+      MINIO_SECRET_KEY: ci-minio-secret-not-for-production
+      PGADMIN_DEFAULT_PASSWORD: ci-pgadmin-password-not-for-production
+      POSTGRES_PASSWORD: ci-postgres-password-not-for-production
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Install uv and Python
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
           python-version: "3.13"
+          version: "0.12.6"
 
       - name: Install dependencies
         run: uv sync --locked --all-groups
@@ -32,6 +38,12 @@ jobs:
 
       - name: Pytest
         run: uv run pytest
+
+      - name: Validate documentation links
+        run: uv run python scripts/check_docs.py
+
+      - name: Validate Docker Compose
+        run: docker compose config --quiet
 
       - name: Resolve dbt dependencies
         working-directory: transform
@@ -78,3 +90,20 @@ jobs:
       - name: Compile the complete dbt project
         working-directory: transform
         run: uv run dbt compile --profiles-dir /tmp/vn-climate-dbt-ci --target ci
+
+      - name: Build reproducible runtime images
+        run: docker compose build airflow dashboard
+
+      - name: Parse DAGs in the runtime image
+        run: |
+          docker compose run --rm --no-deps airflow python - <<'PY'
+          from airflow.models.dagbag import DagBag
+
+          dagbag = DagBag('/opt/airflow/dags', include_examples=False)
+          assert not dagbag.import_errors, dagbag.import_errors
+          assert set(dagbag.dags) == {
+              'lakehouse_maintenance_daily',
+              'open_meteo_archive_monthly',
+              'open_meteo_forecast_hourly',
+          }
+          PY

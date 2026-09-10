@@ -1,8 +1,8 @@
 /*
     MART — mưa theo ô lưới × giờ, kèm cửa sổ trượt và dải kịch bản.
 
-    Bảng lớn nhất (~20M dòng) và là bảng DUY NHẤT incremental: hai fact còn lại
-    dựng từ đây, nhỏ, nên full refresh rẻ hơn là nuôi thêm hai checkpoint.
+    Đây là Gold archive duy nhất: dashboard replay chiếu sang phường lúc query
+    qua bridge_ward_grid, tránh materialize thêm fact ngày hoặc ward × ngày.
 
     `rain_{N}h_mm` NULL nghĩa là cửa sổ THIẾU GIỜ. Không có cột `_is_complete`
     song song — NULL đã mang đúng nghĩa đó, và 14 cột phụ của bản cũ chỉ là
@@ -18,8 +18,8 @@
 {#
     Lookback SUY RA từ danh sách cửa sổ, không gõ tay: cửa sổ rộng nhất N giờ
     thì một giờ mới ở T làm sai các dòng đầu ra trong [T, T+(N−1)h], và để
-    tính chúng phải đọc từ T−(N−1)h. Thêm cửa sổ 72h sau này thì lookback tự
-    đúng theo — không có chỗ nào để quên cập nhật.
+    tính chúng phải đọc từ T−(N−1)h. Đổi cửa sổ lớn nhất thì lookback tự cập
+    nhật theo — không có chỗ nào để quên sửa.
 #}
 {% set windows = rain_windows() %}
 {% set lookback = (windows | max - 1) ~ ' hours' %}

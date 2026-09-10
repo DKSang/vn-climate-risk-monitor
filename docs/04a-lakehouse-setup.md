@@ -1,13 +1,5 @@
 # Setup Lakehouse
 
-> **Đã thay thế một phần (2026-09-03).** Kiến trúc chốt hiện tại ở
-> [plan lean medallion](superpowers/plans/2026-09-03-lean-medallion.md) và
-> [plan Silver Layer Flow](superpowers/plans/2026-09-03-silver-layer-flow.md):
-> MỘT catalog DuckLake (`catalog1`), Bronze chỉ còn là landing zone raw file,
-> bảng append-only của autoloader nay là `silver.stg_*`.
-> Phần mô tả `bronze_store` / hai catalog / các model gold cũ trong tài liệu
-> này KHÔNG còn đúng.
-
 **DuckLake + PostgreSQL catalog + MinIO storage + DuckDB compute**
 
 ## Thành phần
@@ -41,6 +33,13 @@ make up
 make bootstrap
 make quality
 ```
+
+Compose lấy bốn secret bắt buộc từ `.env` rồi mount thành file chỉ đọc trong
+`/run/secrets`. PostgreSQL/pgAdmin dùng cơ chế `_FILE` của image; Airflow dùng
+`*_CMD`; code dự án ưu tiên `POSTGRES_PASSWORD_FILE` và
+`MINIO_SECRET_KEY_FILE`. Không truyền password trực tiếp qua container
+environment. Trước deployment ngoài local, thay toàn bộ giá trị `CHANGE_ME` và
+không dùng cặp MinIO mặc định.
 
 Kiểm tra sau bootstrap: `make quality` (Provero quét silver staging qua catalog DuckLake,
 exit 1 khi có check fail) và `make transform` (dbt build qua processing framework kèm test).
@@ -79,7 +78,7 @@ Maintenance tách khỏi dbt build: snapshot kỹ thuật giữ bảy ngày, fil
 
 ```bash
 make maintain-lake
-make clean-lake
 ```
 
-`clean-lake` xóa lịch sử snapshot của DuckLake catalog `catalog1`; không xóa Bronze files.
+`clean-lake` xóa lịch sử snapshot của DuckLake catalog `catalog1`; chỉ dùng khi
+xử lý emergency sau khi đã backup, không dùng như thao tác dọn disk thường kỳ.

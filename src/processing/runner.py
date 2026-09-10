@@ -1,19 +1,19 @@
 """State machine của một lần incremental processing.
 
-    run_started_at = control_now()          ← LẤY TRƯỚC khi đọc bất cứ thứ gì
-            ↓
-    checkpoint_before = processing_state
-    lower_bound = checkpoint_before − safety_lag
-            ↓
-    begin_run → RUNNING
-            ↓
-    execute(bounds)
-            ↓
-       ┌────┴────┐
-     FAIL      SUCCESS
-       ↓          ↓
-    state     state = run_started_at
-    KHÔNG đổi
+run_started_at = control_now()          ← LẤY TRƯỚC khi đọc bất cứ thứ gì
+        ↓
+checkpoint_before = processing_state
+lower_bound = checkpoint_before − safety_lag
+        ↓
+begin_run → RUNNING
+        ↓
+execute(bounds)
+        ↓
+   ┌────┴────┐
+ FAIL      SUCCESS
+   ↓          ↓
+state     state = run_started_at
+KHÔNG đổi
 """
 
 from __future__ import annotations
@@ -42,9 +42,7 @@ class SourceBounds:
             "checkpoint_before": (
                 self.checkpoint_before.isoformat() if self.checkpoint_before else None
             ),
-            "lower_bound": (
-                self.lower_bound.isoformat() if self.lower_bound else None
-            ),
+            "lower_bound": (self.lower_bound.isoformat() if self.lower_bound else None),
         }
 
 
@@ -166,9 +164,7 @@ def run_process(
     try:
         metrics = execute(bounds)
     except BaseException as error:
-        repository.fail_run(
-            run_id, error=error, completed_at=repository.control_now()
-        )
+        repository.fail_run(run_id, error=error, completed_at=repository.control_now())
         raise
 
     repository.complete_run(

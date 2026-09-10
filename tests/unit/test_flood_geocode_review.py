@@ -40,12 +40,3 @@ def test_corrected_landmarks_use_current_s13_wards() -> None:
         "VNE_20251007_025": "00175",  # Phạm Hùng–Dương Đình Nghệ
     }
     assert {key: rows[key]["ward_code"] for key in expected} == expected
-
-
-def test_training_feature_aggregates_catalogue_before_join() -> None:
-    sql = Path("transform/models/marts/fct_flood_training_feature.sql").read_text(
-        encoding="utf-8"
-    )
-    assert "catalogue_by_ward AS" in sql
-    assert "LEFT JOIN catalogue_by_ward catalogue" in sql
-    assert "LEFT JOIN {{ ref('dim_flood_point') }} fp" not in sql

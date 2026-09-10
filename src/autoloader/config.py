@@ -89,7 +89,9 @@ class SourceConfig:
     def __post_init__(self) -> None:
         for key, value in self.parameters.items():
             if key in RESERVED_PLACEHOLDERS:
-                raise ValueError(f"{self.name}: parameter {key!r} trùng placeholder engine")
+                raise ValueError(
+                    f"{self.name}: parameter {key!r} trùng placeholder engine"
+                )
             if "'" in str(value):
                 raise ValueError(
                     f"{self.name}: parameter {key!r} chứa dấu nháy đơn — "

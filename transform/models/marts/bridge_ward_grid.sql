@@ -13,7 +13,7 @@
 
 {#
     INCREMENTAL cùng lý do với `dim_ward`: giữ dòng của phường đã giải thể để
-    `fct_ward_rain_archive_daily` không mất lịch sử khi INNER JOIN.
+    archive replay và forecast history không mất địa bàn khi INNER JOIN.
 #}
 {{ config(
     materialized = 'incremental',
