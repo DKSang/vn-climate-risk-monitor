@@ -26,7 +26,6 @@ with DAG(
     max_active_runs=1,
     tags=["forecast", "hourly", "staging", "quality"],
 ) as dag:
-
     # 1. Fetch JSON từ Open-Meteo và land lên MinIO bronze/files/...
     fetch_forecast = BashOperator(
         task_id="fetch_forecast",
@@ -67,7 +66,7 @@ with DAG(
         bash_command="uv run python scripts/run_processing.py run forecast_silver",
     )
 
-    # 5. Gold history incremental; downstream current view/risk table refresh theo.
+    # 5. Gold history incremental; current view/pressure table refresh theo.
     transform_forecast_gold = BashOperator(
         task_id="transform_forecast_gold",
         pool=POOL,

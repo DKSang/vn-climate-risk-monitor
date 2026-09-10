@@ -27,7 +27,6 @@ from serving.dashboard.queries import (
     load_archive_models,
     load_archive_peak_hour_for_local_date,
     load_archive_top_events,
-    load_flood_backtest_metrics,
     load_serving_snapshot,
     load_verified_flood_events,
     load_verified_flood_observations_until,
@@ -566,21 +565,10 @@ with rank_col, st.container(border=True):
     st.caption("Đơn vị mm. Phường chung ô lưới có thể nhận cùng giá trị.")
 
 if not df_observed.empty:
-    event_id = str(df_observed.iloc[0]["event_id"])
-    backtest = load_flood_backtest_metrics(event_id, snapshot_version)
-    metric_lookup = {
-        (str(item["rule_name"]), item["threshold_value"]): item for item in backtest
-    }
-    one_hour = metric_lookup.get(("hanoi_1h_band", None), {})
-    day_rule = metric_lookup.get(("vn_24h_band", None), {})
-    risk_50 = metric_lookup.get(("risk_score", 50), {})
-    backtest_observation_count = int(one_hour.get("observation_count") or 0)
-
     st.markdown("### Đối chiếu với ngập đã xác nhận")
     st.caption(
-        f"Backtest dùng {backtest_observation_count} anchor đã kiểm tra tên đường/POI "
-        "và point-in-polygon S13. Các vị trí chưa soát vẫn được lưu nhưng không "
-        "đi vào backtest."
+        "Các điểm dưới đây đã được kiểm tra tên đường/POI và point-in-polygon "
+        "S13. Chúng là dữ liệu đối chiếu, không được dùng để suy ra xác suất ngập."
     )
     metric_strip(
         [
@@ -589,26 +577,7 @@ if not df_observed.empty:
                 str(len(df_observed)),
                 "Địa điểm đã xác minh",
             ),
-            (
-                "Luật mưa 1 giờ · cả trận",
-                f"{int(one_hour.get('hit_count') or 0)}/{int(one_hour.get('observation_count') or 0)}",
-                "Điểm ngập được bắt",
-            ),
-            (
-                "Tích lũy 24 giờ · cả trận",
-                f"{int(day_rule.get('hit_count') or 0)}/{int(day_rule.get('observation_count') or 0)}",
-                "Baseline đối chiếu",
-            ),
-            (
-                "Risk ≥ 50 · cả trận",
-                f"{int(risk_50.get('hit_count') or 0)}/{int(risk_50.get('observation_count') or 0)}",
-                "Heuristic chưa hiệu chỉnh",
-            ),
         ]
-    )
-    st.warning(
-        "Sự kiện này chưa có nhãn âm đáng tin, nên FAR và CSI được để trống có chủ ý. "
-        "Không được diễn giải Risk index như xác suất ngập."
     )
     observed_table = df_observed[
         [

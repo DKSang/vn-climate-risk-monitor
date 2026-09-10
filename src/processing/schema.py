@@ -53,6 +53,9 @@ SCHEMA_STATEMENTS = (
         -- rẻ hơn nhiều: dbt của ta không phát ra rows_affected cho
         -- materialization DuckLake (main statement là DROP TABLE tmp).
         target_row_count BIGINT,
+        -- Snapshot hiện hành sau khi toàn bộ dbt build/test của process pass.
+        -- Serving chỉ đọc snapshot của run SUCCEEDED, không đọc HEAD giữa build.
+        published_snapshot_id BIGINT,
         -- Soft delete: NULL khi process không khai báo rule nào.
         rows_deactivated BIGINT,
         rows_reactivated BIGINT,
@@ -81,7 +84,12 @@ SCHEMA_STATEMENTS = (
     *(
         f"ALTER TABLE processing.processing_runs "
         f"ADD COLUMN IF NOT EXISTS {column} BIGINT"
-        for column in ("target_row_count", "rows_deactivated", "rows_reactivated")
+        for column in (
+            "target_row_count",
+            "published_snapshot_id",
+            "rows_deactivated",
+            "rows_reactivated",
+        )
     ),
 )
 

@@ -1,14 +1,6 @@
 # Runbook — Ingestion
 
-> **Đã thay thế một phần (2026-09-03).** Kiến trúc chốt hiện tại ở
-> [plan lean medallion](superpowers/plans/2026-09-03-lean-medallion.md) và
-> [plan Silver Layer Flow](superpowers/plans/2026-09-03-silver-layer-flow.md):
-> MỘT catalog DuckLake (`catalog1`), Bronze chỉ còn là landing zone raw file,
-> bảng append-only của autoloader nay là `silver.stg_*`.
-> Phần mô tả `bronze_store` / hai catalog / các model gold cũ trong tài liệu
-> này KHÔNG còn đúng.
-
-**Cập nhật 2026-08-28** — `fetch.land` (HTTP→MinIO); `autoloader` (file→bảng); cấu hình nguồn ở `sources/`.
+**Cập nhật 2026-09-10** — `fetch.land` (HTTP→MinIO); `autoloader` (file→bảng); cấu hình nguồn ở `sources/`.
 
 ---
 
@@ -63,7 +55,7 @@ make bootstrap-geography
 Target seed `ward_coordinates_seed` (CSV version-control, không còn đọc
 `public.wards` từ PostgreSQL) và build đúng graph tổ tiên của `gold.dim_ward`.
 Nó tách khỏi bootstrap hạ tầng để không tạo vòng phụ thuộc, đồng thời không
-build các fact thời tiết chưa có Bronze source.
+build các fact thời tiết chưa có raw source object.
 
 ## Lệnh hằng ngày
 
@@ -72,7 +64,7 @@ make forecast-pipeline
 ```
 
 Target production chạy cố định `fetch forecast -> load open_meteo_forecast ->
-quality Bronze -> dbt build`. Mỗi bước phải thành công trước khi sang bước kế;
+quality Silver staging -> dbt build`. Mỗi bước phải thành công trước khi sang bước kế;
 đặc biệt Provero trả lỗi sẽ chặn transform. Cron chỉ gọi target này một lần nên
 không có quality job chạy trùng.
 
@@ -95,14 +87,14 @@ make load SOURCE="open_meteo_archive open_meteo_ifs"
 ```
 
 Bỏ `EXEC=1` để xem kế hoạch. Không cần `--start/--end`: planner tự bỏ qua tháng
-đã ĐỦ GIỜ trong bronze, nên chạy lại dải mặc định 2000→nay vẫn ra đúng 267
+đã ĐỦ GIỜ trong raw landing, nên chạy lại dải mặc định 2000→nay vẫn ra đúng 267
 request. Muốn chia nhỏ thì vẫn dùng `--start/--end` như cũ:
 
 ```bash
 make fetch-archive EXEC=1 START=2018-01-01 END=2018-12-01
 ```
 
-Resumable ở hai tầng: tháng đã đủ giờ trong bronze thì bỏ hẳn; trong một tháng,
+Resumable ở hai tầng: tháng đã đủ giờ trong raw landing thì bỏ hẳn; trong một tháng,
 file `response_NNN.json` đã có thì bỏ từng file. Mỗi lần chạy ghi vào run dir
 riêng nên không bao giờ ghi đè object cũ.
 
@@ -156,7 +148,7 @@ export POSTGRES_HOST=127.0.0.1
 export POSTGRES_PORT=5432
 export POSTGRES_DB=vnclimate
 export POSTGRES_USER=vnclimate
-export POSTGRES_PASSWORD='…'  # chỉ ở môi trường tiến trình, không vào dump
+export POSTGRES_PASSWORD_FILE=/run/secrets/postgres_password
 BACKUP_DIR=/secure/backups make backup-metadata
 ```
 
@@ -176,8 +168,35 @@ make restore-metadata
 ```
 
 Sidecar SHA-256 là bắt buộc mặc định. Chỉ dùng `RESTORE_VERIFY_CHECKSUM=0` cho
-archive tin cậy được tạo ngoài script này. Có thể dùng `PGPASSFILE` thay cho
-`POSTGRES_PASSWORD`; không đưa mật khẩu vào tên file, command line hay artifact.
+archive tin cậy được tạo ngoài script này. Script ưu tiên
+`POSTGRES_PASSWORD_FILE`; cũng hỗ trợ `PGPASSFILE` hoặc `POSTGRES_PASSWORD` khi
+chạy ngoài container. Không đưa mật khẩu vào tên file, command line hay artifact.
+
+Metadata backup không chứa object MinIO. Để có disaster recovery đầy đủ, cấu
+hình MinIO Client alias, dừng mọi writer rồi dùng:
+
+```bash
+LAKEHOUSE_BACKUP_ROOT=/mnt/backup BACKUP_QUIESCED=1 make backup-lakehouse
+```
+
+Thư mục đích phải nằm trên filesystem/volume độc lập với volume MinIO hiện hành.
+Backup chỉ được publish sau khi tạo manifest, checksum từng object MinIO và
+kiểm tra PostgreSQL custom archive. Kiểm tra artifact bất kỳ lúc nào mà không
+chạm hệ thống đích:
+
+```bash
+LAKEHOUSE_BACKUP_DIR=/mnt/backup/lakehouse_<timestamp> \
+make verify-lakehouse-backup
+```
+
+Restore tự chạy lại verifier trước khi ghi và yêu cầu xác nhận cả trạng thái
+quiesced lẫn đúng tên bucket:
+
+```bash
+LAKEHOUSE_BACKUP_DIR=/mnt/backup/lakehouse_<timestamp> \
+RESTORE_QUIESCED=1 RESTORE_LAKEHOUSE_CONFIRM=vn-climate \
+make restore-lakehouse
+```
 
 ## Xử lý sự cố
 
@@ -238,6 +257,26 @@ Tiến trình chết giữa chừng để lại file ở `PROCESSING`. `claim_fi
 khi `lease_expires_at_utc` quá hạn (mặc định 300s) — chỉ cần chờ rồi chạy lại
 `make load`.
 
+### Processing run `RUNNING` mồ côi
+
+Đây là checkpoint của dbt, khác với lease file ở trên. SIGTERM bình thường được
+runner bắt và đổi run thành `FAILED`; mất điện, Docker daemon bị kill hoặc
+SIGKILL vẫn có thể để lại một row `RUNNING`. Unique constraint cố ý chặn run mới
+để hai writer không chạy đồng thời.
+
+Chỉ sau khi đã xác minh process/container cũ không còn chạy, xem audit rồi đóng
+run mồ côi với lý do cụ thể:
+
+```bash
+uv run python scripts/run_processing.py status forecast_silver
+uv run python scripts/run_processing.py abandon forecast_silver \
+  --reason 'Docker host restart; verified previous worker no longer exists'
+```
+
+Checkpoint thành công gần nhất không đổi, nên retry đọc lại cùng cửa sổ an toàn.
+Không `abandon` chỉ vì một build chạy lâu. Lặp lại cho đúng `process_key` đang bị
+khóa (`forecast_gold`, `silver_weather` hoặc `rain_gold`) nếu cần.
+
 ### Hết dung lượng MinIO
 
 ```bash
@@ -274,7 +313,7 @@ vẹn còn lại: MinIO bitrot protection + `etag`/`size_bytes` trong
 `ingestion.ingestion_files` (`sha256`, `http_status`, `rows_parsed`, …) đã DROP.
 
 **Archive fetch theo ô lưới, hai model theo thời kỳ (2026-08-28).** Trước đó
-fetch 126 phường cho mọi tháng. Đo trên chính bronze: 126 phường rơi vào 12 ô
+fetch 126 phường cho mọi tháng. Đo trên raw landing: 126 phường rơi vào 12 ô
 ERA5 (seed; nearest-neighbour từng lệch 12 vs 13) và 0 cặp (ô, giờ) nào có
 giá trị lệch nhau — tức trả quota gấp ~10 lần cho dữ liệu nhân bản. Nay fetch
 theo ô, marts chiếu ngược qua `bridge_ward_grid`. **Giữ cả hai model:** IFS
@@ -313,24 +352,10 @@ discovery:{timestamp}` mỗi lần load. Một run `SUCCEEDED` / nguồn
 (`logical_key=discovery`) nhận thêm file PENDING. Lease trên `PROCESSING` vẫn
 là crash recovery (flock chỉ chống hai process sống cùng lúc).
 
-**Bronze INSERT, dedup và MERGE change-aware ở Silver (2026-08-22, refactor 2026-09-07).**
+**Silver staging INSERT, dedup và MERGE change-aware (2026-08-22, refactor 2026-09-07).**
 Không MERGE theo row id ở staging. Archive và forecast staging đều giữ dài hạn.
 Forecast dedup theo `(forecast_run_id, model, ô lưới, valid_time)` để không ghi
 đè các vintage; archive dedup theo `(model, ô lưới, valid_time)`. MERGE
 change-aware thực hiện ở intermediate. Chi phí: re-land
 cùng tháng làm staging phình (đo 2026-08-21: 3.062.736 dòng thô cho 1.106.784
 khóa duy nhất) — chấp nhận vì Parquet trên MinIO local gần như miễn phí.
-
-## Bảng đối chiếu lệnh cũ → mới
-
-Kiến trúc trước 2026-08-21 đã bị gỡ. Nếu gặp lệnh cũ trong tài liệu khác:
-
-| Cũ (không còn) | Mới |
-|---|---|
-| `collect-open-meteo-forecast --execute` | `make fetch-forecast EXEC=1` |
-| `collect-open-meteo-archive` | `make fetch-archive EXEC=1 START=… END=…` |
-| `load-open-meteo-forecast` | `make load SOURCE=open_meteo_forecast` |
-| `run-open-meteo-pipeline` | `make fetch-forecast EXEC=1 && make load` |
-| `run-open-meteo-archive --tail` | `make fetch-archive EXEC=1 START=… && make load` |
-| `observe-ingestion` | `make quality` (Provero) |
-| `scripts/run_weather_pipeline.sh` | cron gọi thẳng hai `make` |

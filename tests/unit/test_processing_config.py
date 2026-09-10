@@ -142,6 +142,15 @@ def test_rain_gold_soft_delete_covers_forecast_bridge_keys() -> None:
     assert "LPAD(CAST(ward_code AS VARCHAR), 5, '0')" in bridge_rule.key_source_sql
 
 
+def test_rain_gold_selects_only_archive_serving_contract() -> None:
+    config = ProcessConfig.from_yaml(Path("processing/rain_gold.yml"))
+
+    assert config.runner.select == (
+        "dim_grid dim_ward dim_flood_point bridge_ward_grid "
+        "fct_flood_event_observation fct_rain_archive_hourly"
+    )
+
+
 def test_forecast_processing_has_separate_silver_and_gold_checkpoints() -> None:
     silver = ProcessConfig.from_yaml(Path("processing/forecast_silver.yml"))
     gold = ProcessConfig.from_yaml(Path("processing/forecast_gold.yml"))
@@ -151,7 +160,10 @@ def test_forecast_processing_has_separate_silver_and_gold_checkpoints() -> None:
         "stg_open_meteo__weather_forecast_hourly int_weather_forecast_hourly"
     )
     assert gold.source_refs == ("int_weather_forecast_hourly",)
-    assert gold.runner.select == "bridge_ward_grid fct_rain_forecast_hourly+"
+    assert gold.runner.select == (
+        "bridge_ward_grid fct_rain_forecast_hourly "
+        "fct_rain_forecast_current_hourly fct_rain_pressure_alert"
+    )
 
 
 def test_cli_module_is_importable() -> None:

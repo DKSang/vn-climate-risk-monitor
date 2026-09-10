@@ -4,14 +4,16 @@
 
 services:
   postgres:
-    image: postgres:17.5
+    image: postgres:17.5@sha256:aadf2c0696f5ef357aa7a68da995137f0cf17bad0bf6e1f17de06ae5c769b302
     restart: unless-stopped
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-vnclimate}
       POSTGRES_USER: ${POSTGRES_USER:-vnclimate}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-vnclimate}
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets:
+      - postgres_password
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -21,15 +23,20 @@ services:
       retries: 10
 
   minio:
-    image: minio/minio
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
     restart: unless-stopped
     ports:
       - "9000:9000"   # S3 API
       - "9001:9001"   # Console UI
     environment:
       MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
-    command: server --console-address ":9001" /data
+    secrets:
+      - minio_secret_key
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        export MINIO_ROOT_PASSWORD="$$(cat /run/secrets/minio_secret_key)"
+        exec /usr/bin/docker-entrypoint.sh server --console-address ":9001" /data
     volumes:
       - minio_data:/data
     healthcheck:
@@ -41,13 +48,13 @@ services:
 
 
   pgadmin:
-    image: dpage/pgadmin4:latest
+    image: dpage/pgadmin4:9.17@sha256:2f4ce946ddf8360680d7eff4eaba1d91859eb6b4003e6623bad5c63a322c2f4d
     restart: unless-stopped
     ports:
       - "${PGADMIN_PORT:-5050}:80"
     environment:
       PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@vnclimate.org}
-      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-vnclimate}
+      PGADMIN_DEFAULT_PASSWORD_FILE: /run/secrets/pgadmin_password
       PGADMIN_CONFIG_SERVER_MODE: 'False'
       PGADMIN_SERVER_JSON_FILE: /tmp/servers.json
       PGADMIN_SERVERS_JSON: >-
@@ -60,12 +67,17 @@ services:
         exec /entrypoint.sh
     volumes:
       - pgadmin_data:/var/lib/pgadmin
+    secrets:
+      - pgadmin_password
     depends_on:
       postgres:
         condition: service_healthy
 
   airflow:
-    image: apache/airflow:2.10.5-python3.12
+    build:
+      context: .
+      dockerfile: docker/airflow.Dockerfile
+    image: vn-climate-risk-monitor-airflow:2.10.5
     restart: unless-stopped
     depends_on:
       postgres:
@@ -75,23 +87,24 @@ services:
     ports:
       - "${AIRFLOW_PORT:-8080}:8080"
     environment:
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: >-
-        postgresql+psycopg2://${POSTGRES_USER:-vnclimate}:${POSTGRES_PASSWORD:-vnclimate}@postgres:5432/${POSTGRES_DB:-vnclimate}?options=-csearch_path%3Dairflow
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN_CMD: >-
+        python /project/scripts/airflow_sql_alchemy_conn.py
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
       AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
       AIRFLOW__LOGGING__BASE_LOG_FOLDER: /opt/airflow/logs
-      AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY:-vnclimate-airflow-secret-key-change-in-prod}
+      AIRFLOW__WEBSERVER__SECRET_KEY_CMD: cat /run/secrets/airflow_secret_key
       AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "true"
       # Project environment variables passed to worker
       POSTGRES_HOST: postgres
       POSTGRES_PORT: ${POSTGRES_PORT:-5432}
       POSTGRES_DB: ${POSTGRES_DB:-vnclimate}
       POSTGRES_USER: ${POSTGRES_USER:-vnclimate}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-vnclimate}
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
       MINIO_ENDPOINT: minio:9000
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
-      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      MINIO_SECRET_KEY_FILE: /run/secrets/minio_secret_key
       MINIO_BUCKET: ${MINIO_BUCKET:-vn-climate}
       MINIO_SECURE: "false"
       OPEN_METEO_FETCH_WORKERS: ${OPEN_METEO_FETCH_WORKERS:-4}
@@ -103,25 +116,44 @@ services:
       DUCKLAKE_ALIAS: catalog1
       DUCKLAKE_DATA_PATH: s3://${MINIO_BUCKET:-vn-climate}
       DUCKLAKE_METADATA_SCHEMA: ducklake
-      DUCKLAKE_DSN: "ducklake:postgres:dbname=${POSTGRES_DB:-vnclimate} host=postgres port=5432 user=${POSTGRES_USER:-vnclimate} password=${POSTGRES_PASSWORD:-vnclimate}"
       PROJECT_DIR: /project
       ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}
-      # Dùng venv riêng trong container để tránh đụng quyền với .venv của host (UID 1000 vs 50000)
-      UV_PROJECT_ENVIRONMENT: /tmp/project_venv
+      # Runtime dùng dependency environment đã khóa và bake trong image.
+      UV_PROJECT_ENVIRONMENT: /opt/project_venv
+      VIRTUAL_ENV: /opt/project_venv
     volumes:
-      - ./orchestration/dags:/opt/airflow/dags:ro
-      - .:/project
       - airflow_logs:/opt/airflow/logs
-    command: standalone
+    secrets:
+      - postgres_password
+      - minio_secret_key
+      - airflow_secret_key
+    command:
+      - bash
+      - -ec
+      - |
+        airflow db migrate
+        airflow pools set lakehouse_single_writer_pool 1 \
+          "Single-writer lock for DuckLake and Open-Meteo quota"
+        # Docker/host shutdown can leave this runtime-only file behind in the
+        # container writable layer. Remove it before standalone reuses PIDs.
+        rm -f /opt/airflow/airflow-webserver.pid
+        exec airflow standalone
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      test:
+        - CMD-SHELL
+        - >-
+          airflow jobs check --job-type SchedulerJob --allow-multiple --limit 100
+          && curl --fail --silent http://localhost:8080/health >/dev/null
       interval: 30s
       timeout: 10s
       retries: 5
       start_period: 60s
 
   dashboard:
-    image: ghcr.io/astral-sh/uv:python3.13-bookworm-slim
+    build:
+      context: .
+      dockerfile: docker/dashboard.Dockerfile
+    image: vn-climate-risk-monitor-dashboard:0.1.0
     restart: unless-stopped
     ports:
       - "${DASHBOARD_PORT:-8501}:8501"
@@ -136,23 +168,29 @@ services:
       POSTGRES_PORT: ${POSTGRES_PORT:-5432}
       POSTGRES_DB: ${POSTGRES_DB:-vnclimate}
       POSTGRES_USER: ${POSTGRES_USER:-vnclimate}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-vnclimate}
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
       MINIO_ENDPOINT: minio:9000
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
-      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      MINIO_SECRET_KEY_FILE: /run/secrets/minio_secret_key
       MINIO_BUCKET: ${MINIO_BUCKET:-vn-climate}
       MINIO_SECURE: "false"
       DUCKLAKE_ALIAS: catalog1
       DUCKLAKE_DATA_PATH: s3://${MINIO_BUCKET:-vn-climate}
       DUCKLAKE_METADATA_SCHEMA: ducklake
       DASHBOARD_PORT: ${DASHBOARD_PORT:-8501}
-    volumes:
-      - .:/project
-    command: >
-      sh -c "uv sync --frozen &&
-             uv run streamlit run serving/dashboard/app.py
-             --server.port ${DASHBOARD_PORT:-8501}
-             --server.address 0.0.0.0"
+    secrets:
+      - postgres_password
+      - minio_secret_key
+
+secrets:
+  postgres_password:
+    environment: POSTGRES_PASSWORD
+  minio_secret_key:
+    environment: MINIO_SECRET_KEY
+  pgadmin_password:
+    environment: PGADMIN_DEFAULT_PASSWORD
+  airflow_secret_key:
+    environment: AIRFLOW_SECRET_KEY
 
 volumes:
   postgres_data:

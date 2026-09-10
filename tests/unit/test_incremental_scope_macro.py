@@ -27,9 +27,9 @@ def render(
     **kwargs: Any,
 ) -> str:
     environment = jinja2.Environment(autoescape=False)
-    environment.globals["var"] = lambda name, default=None: (
-        {"processing_bounds": bounds or {}}.get(name, default)
-    )
+    environment.globals["var"] = lambda name, default=None: {
+        "processing_bounds": bounds or {}
+    }.get(name, default)
     environment.globals["is_incremental"] = lambda: incremental
     template = environment.from_string(MACRO_FILE.read_text(encoding="utf-8"))
     return str(getattr(template.module, macro)(**kwargs))
@@ -57,24 +57,36 @@ def input_scope(**overrides: Any) -> str:
 # ── full refresh ─────────────────────────────────────────────────────────────
 def test_no_checkpoint_emits_nothing() -> None:
     """Lần chạy đầu phải quét toàn bộ, không được lọc gì."""
-    assert squash(render("incremental_input_scope", bounds={},
-                         relation="r", source_ref="archive_hourly",
-                         dimension="valid_time_utc")) == ""
+    assert (
+        squash(
+            render(
+                "incremental_input_scope",
+                bounds={},
+                relation="r",
+                source_ref="archive_hourly",
+                dimension="valid_time_utc",
+            )
+        )
+        == ""
+    )
 
 
 def test_non_incremental_run_emits_nothing() -> None:
     """`--full-refresh` bỏ qua bộ lọc kể cả khi checkpoint đã có."""
     assert input_scope() != ""
-    assert squash(
-        render(
-            "incremental_input_scope",
-            bounds={"archive_hourly": LOWER},
-            incremental=False,
-            relation="r",
-            source_ref="archive_hourly",
-            dimension="valid_time_utc",
+    assert (
+        squash(
+            render(
+                "incremental_input_scope",
+                bounds={"archive_hourly": LOWER},
+                incremental=False,
+                relation="r",
+                source_ref="archive_hourly",
+                dimension="valid_time_utc",
+            )
         )
-    ) == ""
+        == ""
+    )
 
 
 def test_bound_of_a_different_source_is_ignored() -> None:
@@ -143,7 +155,9 @@ def test_output_scope_does_not_expand_backward() -> None:
     assert "MAX(valid_time_utc) + INTERVAL '71 hours'" in sql
 
 
-@pytest.mark.parametrize("macro", ["incremental_input_scope", "incremental_output_scope"])
+@pytest.mark.parametrize(
+    "macro", ["incremental_input_scope", "incremental_output_scope"]
+)
 def test_predicate_starts_with_where(macro: str) -> None:
     """Model dán thẳng kết quả sau FROM, nên thiếu WHERE là gãy cú pháp."""
     sql = squash(

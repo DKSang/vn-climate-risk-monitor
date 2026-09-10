@@ -11,7 +11,14 @@ POSTGRES_USER=${POSTGRES_USER:-${PGUSER:-vnclimate}}
 PG_RESTORE_BIN=${PG_RESTORE_BIN:-pg_restore}
 : "${BACKUP_FILE:?Đặt BACKUP_FILE tới file .dump cần phục hồi}"
 
-if [[ -n ${POSTGRES_PASSWORD+x} ]]; then
+if [[ -n ${POSTGRES_PASSWORD_FILE:-} ]]; then
+  [[ -r $POSTGRES_PASSWORD_FILE ]] || {
+    echo "Không đọc được POSTGRES_PASSWORD_FILE." >&2
+    exit 2
+  }
+  PGPASSWORD=$(<"$POSTGRES_PASSWORD_FILE")
+  export PGPASSWORD
+elif [[ -n ${POSTGRES_PASSWORD+x} ]]; then
   export PGPASSWORD=$POSTGRES_PASSWORD
 fi
 export PGHOST=$POSTGRES_HOST PGPORT=$POSTGRES_PORT PGDATABASE=$POSTGRES_DB PGUSER=$POSTGRES_USER

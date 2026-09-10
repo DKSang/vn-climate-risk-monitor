@@ -1,6 +1,6 @@
 # Bước 7: Data Quality & Observability
 
-**Hanoi Flood & Climate Risk Monitor** · v2.0 · 2026-09-06
+**Hanoi Flood & Climate Risk Monitor** · v2.1 · 2026-09-08
 
 Tài liệu này mô tả toàn bộ kiến trúc kiểm tra chất lượng dữ liệu (Data Quality Gate) và giám sát vận hành (Observability & Alerting) của lakehouse.
 
@@ -41,7 +41,7 @@ Kiểm tra chất lượng được đặt làm các **cổng chặn (hard gates
                                           │
                      [GATE 2] dbt Tests
                      ├── Schema tests (unique, not_null, accepted_values, relationships)
-                     └── Singular tests (grain, monotonic, ward coverage, daily=hourly)
+                     └── Singular tests (grain, monotonic, ward coverage, forward coverage)
                                           │
                      [GATE 3] Healthcheck Collector (scripts/healthcheck.py)
                      ├── Lakehouse query & coverage
@@ -100,11 +100,11 @@ uv run provero run -c quality/provero_archive.yaml --no-optimize --no-store
 
 ### 3.1 Schema tests & Relationships
 Được định nghĩa trong các file `schema.yml`:
-- [transform/models/staging/schema.yml](transform/models/staging/schema.yml): test view mỏng staging.
-- [transform/models/intermediate/schema.yml](transform/models/intermediate/schema.yml):
+- [transform/models/staging/schema.yml](../transform/models/staging/schema.yml): test view mỏng staging.
+- [transform/models/intermediate/schema.yml](../transform/models/intermediate/schema.yml):
   - `weather_archive_hourly_key` & `weather_forecast_hourly_key`: `unique`, `not_null`.
   - `_row_hash`, `_updated_at`, `is_active`: `not_null`.
-- [transform/models/marts/schema.yml](transform/models/marts/schema.yml):
+- [transform/models/marts/schema.yml](../transform/models/marts/schema.yml):
   - `dim_grid`: `grid_cell_id` unique/not_null, accepted_values model.
   - `dim_ward`: `ward_code` unique/not_null.
   - `dim_flood_point`: `point_id` unique, relationship tới `dim_ward`.
@@ -112,7 +112,7 @@ uv run provero run -c quality/provero_archive.yaml --no-optimize --no-store
   - `fct_rain_*`: unique key, relationships tới dimensions, accepted_values cho kịch bản mưa (`hanoi_rain_scenario_band`, `vn_rain_band_24h`).
 
 ### 3.2 Singular Tests (Kiểm thử quan hệ logic & tính đúng đắn dữ liệu)
-Nằm tại thư mục [transform/tests/](transform/tests/):
+Nằm tại thư mục [transform/tests/](../transform/tests/):
 
 1. **`assert_weather_archive_hourly_grain.sql`**:
    - Đảm bảo grain `(grid_cell_id, valid_time_utc)` trong `int_weather_archive_hourly` không bị trùng lặp sau dedup.
@@ -122,15 +122,23 @@ Nằm tại thư mục [transform/tests/](transform/tests/):
    - Đảm bảo cửa sổ rộng hơn luôn chứa cửa sổ hẹp hơn: `rain_1h <= rain_3h <= rain_6h <= rain_12h <= rain_24h`. Phát hiện lỗi PARTITION/ROWS sai trong SQL windowing.
 4. **`assert_forecast_rolling_monotonic.sql`**:
    - Kiểm tra tính monotonic tương tự cho bảng dự báo `fct_rain_forecast_hourly`.
-5. **`assert_ward_grid_covers_every_ward.sql`**:
-   - Đảm bảo mỗi phường trong 126 phường Hà Nội đều được map chính xác vào đúng 1 ô lưới cho mỗi model thời tiết.
-6. **`assert_daily_total_matches_hourly.sql`**:
-   - Đối soát `fct_rain_archive_daily.rain_total_mm` phải bằng tổng của 24 giờ trong `fct_rain_archive_hourly` (sai số <= 0.01mm).
+5. **`assert_forecast_forward_coverage.sql`**:
+   - Đảm bảo giờ đầu mỗi forecast run/grid có đủ 24 giờ nhìn về phía trước cho pressure signal.
+6. **`assert_ward_grid_covers_every_ward.sql`**:
+    - Đảm bảo mỗi phường trong 126 phường Hà Nội đều được map chính xác vào đúng 1 ô lưới cho mỗi model thời tiết.
+7. **`assert_pressure_semantics.sql`**:
+   - `NORMAL` chỉ hợp lệ khi coverage đủ; `NONE` phải là `UNKNOWN` và
+     có score `NULL`; score hợp lệ nằm trong 0–100.
+8. **`assert_pressure_covers_current_forecast.sql`**:
+   - Mọi ward–giờ trong current forecast phải có pressure row cùng run.
+9. **`assert_gold_is_readable.sql`**:
+   - Buộc DuckDB đọc file thật của các fact lõi, không chỉ tin metadata.
 
 ### 3.3 Source Freshness
-Khai báo tại [transform/models/sources.yml](transform/models/sources.yml) trên trường `_ingested_at`:
+Khai báo tại [transform/models/sources.yml](../transform/models/sources.yml) trên trường `_ingested_at`:
 - `stg_weather_forecast`: cảnh báo sau 12h, lỗi sau 26h.
-- `stg_weather_archive_hourly`: cảnh báo sau 96h, lỗi sau 168h.
+- `stg_weather_archive_hourly`: cảnh báo sau 35 ngày, lỗi sau 45 ngày,
+  phù hợp cadence hàng tháng.
 
 Chạy kiểm tra:
 ```bash
@@ -142,7 +150,7 @@ make freshness
 
 ## 4. Gate 3: Healthcheck Collector & Auditing
 
-File thực thi: [src/vn_climate_risk_monitor/health.py](src/vn_climate_risk_monitor/health.py), CLI: `scripts/healthcheck.py`.
+File thực thi: [src/vn_climate_risk_monitor/health.py](../src/vn_climate_risk_monitor/health.py), CLI: `scripts/healthcheck.py`.
 
 ### 4.1 Các khía cạnh kiểm tra
 | Check | Mục tiêu | Tiêu chuẩn PASS |
@@ -150,14 +158,22 @@ File thực thi: [src/vn_climate_risk_monitor/health.py](src/vn_climate_risk_mon
 | `host.free_disk` | Không gian đĩa cứng | Còn trống >= 5 GiB |
 | `ingestion.backlog` | Tồn đọng file tại MinIO | Số file PENDING/PROCESSING <= ngưỡng quy định |
 | `ingestion.failed_files` | File lỗi autoloader | Không có file nào trạng thái FAILED |
+| `gold.publication.*` | Snapshot phục vụ | Gold run gần nhất có snapshot đã publish và snapshot còn đọc được |
 | `stg_*.required_keys` | Khóa tọa độ/thời gian staging | 0 dòng bị NULL grid_lat/lon/valid_time |
 | `stg_*.rescued_data` | Dữ liệu không parse được | 0 dòng có `_rescued_data` |
 | `stg_*.precipitation_range` | Lượng mưa vật lý | 0 dòng ngoài khoảng [0, 500] mm |
-| `forecast.complete_run` | Độ phủ forecast run | Mọi run đều đủ 126 phường ở tất cả các giờ |
+| `forecast.complete_run` | Độ phủ latest staging run | Latest run đủ 126 phường ở tất cả các giờ |
 | `archive.monthly_coverage` | Tính trọn vẹn tháng lịch sử | Mọi tháng trong quá khứ đủ 100% số giờ |
 | `archive.silver_grain` | Grain sau dedup Silver | Không có dòng trùng |
 | `archive.ward_mapping` | Ánh xạ phường - ô lưới | Đủ 126 phường × số lượng model |
 | `gold.rain_hourly.rows/grain` | Fact Gold | Bảng có dòng và key không trùng lặp |
+| `forecast.gold.current_*` | Current serving view | Có dòng, một run, không expired/trùng grain |
+| `forecast.pressure.contract` | Pressure semantics | Level/score/coverage/revision nhất quán |
+| `forecast.pressure.current_coverage` | Publish đồng bộ | Mọi ward-giờ current có pressure cùng run |
+
+Hai check `gold.publication.forecast_gold` và `gold.publication.rain_gold` chỉ
+bật khi CLI có `--require-gold`. Chúng ngăn serving âm thầm rơi về catalog HEAD
+nếu checkpoint publication bị thiếu hoặc snapshot đã bị expire quá sớm.
 
 ### 4.2 Định dạng kết quả JSON
 Lệnh `make health` (hoặc `scripts/healthcheck.py --output logs/health.json`) sinh file audit:
@@ -189,7 +205,7 @@ ALERT_WEBHOOK_URL=https://webhook.site/your-custom-uuid
 Biến này được tự động forward vào container Airflow thông qua `docker-compose.yml`.
 
 ### 5.2 Airflow `on_failure_callback`
-Trong [orchestration/dags/common.py](orchestration/dags/common.py), callback `on_failure_alert` được gắn vào `DEFAULT_ARGS`:
+Trong [orchestration/dags/common.py](../orchestration/dags/common.py), callback `on_failure_alert` được gắn vào `DEFAULT_ARGS`:
 - Khi bất kỳ task nào trong DAG fail (fetch, autoloader, provero, dbt, healthcheck), callback sẽ:
   1. Ghi log cảnh báo với thông tin `dag_id` và `task_id`.
   2. Kích hoạt `scripts/alert_health.py --scope all`.
@@ -229,7 +245,9 @@ Trong [orchestration/dags/common.py](orchestration/dags/common.py), callback `on
      ```
 
 ### 6.3 Khi healthcheck báo DEGRADED hoặc UNHEALTHY
-- **`host.free_disk` FAIL**: Chạy `make clean-lake` để giải phóng snapshot DuckLake cũ và dọn dẹp thư mục tạm.
+- **`host.free_disk` FAIL**: Dừng writer, kiểm tra volume và chạy maintenance
+  thường kỳ trước. `make clean-lake` chỉ là biện pháp emergency vì xóa toàn bộ
+  time travel.
 - **`ingestion.backlog` WARN**: Autoloader chưa kịp xử lý lượng file landing lớn; chạy `make load` thủ công để tiêu thụ backlog.
 - **`archive.monthly_coverage` FAIL**: Có tháng bị thiếu giờ; kiểm tra lại tham số START/END và chạy `make fetch-archive START=... END=... EXEC=1`.
 
@@ -245,3 +263,7 @@ Trong [orchestration/dags/common.py](orchestration/dags/common.py), callback `on
   - Tích hợp Prometheus exporter cho metric lat/lon processing times.
   - OpenTelemetry distributed tracing cho API serving ở Bước 8.
   - Tự động re-fetch các partition archive bị incomplete.
+
+Healthcheck của chính pipeline không thay thế scheduler monitoring. Container
+Airflow kiểm tra cả scheduler heartbeat bằng `airflow jobs check` và webserver;
+forecast freshness vẫn là dead-man check độc lập ở lớp dữ liệu.

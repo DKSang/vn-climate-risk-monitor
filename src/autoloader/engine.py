@@ -123,9 +123,7 @@ class AutoLoader:
             max_retries=self.config.loader.max_retries,
         )
 
-    def process_batch(
-        self, claimed: Sequence[Any] | None = None
-    ) -> _BatchResult:
+    def process_batch(self, claimed: Sequence[Any] | None = None) -> _BatchResult:
         """Chạy SQL cho một lô đã claim rồi commit.
 
         Phân biệt số file đã claim với số file commit thành công để đường cô lập
@@ -164,9 +162,7 @@ class AutoLoader:
                 self.checkpoint.fail_file(
                     item.file_id, error=error, worker_id=self.worker_id
                 )
-                failures.append(
-                    f"{item.object_key}: {type(error).__name__}: {error}"
-                )
+                failures.append(f"{item.object_key}: {type(error).__name__}: {error}")
                 continue
             self._commit_all([item])
             committed_files += 1

@@ -40,12 +40,28 @@ class FakeMinio:
 def seed(tmp_path: Path) -> Path:
     """Bản đồ ô lưới tối thiểu: 4 phường → 2 ô era5, 3 ô ecmwf_ifs."""
     rows = [
-        grid.WardGrid("era5", f"P{i:03}", 21.0 + i * 0.01, 105.8, 21.0, 105.75 + (i // 2) * 0.25, 10.0)
+        grid.WardGrid(
+            "era5",
+            f"P{i:03}",
+            21.0 + i * 0.01,
+            105.8,
+            21.0,
+            105.75 + (i // 2) * 0.25,
+            10.0,
+        )
         for i in range(4)
     ] + [
         # P002 và P003 rơi cùng một ô ifs → 3 ô cho 4 phường, và với
         # batch_size=2 thì lô cuối lẻ 1 ô (chỗ kiểm tra cách tính đơn vị).
-        grid.WardGrid("ecmwf_ifs", f"P{i:03}", 21.0 + i * 0.01, 105.8, 21.0 + min(i, 2) * 0.09, 105.8, 12.0)
+        grid.WardGrid(
+            "ecmwf_ifs",
+            f"P{i:03}",
+            21.0 + i * 0.01,
+            105.8,
+            21.0 + min(i, 2) * 0.09,
+            105.8,
+            12.0,
+        )
         for i in range(4)
     ]
     path = tmp_path / "ward_grid_map_seed.csv"

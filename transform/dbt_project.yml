@@ -27,6 +27,17 @@ vars:
   # số giờ thực sự yêu cầu từ Open-Meteo.
   forecast_expected_hours: "{{ env_var('OPEN_METEO_FORECAST_HOURS', '72') }}"
   forecast_expected_locations: 126
+  # Rule-based rainfall pressure signal. Đây là ngưỡng vận hành của portfolio,
+  # không phải ngưỡng cảnh báo thiên tai chính thức.
+  rain_pressure_thresholds:
+    watch_next_6h_mm: 30
+    watch_next_24h_mm: 50
+    elevated_next_6h_mm: 50
+    elevated_next_24h_mm: 100
+    high_next_1h_mm: 70
+    high_next_3h_mm: 50
+    high_next_6h_mm: 100
+    revision_up_mm: 10
 
 
 # Configuring models

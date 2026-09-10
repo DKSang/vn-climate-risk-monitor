@@ -10,7 +10,6 @@ checkpoint:
   safety_lag: 15 minutes
 
 runner:
-  # Gold history incremental; selector + refresh cả current serving view và
-  # các downstream table dùng latest run. Bridge được refresh để theo mesh
-  # best_match của run mới nhất.
-  select: "bridge_ward_grid fct_rain_forecast_hourly+"
+  # Chỉ publish các marts thuộc forecast serving contract; không kéo theo
+  # downstream nghiên cứu vào hourly pipeline.
+  select: "bridge_ward_grid fct_rain_forecast_hourly fct_rain_forecast_current_hourly fct_rain_pressure_alert"

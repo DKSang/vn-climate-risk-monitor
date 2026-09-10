@@ -11,7 +11,7 @@ người sửa, nối với nhau bằng `observation_id`.
 ── Vì sao mọi dòng mặc định geocode_verified = false ─────────────────────────
 Gán sai phường = sai ô lưới = sai lượng mưa = nhãn hỏng, và nhãn hỏng tệ hơn
 thiếu nhãn. Nominatim với địa chỉ dạng cột mốc đường ("ĐLTL đoạn Km 8+200")
-rất dễ trả về một kết quả TRÔNG hợp lý nhưng sai. `is_training_eligible` vì vậy
+rất dễ trả về một kết quả TRÔNG hợp lý nhưng sai. `is_replay_eligible` vì vậy
 chỉ nhận dòng đã được người xác nhận.
 
 Chạy lại script là AN TOÀN: mặc định mọi dòng đã có đều được giữ nguyên để
@@ -311,7 +311,7 @@ def main() -> None:
         f"  Nominatim trả kết quả : {matched}/{len(pending)}\n"
         f"  Rơi đúng vào 126 phường: {ward_hit}/{len(pending)}\n"
         f"  Đã xác nhận           : {verified_after}/{len(ordered)}\n"
-        "\nChỉ dòng geocode_verified=true mới vào tập huấn luyện; "
+        "\nChỉ dòng geocode_verified=true mới vào archive replay; "
         "chạy lại mặc định giữ nguyên toàn bộ review."
     )
 

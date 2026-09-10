@@ -15,10 +15,9 @@ checkpoint:
   safety_lag: 15 minutes
 
 runner:
-  # Chỉ marts. KHÔNG dùng `+tag:marts` — kéo int_weather_archive_hourly vào đây sẽ
-  # chạy lại dedup với bounds của process SAI (source_ref stg_weather_archive_hourly
-  # không có trong bounds của rain_gold) và phá ranh giới hai process.
-  select: "tag:marts"
+  # Contract Gold archive hiện hành. Selector tường minh để không kéo forecast
+  # marts hoặc model nghiên cứu không phục vụ dashboard vào archive pipeline.
+  select: "dim_grid dim_ward dim_flood_point bridge_ward_grid fct_flood_event_observation fct_rain_archive_hourly"
 
 # Danh mục phường CÓ THỂ bị xoá ở nguồn (sáp nhập/giải thể theo nghị quyết), và
 # seed liệt kê được toàn bộ key nên anti-join chạy được. Weather thì không:

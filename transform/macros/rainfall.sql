@@ -9,15 +9,8 @@
 {#
     Cửa sổ của phase hiện tại.
 
-    48/72 giờ là điều kiện tiền kỳ (đất đã bão hoà, lưu vực chưa kịp rút) —
-    đầu vào bắt buộc cho feature nguy cơ ngập, không chỉ cho drought. Trận
-    07/10/2025 là ví dụ: `rain_1h_mm` đỉnh toàn thành phố chỉ 24,8 mm nên mọi
-    ngưỡng 1 giờ đều im, trong khi mưa dồn nhiều ngày mới là thứ gây ngập.
-
-    Trên FORECAST, horizon chỉ dài 72 giờ và rolling không được đi qua ranh giới
-    vintage, nên `rain_72h_mm` chỉ non-null ở đúng giờ cuối horizon và
-    `rain_48h_mm` từ giờ thứ 48 trở đi. NULL ở đây là đúng nghĩa "cửa sổ thiếu
-    giờ", không phải lỗi.
+    Chỉ giữ 1/3/6/12/24 giờ vì đây là các cửa sổ có consumer trong dashboard và
+    pressure signal.
 
     Phải là MACRO chứ không phải `{% set %}` ở cấp file: dbt chỉ export block
     `macro` từ macro-paths, biến top-level không nhìn thấy được từ model.
@@ -26,7 +19,7 @@
     (max(windows) − 1 giờ), không phải gõ tay — xem `{% set lookback %}`.
 #}
 {% macro rain_windows() %}
-    {{ return([1, 3, 6, 12, 24, 48, 72]) }}
+    {{ return([1, 3, 6, 12, 24]) }}
 {% endmacro %}
 
 
@@ -61,6 +54,38 @@
     {%- for hours in windows %}
     CASE WHEN rain_{{ hours }}h_hours = {{ hours }}
          THEN rain_{{ hours }}h_sum_raw END AS rain_{{ hours }}h_mm{{ "," if not loop.last }}
+    {%- endfor %}
+{% endmacro %}
+
+
+{#
+    Tổng mưa forecast nhìn về PHÍA TRƯỚC (không tính row hiện tại).
+
+    Archive dùng cửa sổ trailing để mô tả mưa đã rơi. Forecast dùng cửa sổ
+    forward để trả lời câu hỏi vận hành: sau giờ valid này đến H giờ tới sẽ có
+    bao nhiêu mưa. Hai ngữ nghĩa không dùng chung một window frame.
+#}
+{% macro forward_rain_sums(windows, partition_by, order_by='valid_time_utc') %}
+    {%- for hours in windows %}
+    SUM(precipitation_mm) OVER (
+        PARTITION BY {{ partition_by }}
+        ORDER BY {{ order_by }}
+        RANGE BETWEEN INTERVAL '1 hour' FOLLOWING AND INTERVAL '{{ hours }} hours' FOLLOWING
+    ) AS forecast_next_{{ hours }}h_sum_raw,
+    COUNT(precipitation_mm) OVER (
+        PARTITION BY {{ partition_by }}
+        ORDER BY {{ order_by }}
+        RANGE BETWEEN INTERVAL '1 hour' FOLLOWING AND INTERVAL '{{ hours }} hours' FOLLOWING
+    ) AS forecast_next_{{ hours }}h_hours{{ "," if not loop.last }}
+    {%- endfor %}
+{% endmacro %}
+
+
+{% macro forward_rain_columns(windows) %}
+    {%- for hours in windows %}
+    CASE WHEN forecast_next_{{ hours }}h_hours = {{ hours }}
+         THEN forecast_next_{{ hours }}h_sum_raw END
+         AS forecast_next_{{ hours }}h_mm{{ "," if not loop.last }}
     {%- endfor %}
 {% endmacro %}
 

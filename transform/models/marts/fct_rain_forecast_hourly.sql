@@ -1,5 +1,8 @@
 /*
     MART HISTORY — mưa dự báo theo vintage × ô lưới × giờ.
+    `rain_*h_mm` là trailing context; `forecast_next_*h_mm` là lượng mưa
+    forecast strictly sau valid time hiện tại (t+1h … t+Hh) để phục vụ pressure
+    alert. Row tại valid time đã thuộc giờ vừa kết thúc.
     Rolling partition theo forecast_run_id để không trộn hai vintage.
 */
 
@@ -42,6 +45,10 @@ windowed AS (
         {{ rolling_rain_sums(
             windows,
             partition_by='forecast_run_id, grid_cell_id'
+        ) }},
+        {{ forward_rain_sums(
+            windows,
+            partition_by='forecast_run_id, grid_cell_id'
         ) }}
     FROM source
 ),
@@ -62,6 +69,7 @@ published AS (
         precipitation_probability_pct,
         weather_code,
         {{ rolling_rain_columns(windows) }},
+        {{ forward_rain_columns(windows) }},
         _source_file,
         _ingested_at,
         _updated_at
@@ -79,5 +87,6 @@ FROM published
     source_ref = 'int_weather_forecast_hourly',
     dimension = 'valid_time_utc',
     change_column = '_updated_at',
+    expand_backward = lookback,
     expand_forward = lookback
 ) }}

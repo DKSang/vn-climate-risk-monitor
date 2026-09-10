@@ -1,6 +1,6 @@
 # Cấu trúc repository
 
-**Hanoi Flood & Climate Risk Monitor** · v2.1 · 2026-09-03
+**Hanoi Flood & Climate Risk Monitor** · v2.2 · 2026-09-08
 
 Repository dùng MinIO landing zone (`bronze/files/`) và hai schema medallion
 trong DuckLake (`silver`, `gold`). Cấu trúc dbt tổ chức thành 3 lớp chuẩn:
@@ -19,7 +19,7 @@ vn-climate-risk-monitor/
 │   └── load.py                      # nối autoloader vào sources/*.yml
 │
 ├── sources/                         # 1 YAML + 1 SQL / nguồn file→bảng staging
-├── processing/                      # cấu hình process: silver_weather.yml, rain_gold.yml
+├── processing/                      # config Silver/Gold cho archive và forecast
 ├── transform/                       # dbt: staging → intermediate → marts
 │   ├── models/
 │   │   ├── staging/                 # view mỏng 1-1 trên source/seed (`stg_*`)
@@ -32,8 +32,8 @@ vn-climate-risk-monitor/
 ├── reference/                       # GeoJSON và văn bản nguồn tĩnh
 ├── orchestration/
 │   ├── cron/                        # schedule template; không chứa business logic
-│   └── dags/                        # Airflow DAGs: forecast_hourly, archive_monthly
-├── serving/                         # API/dashboard chỉ đọc Gold (Bước 8, chưa cài)
+│   └── dags/                        # Airflow DAGs: forecast, archive, maintenance
+├── serving/                         # API/dashboard chỉ đọc Gold (Bước 8)
 ├── scripts/                         # bootstrap, run_processing, healthcheck, maintenance
 └── tests/
     ├── unit/
@@ -83,7 +83,9 @@ Thêm nguồn REST mới = planner trong app + `fetch.land`. Thêm nguồn file 
   `stg_open_meteo__weather_archive_hourly` (view dbt), `stg_seed__ward`, `stg_seed__ward_grid`.
 - Intermediate dùng tiền tố `int_`, ví dụ `int_weather_archive_hourly` (curated table incremental).
 - Marts dùng `dim_`, `bridge_`, `fct_` theo dimensional modeling, ví dụ
-  `dim_grid`, `dim_ward`, `bridge_ward_grid`, `fct_rain_archive_hourly`, `fct_rain_archive_daily`, `fct_ward_rain_archive_daily`.
+  `dim_grid`, `dim_ward`, `bridge_ward_grid`, `fct_rain_archive_hourly`,
+  `fct_rain_forecast_hourly`, `fct_rain_forecast_current_hourly` và
+  `fct_rain_pressure_alert`.
 - Metadata kỹ thuật dùng tên rõ nghĩa: `_source_file`, `_ingested_at`, `_updated_at`, `_row_hash`.
 
 ## Incremental contract

@@ -56,9 +56,7 @@ def run_fetch_pool(
             land_one(task)
         except Exception as error:  # noqa: BLE001 — gom lỗi rồi dừng cả lô
             with lock:
-                result.failures.append(
-                    f"{task.key}: {type(error).__name__}: {error}"
-                )
+                result.failures.append(f"{task.key}: {type(error).__name__}: {error}")
             stop.set()
             return
         with lock:

@@ -1,4 +1,4 @@
-.PHONY: bootstrap bootstrap-env bootstrap-geography up down logs backup-metadata restore-metadata map-grid fetch-forecast fetch-archive backfill-archive load forecast-pipeline archive-pipeline quality quality-forecast quality-archive health health-alert seed dbt dbt-test freshness transform transform-forecast processing-full-refresh dbt-docs serve-api maintain-lake clean-lake lint airflow-init airflow-logs airflow-shell
+.PHONY: bootstrap bootstrap-env bootstrap-geography up down logs backup-metadata restore-metadata backup-lakehouse verify-lakehouse-backup restore-lakehouse map-grid fetch-forecast fetch-archive backfill-archive load forecast-pipeline archive-pipeline quality quality-forecast quality-archive health health-alert seed dbt dbt-test freshness transform transform-forecast processing-full-refresh dbt-docs docs-check serve-api maintain-lake clean-lake lint airflow-init airflow-logs airflow-shell
 
 # ==== Setup ====
 bootstrap-env:
@@ -13,7 +13,7 @@ bootstrap-geography:
 	cd transform && uv run dbt seed --profiles-dir . --select +dim_ward
 	cd transform && uv run dbt build --profiles-dir . --select +dim_ward --exclude resource_type:seed
 
-# ==== Infrastructure (Docker Compose: MinIO + Postgres + pgAdmin) ====
+# ==== Runtime stack (Postgres + MinIO + pgAdmin + Airflow + Dashboard) ====
 up:
 	docker compose up -d
 
@@ -31,7 +31,16 @@ backup-metadata:
 restore-metadata:
 	scripts/restore_metadata.sh
 
-# ==== Fetch (HTTP→MinIO) rồi autoloader nạp bronze (SQL) ====
+backup-lakehouse:
+	scripts/backup_lakehouse.sh
+
+verify-lakehouse-backup:
+	scripts/verify_lakehouse_backup.sh
+
+restore-lakehouse:
+	scripts/restore_lakehouse.sh
+
+# ==== Fetch (HTTP→MinIO raw) rồi autoloader nạp Silver staging ====
 # Mặc định chỉ IN KẾ HOẠCH; thêm EXEC=1 để chạy thật.
 EXEC ?=
 _X = $(if $(EXEC),--execute,)
@@ -58,7 +67,8 @@ TO   ?= $(shell date +%Y)
 backfill-archive:
 	scripts/backfill_archive.sh $(FROM) $(TO)
 
-# Phát hiện file mới trên MinIO và nạp vào bronze. Idempotent, exactly-once.
+# Phát hiện file mới trên MinIO và nạp at-least-once vào Silver staging.
+# Control plane chống xử lý lặp cùng object; Silver intermediate vẫn dedup theo grain.
 # Không tham số = chạy mọi nguồn trong sources/*.yml
 load:
 	uv run load-sources $(SOURCE)
@@ -73,7 +83,7 @@ forecast-pipeline:
 	$(MAKE) transform-forecast
 	$(MAKE) health SCOPE=forecast REQUIRE_GOLD=1
 
-# Bồi đuôi cả ERA5/IFS, chặn transform khi Bronze/control plane không đạt chuẩn.
+# Bồi đuôi cả ERA5/IFS, chặn transform khi staging/control plane không đạt chuẩn.
 archive-pipeline:
 	$(MAKE) fetch-archive EXEC=1 START=$(START) END=$(END)
 	$(MAKE) load SOURCE="open_meteo_archive open_meteo_ifs"
@@ -105,7 +115,7 @@ quality-forecast:
 	$(_PROVERO_FORECAST)
 	uv run python scripts/healthcheck.py --scope forecast
 
-# Gate Bronze archive/IFS và checkpoint.
+# Gate Silver staging archive/IFS và checkpoint.
 quality-archive:
 	$(_PROVERO_ARCHIVE)
 	uv run python scripts/healthcheck.py --scope archive
@@ -159,7 +169,8 @@ processing-rewind:
 
 # Migration có audit cho thay đổi business rule/schema trên model incremental.
 # Ví dụ: make processing-full-refresh PROCESS=forecast_gold \
-#   SELECT='fct_rain_forecast_hourly+' REASON='rain band v2'
+#   SELECT='fct_rain_forecast_hourly fct_rain_forecast_current_hourly fct_rain_pressure_alert' \
+#   REASON='pressure rule v2'
 SELECT ?=
 processing-full-refresh:
 	@test -n "$(strip $(REASON))" || \
@@ -169,6 +180,9 @@ processing-full-refresh:
 
 dbt-docs:
 	cd transform && uv run dbt docs generate --profiles-dir . && uv run dbt docs serve --profiles-dir .
+
+docs-check:
+	uv run python scripts/check_docs.py
 
 # ==== Operational serving (read-only health API + /ops dashboard) ====
 serve-api:
@@ -190,7 +204,7 @@ fetch-flood-observations:
 
 # Geocode NHÁP cho quan sát ngập: Nominatim + point-in-polygon trên 126 ranh
 # giới phường. Mọi dòng ghi ra đều `geocode_verified=false` — phải soát tay rồi
-# đổi thành true, vì chỉ dòng true mới vào tập huấn luyện. Chạy lại mặc định
+# đổi thành true, vì chỉ dòng true mới đủ điều kiện archive replay. Chạy lại mặc định
 # giữ nguyên mọi review đang có; truyền
 # GEOCODE_ARGS=--refresh-unverified khi thực sự muốn thay đề xuất chưa duyệt.
 GEOCODE_ARGS ?=

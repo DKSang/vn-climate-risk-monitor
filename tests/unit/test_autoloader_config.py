@@ -38,7 +38,9 @@ def test_loads_minimal_config_with_sensible_defaults(tmp_path: Path) -> None:
 
 
 def test_loader_settings_are_overridable(tmp_path: Path) -> None:
-    body = MINIMAL + """
+    body = (
+        MINIMAL
+        + """
 scope: canary
 loader:
   batch_size: 1
@@ -46,6 +48,7 @@ loader:
   max_retries: 5
   max_batches: 7
 """
+    )
     config = SourceConfig.from_yaml(write(tmp_path, body))
 
     assert config.scope == "canary"

@@ -88,7 +88,10 @@ def probe_ward_grid(
         )
         request = Request(
             url,
-            headers={"Accept": "application/json", "User-Agent": "vn-climate-risk-monitor"},
+            headers={
+                "Accept": "application/json",
+                "User-Agent": "vn-climate-risk-monitor",
+            },
         )
         with opener(request, timeout=HTTP_TIMEOUT_S) as response:
             payload = json.loads(response.read())
@@ -107,7 +110,8 @@ def probe_ward_grid(
                     grid_latitude=float(item["latitude"]),
                     grid_longitude=float(item["longitude"]),
                     elevation_m=(
-                        float(item["elevation"]) if item.get("elevation") is not None
+                        float(item["elevation"])
+                        if item.get("elevation") is not None
                         else None
                     ),
                 )
@@ -142,9 +146,7 @@ def write_seed(rows: Sequence[WardGrid], path: str | Path = SEED_PATH) -> None:
     csv_path = Path(path)
     replaced = {row.model for row in rows}
     kept = [r for r in _read_or_empty(csv_path) if r.model not in replaced]
-    merged = sorted(
-        [*kept, *rows], key=lambda r: (r.model, r.ward_code)
-    )
+    merged = sorted([*kept, *rows], key=lambda r: (r.model, r.ward_code))
     csv_path.parent.mkdir(parents=True, exist_ok=True)
     with csv_path.open("w", encoding="utf-8", newline="") as stream:
         writer = csv.DictWriter(stream, fieldnames=FIELDNAMES)
@@ -158,7 +160,9 @@ def write_seed(rows: Sequence[WardGrid], path: str | Path = SEED_PATH) -> None:
                     "ward_longitude": f"{row.ward_longitude:.6f}",
                     "grid_latitude": f"{row.grid_latitude:.6f}",
                     "grid_longitude": f"{row.grid_longitude:.6f}",
-                    "elevation_m": "" if row.elevation_m is None else f"{row.elevation_m:g}",
+                    "elevation_m": ""
+                    if row.elevation_m is None
+                    else f"{row.elevation_m:g}",
                 }
             )
 

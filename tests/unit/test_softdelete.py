@@ -38,7 +38,9 @@ def build_target(connection: duckdb.DuckDBPyConnection, codes: list[str]) -> Non
         )
 
 
-def config(source_codes: list[str] | None = None, **overrides: object) -> SoftDeleteConfig:
+def config(
+    source_codes: list[str] | None = None, **overrides: object
+) -> SoftDeleteConfig:
     codes = WARDS if source_codes is None else source_codes
     values = ", ".join(f"('{code}')" for code in codes) or "(NULL)"
     source_sql = (
@@ -130,7 +132,12 @@ def test_empty_source_refuses_to_wipe_the_table(connection) -> None:
     with pytest.raises(SoftDeleteError, match="0 dòng"):
         apply_soft_delete(connection, empty, now=NOW)
 
-    assert connection.execute("SELECT COUNT(*) FROM dim_ward WHERE is_active").fetchone()[0] == 5
+    assert (
+        connection.execute("SELECT COUNT(*) FROM dim_ward WHERE is_active").fetchone()[
+            0
+        ]
+        == 5
+    )
 
 
 def test_null_key_in_source_is_rejected(connection) -> None:
@@ -150,7 +157,12 @@ def test_mass_deactivation_is_refused(connection) -> None:
     with pytest.raises(SoftDeleteError, match="ngưỡng"):
         apply_soft_delete(connection, config(WARDS[:1]), now=NOW)
 
-    assert connection.execute("SELECT COUNT(*) FROM dim_ward WHERE is_active").fetchone()[0] == 5
+    assert (
+        connection.execute("SELECT COUNT(*) FROM dim_ward WHERE is_active").fetchone()[
+            0
+        ]
+        == 5
+    )
 
 
 def test_threshold_is_configurable(connection) -> None:

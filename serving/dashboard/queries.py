@@ -21,11 +21,26 @@ from vn_climate_risk_monitor.lakehouse import get_connection
 logger = logging.getLogger(__name__)
 
 FORECAST_MODEL = "ecmwf_ifs_fc"
+_PUBLICATION_PROCESS = {
+    "fct_rain_forecast_hourly": "forecast_gold",
+    "fct_rain_archive_hourly": "rain_gold",
+}
 
 # Metric mưa được phép chọn động. Tên cột đi vào SQL qua CASE trên tham số bind,
 # nhưng ORDER BY và whitelist này là hàng rào duy nhất chặn giá trị lạ — giữ một
 # chỗ thay vì lặp lại ở từng hàm.
-RAIN_METRICS = frozenset({"rain_1h_mm", "rain_12h_mm", "rain_24h_mm"})
+RAIN_METRICS = frozenset(
+    {
+        "rain_1h_mm",
+        "rain_12h_mm",
+        "rain_24h_mm",
+        "forecast_next_1h_mm",
+        "forecast_next_3h_mm",
+        "forecast_next_6h_mm",
+        "forecast_next_12h_mm",
+        "forecast_next_24h_mm",
+    }
+)
 
 
 def _validate_rain_metric(metric: str) -> str:
@@ -50,26 +65,51 @@ def load_serving_snapshot(
     table_schema: str = "gold",
     table_name: str = "fct_rain_forecast_hourly",
 ) -> dict[str, Any]:
-    """Resolve catalog hiện hành và lần đổi mới nhất của một bảng từ Postgres.
+    """Resolve snapshot của Gold run thành công gần nhất từ PostgreSQL.
 
-    Request được pin vào ``snapshot_id`` của toàn catalog để fact, dimension và
-    bridge cùng một trạng thái nhất quán. ``table_snapshot_id`` cho biết snapshot
-    gần nhất thực sự insert/delete/compact bảng đích, không suy luận từ
-    ``MAX(_ingested_at)``. Tên bảng được bind như giá trị metadata, không được
-    nội suy vào SQL.
+    Không pin vào HEAD của catalog: HEAD có thể đang ở giữa một dbt build nhiều
+    model. Processing chỉ publish ``published_snapshot_id`` cùng transaction
+    đánh run ``SUCCEEDED``, nên fact, dimension và bridge đều đến từ một graph
+    đã qua test. ``table_snapshot_id`` vẫn cho biết snapshot gần nhất thực sự
+    đổi bảng đích. Tên bảng được bind như metadata, không nội suy vào SQL.
     """
+    process_key = _PUBLICATION_PROCESS.get(table_name)
+    if process_key is None:
+        raise ValueError(f"Không có publication process cho {table_name!r}")
     settings = load_settings()
     connection = connect_control_plane(settings.postgres.ducklake_connection_string)
     try:
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                WITH catalog_snapshot AS (
+                WITH published_run AS (
+                    SELECT published_snapshot_id AS snapshot_id
+                    FROM processing.processing_runs
+                    WHERE process_key = %s
+                      AND scope = 'production'
+                      AND status = 'SUCCEEDED'
+                      AND published_snapshot_id IS NOT NULL
+                    ORDER BY completed_at_utc DESC
+                    LIMIT 1
+                ),
+                catalog_snapshot AS (
                     SELECT
-                        snapshot_id,
-                        snapshot_time
-                    FROM ducklake.ducklake_snapshot
-                    ORDER BY snapshot_id DESC
+                        snapshot.snapshot_id,
+                        snapshot.snapshot_time
+                    FROM ducklake.ducklake_snapshot AS snapshot
+                    JOIN published_run USING (snapshot_id)
+                ),
+                target_schema AS (
+                    SELECT schema.schema_id
+                    FROM ducklake.ducklake_schema AS schema
+                    CROSS JOIN catalog_snapshot
+                    WHERE schema.schema_name = %s
+                      AND schema.begin_snapshot <= catalog_snapshot.snapshot_id
+                      AND (
+                          schema.end_snapshot IS NULL
+                          OR schema.end_snapshot > catalog_snapshot.snapshot_id
+                      )
+                    ORDER BY schema.begin_snapshot DESC
                     LIMIT 1
                 ),
                 target_table AS (
@@ -77,12 +117,14 @@ def load_serving_snapshot(
                         tbl.table_id,
                         tbl.begin_snapshot
                     FROM ducklake.ducklake_table AS tbl
-                    JOIN ducklake.ducklake_schema AS schema
-                      ON schema.schema_id = tbl.schema_id
-                     AND schema.end_snapshot IS NULL
-                    WHERE schema.schema_name = %s
-                      AND tbl.table_name = %s
-                      AND tbl.end_snapshot IS NULL
+                    JOIN target_schema USING (schema_id)
+                    CROSS JOIN catalog_snapshot
+                    WHERE tbl.table_name = %s
+                      AND tbl.begin_snapshot <= catalog_snapshot.snapshot_id
+                      AND (
+                          tbl.end_snapshot IS NULL
+                          OR tbl.end_snapshot > catalog_snapshot.snapshot_id
+                      )
                     ORDER BY tbl.begin_snapshot DESC
                     LIMIT 1
                 ),
@@ -94,12 +136,14 @@ def load_serving_snapshot(
                     JOIN ducklake.ducklake_snapshot_changes AS changes
                       USING (snapshot_id)
                     CROSS JOIN target_table
+                    CROSS JOIN catalog_snapshot
                     WHERE changes.changes_made ~ (
                         '(^|,)(inserted_into_table|deleted_from_table|'
                         || 'compacted_table|altered_table):'
                         || target_table.table_id::text
                         || '(,|$)'
                     )
+                      AND snapshot.snapshot_id <= catalog_snapshot.snapshot_id
                     ORDER BY snapshot.snapshot_id DESC
                     LIMIT 1
                 ),
@@ -126,7 +170,7 @@ def load_serving_snapshot(
                 FROM catalog_snapshot
                 CROSS JOIN table_snapshot
                 """,
-                (table_schema, table_name),
+                (process_key, table_schema, table_name),
             )
             row = cursor.fetchone()
             if row is None:
@@ -632,7 +676,7 @@ def load_verified_flood_observations_until(
                 geocode_confidence
             FROM gold.fct_flood_event_observation
             WHERE geocode_verified = TRUE
-              AND is_training_eligible = TRUE
+              AND is_replay_eligible = TRUE
               AND observed_at_utc <= CAST($1 AS TIMESTAMPTZ)
               AND CAST(
                     observed_at_utc AT TIME ZONE 'Asia/Ho_Chi_Minh' AS DATE
@@ -669,7 +713,7 @@ def load_verified_flood_events(
                 ANY_VALUE(source_url) AS source_url
             FROM gold.fct_flood_event_observation
             WHERE geocode_verified = TRUE
-              AND is_training_eligible = TRUE
+              AND is_replay_eligible = TRUE
             GROUP BY event_id
             ORDER BY last_observed_at_utc DESC, event_id
             """,
@@ -677,39 +721,6 @@ def load_verified_flood_events(
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("Không thể đọc danh sách sự kiện ngập đã xác minh: %s", exc)
-        return []
-
-
-def load_flood_backtest_metrics(
-    event_id: str,
-    snapshot_version: int | None = None,
-) -> list[dict[str, Any]]:
-    """Metric backtest của một trận; NULL được giữ nguyên khi không đo được."""
-    try:
-        return _read_records(
-            """
-            SELECT
-                rule_name,
-                threshold_value,
-                observation_count,
-                positive_observation_count,
-                negative_observation_count,
-                hit_count,
-                miss_count,
-                false_alarm_count,
-                pod,
-                far,
-                csi,
-                risk_model_version
-            FROM gold.fct_flood_backtest_metric
-            WHERE event_id = $1
-            ORDER BY rule_name, threshold_value NULLS FIRST
-            """,
-            [event_id],
-            snapshot_version=snapshot_version,
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("Không thể đọc backtest event %s: %s", event_id, exc)
         return []
 
 
@@ -757,13 +768,21 @@ def load_forecast_by_hour(
                 f.rain_6h_mm,
                 f.rain_12h_mm,
                 f.rain_24h_mm,
+                f.forecast_next_1h_mm,
+                f.forecast_next_3h_mm,
+                f.forecast_next_6h_mm,
+                f.forecast_next_12h_mm,
+                f.forecast_next_24h_mm,
                 f.hanoi_rain_scenario_band,
                 f.vn_rain_band_12h,
                 f.vn_rain_band_24h,
-                risk.hazard_index,
-                risk.vulnerability_index,
-                risk.risk_score,
-                risk.risk_model_version,
+                pressure.pressure_level,
+                pressure.pressure_score,
+                pressure.coverage_status,
+                pressure.trigger_reasons,
+                pressure.persistence_runs,
+                pressure.revision_24h_mm,
+                pressure.revision_direction,
                 f.valid_time_utc
             FROM gold.fct_rain_forecast_current_hourly f
             JOIN gold.bridge_ward_grid bwg
@@ -773,14 +792,20 @@ def load_forecast_by_hour(
             JOIN gold.dim_ward w
               ON w.ward_code = bwg.ward_code
              AND w.is_active = TRUE
-            LEFT JOIN gold.fct_flood_risk_score risk
-              ON risk.ward_code = w.ward_code
-             AND risk.valid_time_utc = f.valid_time_utc
+            LEFT JOIN gold.fct_rain_pressure_alert pressure
+              ON pressure.forecast_run_id = f.forecast_run_id
+             AND pressure.ward_code = w.ward_code
+             AND pressure.valid_time_utc = f.valid_time_utc
             WHERE f.valid_time_utc = $2
             ORDER BY
                 CASE $3
                     WHEN 'rain_12h_mm' THEN f.rain_12h_mm
                     WHEN 'rain_24h_mm' THEN f.rain_24h_mm
+                    WHEN 'forecast_next_1h_mm' THEN f.forecast_next_1h_mm
+                    WHEN 'forecast_next_3h_mm' THEN f.forecast_next_3h_mm
+                    WHEN 'forecast_next_6h_mm' THEN f.forecast_next_6h_mm
+                    WHEN 'forecast_next_12h_mm' THEN f.forecast_next_12h_mm
+                    WHEN 'forecast_next_24h_mm' THEN f.forecast_next_24h_mm
                     ELSE f.rain_1h_mm
                 END DESC NULLS LAST,
                 w.ward_name
@@ -809,14 +834,25 @@ def load_forecast_hour_summary(
                     f.rain_6h_mm,
                     f.rain_12h_mm,
                     f.rain_24h_mm,
+                    f.forecast_next_1h_mm,
+                    f.forecast_next_6h_mm,
+                    f.forecast_next_12h_mm,
+                    f.forecast_next_24h_mm,
                     f.hanoi_rain_scenario_band,
                     f.vn_rain_band_12h,
-                    f.vn_rain_band_24h
+                    f.vn_rain_band_24h,
+                    pressure.pressure_level,
+                    pressure.pressure_score,
+                    pressure.coverage_status
                 FROM gold.fct_rain_forecast_current_hourly f
                 JOIN gold.bridge_ward_grid bwg
                   ON bwg.grid_cell_id = f.grid_cell_id
                  AND bwg.weather_model = $1
                  AND bwg.is_active = TRUE
+                LEFT JOIN gold.fct_rain_pressure_alert pressure
+                  ON pressure.forecast_run_id = f.forecast_run_id
+                 AND pressure.ward_code = bwg.ward_code
+                 AND pressure.valid_time_utc = f.valid_time_utc
                 WHERE f.valid_time_utc = $2
             ),
             point_status AS (
@@ -851,18 +887,27 @@ def load_forecast_hour_summary(
                 COUNT(*) FILTER (
                     WHERE rain_24h_mm >= 50.0
                 ) AS elevated_ward_count_24h,
+                COUNT(*) FILTER (
+                    WHERE forecast_next_1h_mm >= 50.0
+                ) AS forecast_elevated_ward_count_1h,
+                COUNT(*) FILTER (
+                    WHERE forecast_next_12h_mm >= 30.0
+                ) AS forecast_elevated_ward_count_12h,
+                COUNT(*) FILTER (
+                    WHERE forecast_next_24h_mm >= 50.0
+                ) AS forecast_elevated_ward_count_24h,
+                COUNT(*) FILTER (
+                    WHERE pressure_level IN ('ELEVATED', 'HIGH')
+                ) AS pressure_alert_ward_count,
+                COUNT(*) FILTER (
+                    WHERE pressure_level = 'HIGH'
+                ) AS pressure_high_ward_count,
+                COUNT(*) FILTER (
+                    WHERE pressure_level = 'UNKNOWN'
+                ) AS pressure_unknown_ward_count,
+                MAX(pressure_score) AS max_pressure_score,
                 (SELECT COUNT(*) FROM point_status WHERE is_triggered)
-                    AS triggered_point_count,
-                (
-                    SELECT COUNT(*)
-                    FROM gold.fct_flood_risk_score risk
-                    WHERE risk.valid_time_utc = $2 AND risk.risk_score >= 50
-                ) AS experimental_risk_50_count,
-                (
-                    SELECT MAX(risk_score)
-                    FROM gold.fct_flood_risk_score risk
-                    WHERE risk.valid_time_utc = $2
-                ) AS max_experimental_risk_score
+                    AS triggered_point_count
             FROM ward_forecast
             """,
             [FORECAST_MODEL, valid_time_utc],
@@ -873,34 +918,48 @@ def load_forecast_hour_summary(
         return {}
 
 
-def load_forecast_risk_ranking(
+def load_forecast_pressure_ranking(
     valid_time_utc: datetime | str,
     snapshot_version: int | None = None,
     limit: int = 10,
 ) -> pd.DataFrame:
-    """Xếp hạng risk index heuristic trong DuckDB; không phải xác suất ngập."""
+    """Xếp hạng áp lực mưa theo tín hiệu rule-based; không phải cảnh báo chính thức."""
     try:
         return _read_dataframe(
             """
             SELECT
+                alert.ward_code,
                 ward.ward_name,
-                risk.risk_score,
-                risk.hazard_index,
-                risk.vulnerability_index,
-                risk.rain_24h_mm,
-                risk.risk_model_version
-            FROM gold.fct_flood_risk_score risk
+                alert.pressure_level,
+                alert.pressure_score,
+                alert.coverage_status,
+                alert.trigger_reasons,
+                alert.forecast_next_6h_mm,
+                alert.forecast_next_24h_mm,
+                alert.persistence_runs,
+                alert.revision_direction,
+                alert.revision_24h_mm
+            FROM gold.fct_rain_pressure_alert alert
             JOIN gold.dim_ward ward
-              ON ward.ward_code = risk.ward_code AND ward.is_active = TRUE
-            WHERE risk.valid_time_utc = $1
-            ORDER BY risk.risk_score DESC, ward.ward_name
+              ON ward.ward_code = alert.ward_code AND ward.is_active = TRUE
+            WHERE alert.valid_time_utc = $1
+            ORDER BY
+                CASE alert.pressure_level
+                    WHEN 'HIGH' THEN 1
+                    WHEN 'ELEVATED' THEN 2
+                    WHEN 'WATCH' THEN 3
+                    WHEN 'NORMAL' THEN 4
+                    ELSE 5
+                END,
+                alert.pressure_score DESC NULLS LAST,
+                ward.ward_name
             LIMIT $2
             """,
             [valid_time_utc, limit],
             snapshot_version=snapshot_version,
         )
     except Exception as exc:  # noqa: BLE001
-        logger.warning("Không thể xếp hạng risk tại %s: %s", valid_time_utc, exc)
+        logger.warning("Không thể xếp hạng áp lực mưa tại %s: %s", valid_time_utc, exc)
         return pd.DataFrame()
 
 
@@ -968,6 +1027,11 @@ def load_ward_forecast_timeseries(
                 f.rain_6h_mm,
                 f.rain_12h_mm,
                 f.rain_24h_mm,
+                f.forecast_next_1h_mm,
+                f.forecast_next_3h_mm,
+                f.forecast_next_6h_mm,
+                f.forecast_next_12h_mm,
+                f.forecast_next_24h_mm,
                 f.hanoi_rain_scenario_band
             FROM gold.fct_rain_forecast_current_hourly f
             JOIN gold.bridge_ward_grid bwg
@@ -1012,13 +1076,20 @@ def load_ward_forecast_summary(
             , aggregated AS (
                 SELECT
                     COUNT(*) AS available_hours,
-                    SUM(precipitation_mm) AS horizon_rain_mm,
-                    SUM(precipitation_mm) FILTER (WHERE hour_number <= 24)
+                    SUM(precipitation_mm) FILTER (WHERE hour_number > 1)
+                        AS horizon_rain_mm,
+                    MAX(forecast_next_24h_mm) FILTER (WHERE hour_number = 1)
                         AS next_24h_rain_mm,
-                    MAX(rain_1h_mm) AS peak_1h_mm,
-                    ARG_MAX(valid_time_utc, rain_1h_mm) AS peak_time_utc,
-                    MAX(rain_6h_mm) AS peak_6h_mm,
-                    MAX(precipitation_probability_pct) AS max_probability_pct
+                    MAX(forecast_next_6h_mm) FILTER (WHERE hour_number = 1)
+                        AS forecast_next_6h_mm,
+                    MAX(forecast_next_24h_mm) FILTER (WHERE hour_number = 1)
+                        AS forecast_next_24h_mm,
+                    MAX(rain_1h_mm) FILTER (WHERE hour_number > 1) AS peak_1h_mm,
+                    ARG_MAX(valid_time_utc, rain_1h_mm) FILTER (WHERE hour_number > 1)
+                        AS peak_time_utc,
+                    MAX(rain_6h_mm) FILTER (WHERE hour_number > 1) AS peak_6h_mm,
+                    MAX(precipitation_probability_pct) FILTER (WHERE hour_number > 1)
+                        AS max_probability_pct
                 FROM series
             )
             SELECT
@@ -1039,6 +1110,33 @@ def load_ward_forecast_summary(
                           ELSE FALSE
                       END
                 ) AS triggered_point_count
+                , (
+                    SELECT a.pressure_level
+                    FROM gold.fct_rain_pressure_alert a
+                    CROSS JOIN current_horizon h
+                    WHERE a.ward_code = $2
+                      AND a.valid_time_utc BETWEEN h.starts_at_utc AND h.ends_at_utc
+                    ORDER BY a.valid_time_utc
+                    LIMIT 1
+                ) AS pressure_level
+                , (
+                    SELECT a.pressure_score
+                    FROM gold.fct_rain_pressure_alert a
+                    CROSS JOIN current_horizon h
+                    WHERE a.ward_code = $2
+                      AND a.valid_time_utc BETWEEN h.starts_at_utc AND h.ends_at_utc
+                    ORDER BY a.valid_time_utc
+                    LIMIT 1
+                ) AS pressure_score
+                , (
+                    SELECT a.trigger_reasons
+                    FROM gold.fct_rain_pressure_alert a
+                    CROSS JOIN current_horizon h
+                    WHERE a.ward_code = $2
+                      AND a.valid_time_utc BETWEEN h.starts_at_utc AND h.ends_at_utc
+                    ORDER BY a.valid_time_utc
+                    LIMIT 1
+                ) AS pressure_trigger_reasons
             FROM aggregated
             """,
             [FORECAST_MODEL, ward_code],

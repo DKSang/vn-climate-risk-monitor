@@ -1,23 +1,23 @@
 """Khai báo một incremental process bằng YAML.
 
-Ví dụ ``processing/rainfall_historical_hourly.yml``::
+Ví dụ ``processing/forecast_gold.yml``::
 
-    process_key: rainfall_historical_hourly
-    target: gold.fct_rainfall_historical_hourly
+    process_key: forecast_gold
+    target: gold.fct_rain_forecast_hourly
 
     sources:
-      - ref: archive_hourly
-        change_column: _ingested_at
+      - ref: int_weather_forecast_hourly
+        change_column: _updated_at
 
     checkpoint:
       safety_lag: 15 minutes
 
     runner:
-      select: "+tag:historical"
+      select: "bridge_ward_grid fct_rain_forecast_hourly fct_rain_forecast_current_hourly fct_rain_pressure_alert"
 
 CỐ Ý không có ``recompute_scope`` ở đây. Độ rộng cửa sổ (lookback) là thuộc tính
-của TỪNG MODEL, không phải của process: `+tag:historical` build nhiều model có
-window khác nhau (hourly 72h, daily khác). Khai báo nó trong chính model qua
+của TỪNG MODEL, không phải của process: selector của runner chỉ chọn nhóm model
+cần build. Khai báo phạm vi dữ liệu trong chính model qua
 macro ``incremental_input_scope`` — versioned cùng SQL sinh ra nó.
 
 ``soft_delete`` khai báo các bảng cần đồng bộ cờ active với nguồn sau khi
@@ -67,9 +67,7 @@ def parse_duration(value: str | float | timedelta) -> timedelta:
     amount, unit = match.groups()
     seconds = _UNITS.get(unit.lower())
     if seconds is None:
-        raise ValueError(
-            f"Đơn vị không hỗ trợ {unit!r}; dùng {sorted(set(_UNITS))}"
-        )
+        raise ValueError(f"Đơn vị không hỗ trợ {unit!r}; dùng {sorted(set(_UNITS))}")
     return timedelta(seconds=int(amount) * seconds)
 
 

@@ -5,6 +5,31 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from functools import lru_cache
+from pathlib import Path
+
+
+def _setting(name: str, default: str | None = None) -> str:
+    """Read a setting from ``NAME`` or the Docker-compatible ``NAME_FILE``.
+
+    File-backed secrets keep credentials out of ``docker inspect`` and process
+    definitions. ``NAME_FILE`` wins when both forms exist because
+    ``python-dotenv`` can populate ``NAME`` from a developer ``.env`` after the
+    deployment explicitly supplied a secret file.
+    """
+    value = os.getenv(name)
+    file_name = os.getenv(f"{name}_FILE")
+    if file_name is not None:
+        try:
+            value = Path(file_name).read_text(encoding="utf-8").rstrip("\r\n")
+        except OSError as error:
+            raise ValueError(f"Cannot read {name}_FILE: {file_name}") from error
+        if not value:
+            raise ValueError(f"{name}_FILE must not be empty")
+    if value is not None:
+        return value
+    if default is not None:
+        return default
+    raise ValueError(f"Set {name} or {name}_FILE")
 
 
 def _as_bool(value: str) -> bool:
@@ -100,7 +125,7 @@ def load_settings() -> Settings:
         minio=MinioSettings(
             endpoint=os.getenv("MINIO_ENDPOINT", "localhost:9000"),
             access_key=os.getenv("MINIO_ACCESS_KEY", "minioadmin"),
-            secret_key=os.getenv("MINIO_SECRET_KEY", "minioadmin"),
+            secret_key=_setting("MINIO_SECRET_KEY", "minioadmin"),
             bucket=os.getenv("MINIO_BUCKET", "vn-climate"),
             secure=_as_bool(os.getenv("MINIO_SECURE", "false")),
         ),
@@ -109,7 +134,7 @@ def load_settings() -> Settings:
             port=int(os.getenv("POSTGRES_PORT", "5432")),
             database=os.getenv("POSTGRES_DB", "vnclimate"),
             user=os.getenv("POSTGRES_USER", "vnclimate"),
-            password=os.getenv("POSTGRES_PASSWORD", "vnclimate"),
+            password=_setting("POSTGRES_PASSWORD", "vnclimate"),
         ),
         open_meteo=OpenMeteoSettings(
             forecast_url=os.getenv(

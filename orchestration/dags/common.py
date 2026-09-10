@@ -26,7 +26,7 @@ def on_failure_alert(context: dict[str, Any]) -> None:
     )
 
 
-# Thư mục gốc repo bên trong container (volume mount: .:/project)
+# Thư mục gốc repo được bake trong image runtime.
 PROJECT_DIR = os.getenv("PROJECT_DIR", "/project")
 
 # Airflow Pool 1 slot thay thế flock — tránh xung đột DuckLake và quota API
@@ -43,7 +43,8 @@ DEFAULT_ARGS = {
 }
 
 # Lệnh chạy Provero data quality gate (quét staging sau load)
-# DUCKLAKE_DSN và cấu hình DuckLake đã được inject qua container environment
+# Connector đọc PostgreSQL/MinIO secret từ *_FILE do Compose mount.
 PROVERO_CMD = "uv run provero run -c quality/provero.yaml --no-optimize --no-store"
-PROVERO_ARCHIVE_CMD = "uv run provero run -c quality/provero_archive.yaml --no-optimize --no-store"
-
+PROVERO_ARCHIVE_CMD = (
+    "uv run provero run -c quality/provero_archive.yaml --no-optimize --no-store"
+)

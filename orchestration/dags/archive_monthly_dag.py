@@ -3,7 +3,7 @@
 Đặc tính:
 - Cadence: Hàng tháng vào lúc 02:30 ngày mùng 1 hàng tháng (`30 2 1 * *`).
 - Cửa sổ đọc: Tự động lùi 2 tháng đến hiện tại để vét late-arriving data.
-- Idempotency: Planner tự động bỏ qua tháng đã đủ giờ trong Bronze.
+- Idempotency: Planner tự động bỏ qua tháng đã đủ giờ trong raw landing.
 - Flow trọn vẹn: Fetch -> Autoloader -> Quality -> Seed -> Transform Silver
   (change-aware merge) -> Transform Gold -> Quality Gold.
 - Khóa tài nguyên: Sử dụng pool `lakehouse_single_writer_pool` (1 slot).
@@ -32,7 +32,6 @@ with DAG(
     max_active_runs=1,
     tags=["archive", "monthly", "gold", "transform"],
 ) as dag:
-
     # 1. Fetch dữ liệu lịch sử theo ô lưới (lùi 2 tháng để vét late data)
     # Jinja template: ds là ngày execution_date dạng YYYY-MM-DD
     fetch_archive = BashOperator(
@@ -41,8 +40,8 @@ with DAG(
         cwd=PROJECT_DIR,
         bash_command=(
             "START=$(date -d '{{ data_interval_start.strftime(\"%Y-%m-01\") }} - 1 month' +%Y-%m-01) && "
-            "END={{ data_interval_end.strftime(\"%Y-%m-01\") }} && "
-            "echo \"Fetching archive window: $START to $END\" && "
+            'END={{ data_interval_end.strftime("%Y-%m-01") }} && '
+            'echo "Fetching archive window: $START to $END" && '
             "uv run fetch-open-meteo archive --start $START --end $END --execute"
         ),
     )

@@ -219,7 +219,9 @@ def month_params(month: date, model: ArchiveModel) -> tuple[str, dict[str, str]]
     }
 
 
-def slot_params(slot: datetime, settings: OpenMeteoSettings) -> tuple[str, dict[str, str]]:
+def slot_params(
+    slot: datetime, settings: OpenMeteoSettings
+) -> tuple[str, dict[str, str]]:
     prefix = f"{FORECAST_PREFIX}/{slot:%Y/%m/%d/%H}"
     return prefix, {
         "hourly": FORECAST_FIELDS,
@@ -300,7 +302,9 @@ def forecast_tasks(
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
-def _run_pool(tasks: Sequence[FetchTask], settings: OpenMeteoSettings, minio_cfg) -> int:
+def _run_pool(
+    tasks: Sequence[FetchTask], settings: OpenMeteoSettings, minio_cfg
+) -> int:
     client = get_minio_client(minio_cfg)
     ensure_bucket(client, minio_cfg.bucket)
     print(
@@ -376,11 +380,17 @@ def _cmd_archive(args, settings) -> int:
     by_model: dict[str, int] = {}
     for month in months:
         name = model_for_month(month).name
-        by_model[name] = by_model.get(name, 0) + (0 if month in covered.get(name, ()) else 1)
+        by_model[name] = by_model.get(name, 0) + (
+            0 if month in covered.get(name, ()) else 1
+        )
     print(f"Kế hoạch archive {args.start}→{args.end}: {len(months)} tháng")
     for model in ARCHIVE_MODELS:
-        done = len([m for m in months if model_for_month(m) is model]) - by_model.get(model.name, 0)
-        print(f"   {model.name:<10} còn {by_model.get(model.name, 0)} tháng (đã đủ {done})")
+        done = len([m for m in months if model_for_month(m) is model]) - by_model.get(
+            model.name, 0
+        )
+        print(
+            f"   {model.name:<10} còn {by_model.get(model.name, 0)} tháng (đã đủ {done})"
+        )
     print(f"   {len(tasks)} request / {sum(t.units for t in tasks):,} đơn vị")
     if not tasks:
         print("Không còn gì để land. Bước tiếp theo: make load")
@@ -432,7 +442,9 @@ def main() -> None:
 
     p_ar = sub.add_parser("archive", help="Land lịch sử theo khoảng tháng")
     p_ar.add_argument("--start", type=date.fromisoformat, default=date(2000, 1, 1))
-    p_ar.add_argument("--end", type=date.fromisoformat, default=datetime.now(UTC).date())
+    p_ar.add_argument(
+        "--end", type=date.fromisoformat, default=datetime.now(UTC).date()
+    )
 
     p_mg = sub.add_parser("map-grid", help="Probe ô lưới của model rồi ghi seed CSV")
     p_mg.add_argument("--models", nargs="*", help="Mặc định: mọi model archive")
