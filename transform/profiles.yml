@@ -17,7 +17,7 @@ transform:
         - type: s3
           name: minio_secret
           key_id: "{{ env_var('MINIO_ACCESS_KEY', 'minioadmin') }}"
-          secret: "{{ env_var('MINIO_SECRET_KEY', 'minioadmin') }}"
+          secret: "{{ env_var('MINIO_SECRET_KEY') }}"
           endpoint: "{{ env_var('MINIO_ENDPOINT', '127.0.0.1:9000') }}"
           use_ssl: "{{ env_var('MINIO_SECURE', 'false') | as_native }}"
           url_style: path
@@ -25,7 +25,7 @@ transform:
       attach:
         # MỘT catalog cho mọi bảng. DuckLake suy path là
         # <data_path>/<schema>/<table>, nên silver.stg_* nằm ở silver/stg_*/.
-        - path: "ducklake:postgres:dbname={{ env_var('POSTGRES_DB', 'vnclimate') }} host={{ env_var('POSTGRES_HOST', '127.0.0.1') }} port={{ env_var('POSTGRES_PORT', '5432') }} user={{ env_var('POSTGRES_USER', 'vnclimate') }} password={{ env_var('POSTGRES_PASSWORD', 'vnclimate') }}"
+        - path: "ducklake:postgres:dbname={{ env_var('POSTGRES_DB', 'vnclimate') }} host={{ env_var('POSTGRES_HOST', '127.0.0.1') }} port={{ env_var('POSTGRES_PORT', '5432') }} user={{ env_var('POSTGRES_USER', 'vnclimate') }} password={{ env_var('POSTGRES_PASSWORD') }}"
           alias: catalog1
           options:
             data_path: "s3://{{ env_var('MINIO_BUCKET', 'vn-climate') }}"

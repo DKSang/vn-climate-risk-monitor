@@ -16,15 +16,7 @@ class ProcessingStateError(RuntimeError):
 
 
 def connect_control_plane(dsn: str) -> psycopg.Connection[Any]:
-    """Open a direct connection to the PostgreSQL control plane.
-
-    Trùng chức năng với ``autoloader.connect_control_plane`` một cách CÓ CHỦ Ý:
-    ``processing`` phải dùng được ở dự án không có autoloader.
-
-    ``autocommit=True`` là BẮT BUỘC. Mọi method dưới đây tự quản transaction bằng
-    ``with connection.transaction()``; trong psycopg3 block đó chỉ COMMIT khi nó
-    là block ngoài cùng, nếu không thì tụt xuống SAVEPOINT và không commit gì.
-    """
+    """Kết nối control plane; mỗi repository method tự quản transaction."""
     return psycopg.connect(dsn, autocommit=True)
 
 
@@ -34,21 +26,12 @@ class ProcessingRepository:
     def __init__(self, connection: psycopg.Connection[Any]) -> None:
         self.connection = connection
 
-    # ── clock ────────────────────────────────────────────────────────────────
     def control_now(self) -> datetime:
-        """MỘT đồng hồ duy nhất cho cả platform.
-
-        ``_ingested_at`` của Bronze và ``run_started_at`` của process phải cùng
-        nguồn thời gian. Nếu Bronze lấy giờ máy worker còn process lấy giờ máy
-        orchestrator thì clock skew vài giây đủ để mất row, và bug đó không tái
-        hiện được. Postgres control plane là điểm quy chiếu chung duy nhất mà cả
-        hai đều đã kết nối tới.
-        """
+        """Lấy clock chuẩn từ control plane."""
         row = self.connection.execute("SELECT CURRENT_TIMESTAMP").fetchone()
         assert row is not None
         return row[0]
 
-    # ── checkpoint ───────────────────────────────────────────────────────────
     def read_checkpoints(
         self,
         *,
@@ -68,7 +51,30 @@ class ProcessingRepository:
         known = {source_ref: value for source_ref, value in rows}
         return {ref: known.get(ref) for ref in source_refs}
 
-    # ── run lifecycle ────────────────────────────────────────────────────────
+    def _upsert_checkpoints(
+        self,
+        *,
+        process_key: str,
+        scope: str,
+        source_refs: Sequence[str],
+        checkpoint: datetime,
+        run_id: UUID,
+    ) -> None:
+        for source_ref in source_refs:
+            self.connection.execute(
+                """
+                INSERT INTO processing.processing_state (
+                    process_key, source_ref, scope,
+                    last_successful_start_at, last_successful_run_id
+                ) VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (process_key, source_ref, scope) DO UPDATE SET
+                    last_successful_start_at = EXCLUDED.last_successful_start_at,
+                    last_successful_run_id = EXCLUDED.last_successful_run_id,
+                    updated_at_utc = CURRENT_TIMESTAMP
+                """,
+                (process_key, source_ref, scope, checkpoint, run_id),
+            )
+
     def begin_run(
         self,
         *,
@@ -99,9 +105,7 @@ class ProcessingRepository:
                         target_ref,
                         started_at,
                         Jsonb(dict(bounds)),
-                        # Candidate chốt ngay từ đầu: checkpoint mới PHẢI là start
-                        # time, không phải end time. Row đến trong lúc run chạy sẽ
-                        # được lần sau nhặt, thay vì bị nhảy qua.
+                        # Chốt theo start time để row đến giữa run được xử lý lần sau.
                         started_at,
                         actor,
                         reason,
@@ -125,12 +129,7 @@ class ProcessingRepository:
         completed_at: datetime,
         metrics: Mapping[str, int | None] | None = None,
     ) -> None:
-        """Advance checkpoint — CHỈ gọi sau khi transform + test đã thành công.
-
-        Run status và checkpoint đi cùng MỘT transaction: không có trạng thái
-        trung gian mà run là SUCCEEDED nhưng checkpoint chưa nhích, hoặc ngược
-        lại (checkpoint nhích mà không ai biết run nào đã nhích nó).
-        """
+        """Commit run thành công và checkpoint trong cùng transaction."""
         with self.connection.transaction():
             counts = dict(metrics or {})
             cursor = self.connection.execute(
@@ -158,20 +157,13 @@ class ProcessingRepository:
                 raise ProcessingStateError(
                     f"Run {run_id} không còn ở trạng thái RUNNING"
                 )
-            for source_ref in source_refs:
-                self.connection.execute(
-                    """
-                    INSERT INTO processing.processing_state (
-                        process_key, source_ref, scope,
-                        last_successful_start_at, last_successful_run_id
-                    ) VALUES (%s, %s, %s, %s, %s)
-                    ON CONFLICT (process_key, source_ref, scope) DO UPDATE SET
-                        last_successful_start_at = EXCLUDED.last_successful_start_at,
-                        last_successful_run_id = EXCLUDED.last_successful_run_id,
-                        updated_at_utc = CURRENT_TIMESTAMP
-                    """,
-                    (process_key, source_ref, scope, checkpoint, run_id),
-                )
+            self._upsert_checkpoints(
+                process_key=process_key,
+                scope=scope,
+                source_refs=source_refs,
+                checkpoint=checkpoint,
+                run_id=run_id,
+            )
 
     def fail_run(
         self,
@@ -180,8 +172,7 @@ class ProcessingRepository:
         error: BaseException,
         completed_at: datetime,
     ) -> None:
-        """Đánh dấu FAILED. KHÔNG chạm processing_state — đó là toàn bộ ý nghĩa
-        của failure recovery: lần sau đọc lại đúng cửa sổ vừa hỏng."""
+        """Đánh dấu FAILED, giữ nguyên checkpoint để retry đúng cửa sổ."""
         with self.connection.transaction():
             cursor = self.connection.execute(
                 """
@@ -229,7 +220,6 @@ class ProcessingRepository:
             )
         return cursor.rowcount
 
-    # ── rewind ───────────────────────────────────────────────────────────────
     def rewind(
         self,
         *,
@@ -242,13 +232,7 @@ class ProcessingRepository:
         reason: str,
         now: datetime,
     ) -> UUID:
-        """Kéo checkpoint lùi để reprocess — LUÔN qua đây, không UPDATE tay.
-
-        MERGE idempotent nên reprocess an toàn; thứ không an toàn là không ai
-        biết ai đã lùi checkpoint và vì sao. Mỗi lần rewind ghi một row REWIND
-        vào processing_runs, nên lịch sử checkpoint đọc được cùng một chỗ với
-        lịch sử run.
-        """
+        """Kéo checkpoint lùi và ghi audit REWIND."""
         if not reason.strip():
             raise ValueError("rewind cần reason để audit")
         run_id = uuid4()
@@ -295,23 +279,15 @@ class ProcessingRepository:
                     reason,
                 ),
             )
-            for source_ref in source_refs:
-                self.connection.execute(
-                    """
-                    INSERT INTO processing.processing_state (
-                        process_key, source_ref, scope,
-                        last_successful_start_at, last_successful_run_id
-                    ) VALUES (%s, %s, %s, %s, %s)
-                    ON CONFLICT (process_key, source_ref, scope) DO UPDATE SET
-                        last_successful_start_at = EXCLUDED.last_successful_start_at,
-                        last_successful_run_id = EXCLUDED.last_successful_run_id,
-                        updated_at_utc = CURRENT_TIMESTAMP
-                    """,
-                    (process_key, source_ref, scope, checkpoint, run_id),
-                )
+            self._upsert_checkpoints(
+                process_key=process_key,
+                scope=scope,
+                source_refs=source_refs,
+                checkpoint=checkpoint,
+                run_id=run_id,
+            )
         return run_id
 
-    # ── đọc cho vận hành ─────────────────────────────────────────────────────
     def recent_runs(
         self, *, process_key: str, scope: str, limit: int = 5
     ) -> list[tuple[Any, ...]]:

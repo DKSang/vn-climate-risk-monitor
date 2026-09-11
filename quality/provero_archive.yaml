@@ -1,9 +1,5 @@
-# Kiểm tra chất lượng Silver staging archive — chạy NGAY SAU
-# `make load`, chỗ dbt không với tới (autoloader ghi staging ngoài đồ thị dbt).
-#
-# type: ducklake -> connector riêng trong autoloader/provero_ducklake.py, ATTACH
-# catalog trước khi query. KHÔNG glob Parquet: glob đọc cả dòng đã xoá và file
-# của snapshot cũ.
+# Validate the DuckLake archive staging table after autoload.
+# Query the catalog so snapshot deletes are respected.
 
 source:
   type: ducklake

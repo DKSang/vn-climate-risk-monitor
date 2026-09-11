@@ -1,19 +1,5 @@
 #!/usr/bin/env python3
-"""
-Bootstrap the DuckLake lakehouse.
-
-Idempotent — safe to re-run:
-  1. Creates MinIO bucket (skip if exists)
-  2. Installs/loads DuckLake extension in DuckDB
-  3. Attaches the DuckLake catalog
-  4. Creates ``catalog1.silver`` and ``catalog1.gold``
-  5. Creates the native PostgreSQL ingestion control plane
-
-Usage:
-    uv run python scripts/bootstrap.py
-    # or
-    make bootstrap
-"""
+"""Bootstrap the DuckLake catalog, schemas, and control-plane tables."""
 
 from __future__ import annotations
 
@@ -73,13 +59,11 @@ def step_2_setup_ducklake_catalog() -> None:
 
     con = duckdb.connect()
 
-    # Install and load ducklake extension
     print("  → Installing ducklake extension...")
     con.execute("INSTALL ducklake;")
     con.execute("LOAD ducklake;")
     print("  ✓ ducklake extension ready")
 
-    # Create S3 secret for MinIO
     print("  → Creating MinIO secret...")
     con.execute(f"""
         CREATE SECRET minio_secret (
@@ -93,8 +77,7 @@ def step_2_setup_ducklake_catalog() -> None:
     """)
     print("  ✓ MinIO secret created")
 
-    # MỘT catalog. DuckLake suy path là data_path/schema/table, nên
-    # silver.stg_* nằm ở s3://<bucket>/silver/stg_*/ mà không cần catalog thứ hai.
+    # DuckLake maps schema/table under the configured DATA_PATH.
     print("  → Attaching DuckLake catalog (Postgres + MinIO)...")
     pg_conn = SETTINGS.postgres.ducklake_connection_string
     con.execute(
@@ -106,30 +89,21 @@ def step_2_setup_ducklake_catalog() -> None:
 
     con.execute(f"USE {PRIMARY_CATALOG};")
 
-    # `silver` chứa cả staging (stg_*, autoloader ghi) lẫn curated (dbt ghi).
-    # Bronze không có schema: nó chỉ là landing zone raw file trên MinIO.
+    # Bronze is raw object storage; Silver and Gold live in DuckLake.
     print("  → Creating medallion schemas...")
     for schema in ("silver", "gold"):
-        try:
-            con.execute(f"CREATE SCHEMA IF NOT EXISTS {schema};")
-            print(f"    ✓ Schema '{schema}' ready")
-        except duckdb.CatalogException:
-            # Schema already exists
-            print(f"    ✓ Schema '{schema}' already exists")
+        con.execute(f"CREATE SCHEMA IF NOT EXISTS {schema};")
+        print(f"    ✓ Schema '{schema}' ready")
 
     con.close()
 
 
 def step_3_setup_control_plane() -> None:
-    """Create ingestion + processing state as native PostgreSQL tables.
-
-    Hai control plane TÁCH BIỆT: `ingestion` trả lời "file đã vào Bronze chưa",
-    `processing` trả lời "process đã xử lý tới mốc nào". Trộn chúng là cách chắc
-    chắn nhất để một trong hai câu trả lời sai.
-    """
+    """Create ingestion and processing state tables in PostgreSQL."""
     print("\n── Step 3: Setup ingestion + processing control plane ──")
     connection = connect_control_plane(SETTINGS.postgres.ducklake_connection_string)
     try:
+        connection.execute("CREATE SCHEMA IF NOT EXISTS airflow")
         ensure_ingestion_state(connection)
         ensure_processing_state(connection)
     finally:
@@ -169,8 +143,7 @@ def step_4_verify() -> None:
         for schema, table in rows
         if schema in {"ingestion", "processing"}
     }
-    # `gold_watermarks` CỐ Ý không nằm trong danh sách bắt buộc: nó deprecated,
-    # chỉ còn để migrate đọc, và sẽ biến mất mà bootstrap không được gãy theo.
+    # gold_watermarks is legacy-only and must not be required by bootstrap.
     required = {
         ("ingestion", "ingestion_runs"),
         ("ingestion", "ingestion_files"),
@@ -189,7 +162,6 @@ def main() -> None:
     print("  Postgres (catalog) + MinIO (storage) + DuckDB (compute)")
     print("=" * 60)
 
-    # Wait for services
     print("\n── Step 0: Waiting for services ──")
     minio_host, minio_port = SETTINGS.minio.endpoint.split(":")
     _wait_for_service(SETTINGS.postgres.host, SETTINGS.postgres.port, "PostgreSQL")
@@ -204,8 +176,9 @@ def main() -> None:
     print("  ✅ Lakehouse bootstrap complete!")
     print()
     print("  Next steps:")
-    print("    make transform   # build dbt models (silver + gold)")
-    print("    make quality     # Provero quét silver staging")
+    print("    docker compose exec -T airflow uv run python scripts/run_processing.py run silver_weather")
+    print("    docker compose exec -T airflow uv run python scripts/run_processing.py run rain_gold")
+    print("    docker compose exec -T airflow uv run provero run -c quality/provero.yaml --no-optimize --no-store")
     print("=" * 60)
 
 

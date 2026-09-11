@@ -1,4 +1,4 @@
-# Bước 8: Make it Accessible (Serving & Dashboard)
+# Bước 8: Serving & Dashboard
 
 **Hanoi Flood & Climate Risk Monitor** · v2.1 · 2026-09-08
 
@@ -89,9 +89,10 @@ Tài liệu này hướng dẫn kiến trúc lớp phục vụ (Serving Layer) v
 
 File GeoJSON được đồng bộ và chuẩn hóa bằng script:
 ```bash
-make fetch-geojson
-# hoặc: uv run python scripts/fetch_hanoi_geojson.py
+uv run python scripts/fetch_hanoi_geojson.py
 ```
+- Đây là thao tác phát triển trên host vì script cập nhật file versioned trong
+  repo; cần Python/`uv`.
 - Script tải đúng bộ S13 từ `vietnamese-provinces-database` tại commit đã ghim,
   sau đó kiểm tra tập mã với `commune_code` trong
   [transform/seeds/ward_coordinates_seed.csv](../transform/seeds/ward_coordinates_seed.csv).
@@ -102,27 +103,25 @@ make fetch-geojson
 
 ## 5. Hướng dẫn chạy và Vận hành
 
-### 5.1 Chạy trực tiếp trên máy chủ / Local
+### 5.1 Chạy qua Docker Compose
+Dashboard là một phần của stack mặc định:
 ```bash
-# Chạy Dashboard Streamlit (mở trình duyệt tại http://localhost:8501)
-make serve-dashboard
+docker compose up -d --build
 
-# Chạy Operational Health API song song (http://localhost:8000/ops)
-make serve-api
-```
-
-### 5.2 Chạy qua Docker Compose
-Service `dashboard` đã được tích hợp sẵn vào `docker-compose.yml`:
-```bash
-# Khởi động toàn bộ stack gồm DB, MinIO, Airflow và Dashboard
-docker compose up -d dashboard
-
-# Xem log hoạt động của dashboard
 docker compose logs -f dashboard
 ```
 
 Compose build image bất biến từ `uv.lock`; container không bind-mount
 source và không cài dependency lại khi khởi động.
+
+### 5.2 Chạy trên host khi phát triển
+
+```bash
+uv run streamlit run serving/dashboard/app.py --server.port 8501 --server.address 0.0.0.0
+uv run uvicorn serving.api.app.main:app --host 0.0.0.0 --port 8000
+```
+
+Các lệnh này cần Python/`uv` và cấu hình kết nối runtime trên host.
 
 ---
 
@@ -136,4 +135,4 @@ source và không cài dependency lại khi khởi động.
   không có snapshot thay vì tự ý đọc phiên bản mới nhất chưa qua quality gate.
 - **DuckDB-first**: KPI và metadata dùng `fetchone()`/`fetchall()` trực tiếp.
   DataFrame chỉ được tạo ở ranh giới render cho Streamlit, Altair và PyDeck.
-- **Lightweight Dependencies**: Dashboard sử dụng `pydeck` (deck.gl) và `altair` tương thích hoàn toàn với Python 3.13, hoạt động mượt mà trong môi trường container `uv:python3.13-bookworm-slim`.
+- **Render**: Dashboard dùng PyDeck cho bản đồ và Altair cho biểu đồ.

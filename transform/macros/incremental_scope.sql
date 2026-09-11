@@ -1,54 +1,11 @@
-{#
-    Cửa sổ đọc/ghi cho model incremental, sinh từ checkpoint của processing
-    framework (`scripts/run_processing.py`).
-
-    ── VÌ SAO CẦN MACRO ────────────────────────────────────────────────────────
-    Model rolling window từng viết tay `INTERVAL '<n> hours'` ở BA chỗ. Đó không
-    phải trùng lặp thẩm mỹ: nếu ba chỗ lệch nhau thì cửa sổ tính trên dữ liệu
-    thiếu và ra số SAI mà mọi test not_null/unique vẫn PASS.
-
-    ── VÌ SAO HAI MACRO, KHÔNG PHẢI MỘT ────────────────────────────────────────
-    Input scope và output scope KHÔNG đối xứng.
-
-    Một row mới ở giờ T làm sai mọi rolling window phủ T, tức các row đầu ra
-    trong [T, T+71h]. Để TÍNH được các row đó thì phải ĐỌC từ T−71h:
-
-                  đọc                          ghi
-        ├───────────────────────────┤  ├──────────────────┤
-      MIN−71h                     MIN                  MAX+71h
-                                   └── row mới ──┘
-
-        input  : [MIN(changed) − backward, MAX(changed) + forward]
-        output : [MIN(changed)           , MAX(changed) + forward]
-
-    Nới output xuống MIN−71h sẽ ghi đè những row hoàn toàn không bị ảnh hưởng.
-
-    ── VÌ SAO LOOKBACK KHAI BÁO Ở MODEL, KHÔNG Ở YAML ─────────────────────────
-    Một process build nhiều model có window khác nhau. Độ
-    rộng window là thuộc tính của SQL sinh ra nó, nên phải version cùng file đó.
-    Framework chỉ cấp chặn dưới qua var `processing_bounds`.
-
-    ── KHÔNG CÓ UPPER BOUND ────────────────────────────────────────────────────
-    Chặn trên theo run_start nghe có vẻ cho batch deterministic nhưng lại làm
-    mất data: `_ingested_at` là transaction START time, row chỉ visible lúc
-    COMMIT. Xem `safety_lag` trong `processing/*.yml`.
-#}
+{# Incremental read/write scope derived from processing checkpoints. #}
 
 {% macro processing_lower_bound(source_ref) %}
     {{- var('processing_bounds', {}).get(source_ref) -}}
 {% endmacro %}
 
 
-{#
-    Bộ lọc incremental TỐI GIẢN: chỉ `change_column > lower_bound`.
-
-    Dùng cho hop không có cửa sổ trượt — ví dụ staging → curated, nơi mỗi dòng
-    đầu ra chỉ phụ thuộc chính dòng đầu vào của nó. Không cần nới scope theo
-    `dimension` như `incremental_input_scope`, và cũng không nên: nới scope ở đây
-    chỉ làm đọc thừa.
-
-    `prefix` cho phép nối vào một WHERE đã có ('AND') thay vì mở WHERE mới.
-#}
+{# Cho hop 1:1 không cần mở rộng window. #}
 {% macro incremental_changed_filter(
     source_ref, change_column='_ingested_at', prefix='WHERE'
 ) %}
@@ -65,12 +22,7 @@ SELECT * FROM {{ relation }} WHERE {{ change_column }} > TIMESTAMPTZ '{{ lower }
 {%- endmacro -%}
 
 
-{#
-    Rows cần ĐỌC để tính lại đúng. Trả chuỗi rỗng khi full refresh.
-
-    `keys` thu hẹp thêm theo business key đã đổi — với dataset rộng thì đây là
-    thứ quyết định incremental có tiết kiệm scan thật hay không.
-#}
+{# Rows cần đọc để tính lại output bị ảnh hưởng. #}
 {% macro incremental_input_scope(
     relation,
     source_ref,
@@ -100,11 +52,7 @@ WHERE {{ dimension }} >= (
 {% endmacro %}
 
 
-{#
-    Rows thực sự BỊ ẢNH HƯỞNG, tức phần được MERGE vào bảng đích.
-    Mặc định chặn dưới KHÔNG nới lùi. Forecast forward window có thể truyền
-    `expand_backward` để cập nhật các row trước MIN(changed) bị tác động.
-#}
+{# Chỉ emit output rows bị ảnh hưởng. #}
 {% macro incremental_output_scope(
     relation,
     source_ref,
@@ -129,18 +77,7 @@ WHERE {{ dimension }} >= (
 {% endmacro %}
 
 
-{#
-    Dấu thời gian cho `_updated_at` của lớp mutable.
-
-    Bình thường lấy `run_started_at` mà `scripts/run_processing.py` bơm xuống —
-    cùng đồng hồ Postgres với `_ingested_at`, và sớm hơn lúc ghi thật nên
-    watermark downstream không nhảy qua dòng vừa ghi.
-
-    Chạy dbt TAY (không qua framework) thì không có var đó và ta rơi về
-    CURRENT_TIMESTAMP của DuckDB. Chấp nhận được vì lần chạy tay KHÔNG advance
-    checkpoint, và `safety_lag` 15 phút hấp thụ lệch đồng hồ ở mức máy đơn.
-    Nhưng đó là đường phụ: pipeline production luôn đi qua `make transform`.
-#}
+{# Production dùng control-plane run start; dbt chạy tay fallback local clock. #}
 {% macro processing_updated_at() %}
 {%- set run_started_at = var('processing_run_started_at', '') -%}
 {%- if run_started_at -%}

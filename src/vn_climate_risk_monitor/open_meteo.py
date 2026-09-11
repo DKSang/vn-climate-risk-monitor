@@ -98,7 +98,9 @@ def load_locations(connection: duckdb.DuckDBPyConnection) -> tuple[Location, ...
         "SELECT ward_code, ward_latitude, ward_longitude FROM gold.dim_ward ORDER BY ward_code"
     ).fetchall()
     if not rows:
-        raise RuntimeError("gold.dim_ward rỗng — chạy `make transform` trước")
+        raise RuntimeError(
+            "gold.dim_ward rỗng — chạy dbt seed và build geography trước"
+        )
     return tuple(Location(str(c), float(lat), float(lon)) for c, lat, lon in rows)
 
 
@@ -301,7 +303,6 @@ def forecast_tasks(
     return tasks
 
 
-# ── CLI ───────────────────────────────────────────────────────────────────────
 def _run_pool(
     tasks: Sequence[FetchTask], settings: OpenMeteoSettings, minio_cfg
 ) -> int:
@@ -326,13 +327,13 @@ def _run_pool(
     if not result.ok:
         print("   Không mất dữ liệu: chạy lại, các file đã land sẽ tự bị bỏ qua.")
         return 2
-    print("Bước tiếp theo: make load")
+    print("Bước tiếp theo: uv run load-sources")
     return 0
 
 
 def _cmd_map_grid(args, settings) -> int:
     """Probe API để chốt ô lưới của từng model rồi ghi seed CSV."""
-    connection = get_connection(attach_bronze=False, read_only=True)
+    connection = get_connection(read_only=True)
     try:
         wards = load_locations(connection)
     finally:
@@ -353,7 +354,9 @@ def _cmd_map_grid(args, settings) -> int:
         print(f"   {name}: {len(rows)} phường → {len(cells)} ô lưới")
         mapped.extend(rows)
     grid.write_seed(mapped)
-    print(f"Đã ghi {grid.SEED_PATH}. Bước tiếp theo: make seed && make fetch-archive")
+    print(
+        f"Đã ghi {grid.SEED_PATH}. Bước tiếp theo: dbt seed rồi fetch archive"
+    )
     return 0
 
 
@@ -393,7 +396,7 @@ def _cmd_archive(args, settings) -> int:
         )
     print(f"   {len(tasks)} request / {sum(t.units for t in tasks):,} đơn vị")
     if not tasks:
-        print("Không còn gì để land. Bước tiếp theo: make load")
+        print("Không còn gì để land. Bước tiếp theo: uv run load-sources")
         return 0
     if not args.execute:
         print("DRY RUN — thêm --execute để chạy thật")
@@ -425,7 +428,7 @@ def _cmd_forecast(args, settings) -> int:
         f"{len(tasks)} request / {sum(t.units for t in tasks):,} đơn vị"
     )
     if not tasks:
-        print("Không còn gì để land. Bước tiếp theo: make load")
+        print("Không còn gì để land. Bước tiếp theo: uv run load-sources")
         return 0
     if not args.execute:
         print("DRY RUN — thêm --execute để chạy thật")

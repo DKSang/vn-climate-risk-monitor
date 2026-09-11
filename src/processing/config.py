@@ -1,28 +1,4 @@
-"""Khai báo một incremental process bằng YAML.
-
-Ví dụ ``processing/forecast_gold.yml``::
-
-    process_key: forecast_gold
-    target: gold.fct_rain_forecast_hourly
-
-    sources:
-      - ref: int_weather_forecast_hourly
-        change_column: _updated_at
-
-    checkpoint:
-      safety_lag: 15 minutes
-
-    runner:
-      select: "bridge_ward_grid fct_rain_forecast_hourly fct_rain_forecast_current_hourly fct_rain_pressure_alert"
-
-CỐ Ý không có ``recompute_scope`` ở đây. Độ rộng cửa sổ (lookback) là thuộc tính
-của TỪNG MODEL, không phải của process: selector của runner chỉ chọn nhóm model
-cần build. Khai báo phạm vi dữ liệu trong chính model qua
-macro ``incremental_input_scope`` — versioned cùng SQL sinh ra nó.
-
-``soft_delete`` khai báo các bảng cần đồng bộ cờ active với nguồn sau khi
-transform xong — xem :mod:`processing.softdelete`.
-"""
+"""Load cấu hình incremental processing từ YAML."""
 
 from __future__ import annotations
 
@@ -49,9 +25,7 @@ _UNITS = {
 
 _DURATION = re.compile(r"^\s*(\d+)\s*([a-z]+)\s*$", re.IGNORECASE)
 
-# Khoảng cách tối đa giữa lúc `_ingested_at` được đóng dấu và lúc row thật sự
-# visible. Autoloader đo 0,4s cho lô 50 file archive; 15 phút là biên rộng gấp
-# nghìn lần mà chi phí chỉ là rescan 15 phút Bronze mỗi lần chạy.
+# Bù khoảng trễ giữa ingest timestamp và lúc row visible.
 DEFAULT_SAFETY_LAG = timedelta(minutes=15)
 
 
@@ -73,13 +47,7 @@ def parse_duration(value: str | float | timedelta) -> timedelta:
 
 @dataclass(frozen=True)
 class SourceBinding:
-    """Một input của process, kèm cột timestamp do PLATFORM sinh.
-
-    ``change_column`` phải là timestamp kỹ thuật của layer nguồn
-    (``_ingested_at``), KHÔNG BAO GIỜ là business timestamp của hệ nguồn:
-    cái sau có thể null, backdated, sai timezone, và không nằm dưới quyền kiểm
-    soát của pipeline.
-    """
+    """Input của process và cột timestamp dùng để checkpoint."""
 
     ref: str
     change_column: str = "_ingested_at"
@@ -115,8 +83,7 @@ class ProcessConfig:
     scope: str = "production"
     checkpoint: CheckpointConfig = field(default_factory=CheckpointConfig)
     runner: RunnerConfig = field(default_factory=RunnerConfig)
-    # Chạy SAU khi transform thành công, TRƯỚC khi advance checkpoint: soft
-    # delete lỗi thì run FAILED và checkpoint không nhích.
+    # Soft delete chạy trước khi advance checkpoint.
     soft_delete: tuple[SoftDeleteConfig, ...] = ()
 
     def __post_init__(self) -> None:

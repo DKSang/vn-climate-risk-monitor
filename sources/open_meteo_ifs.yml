@@ -9,7 +9,7 @@ parameters:
   weather_model: ecmwf_ifs
 
 transform:
-  # Dùng CHUNG contract với open_meteo_archive — cùng bộ cột, chỉ khác model.
+  # Shared payload contract; weather_model identifies the source model.
   sql_file: open_meteo_archive_hourly.sql
   target: catalog1.silver.stg_weather_archive_hourly
 

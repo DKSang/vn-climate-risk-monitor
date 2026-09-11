@@ -124,7 +124,8 @@ def read_seed(path: str | Path = SEED_PATH) -> tuple[WardGrid, ...]:
     csv_path = Path(path)
     if not csv_path.is_file():
         raise FileNotFoundError(
-            f"Chưa có bản đồ ô lưới: {csv_path}. Chạy `make map-grid` trước."
+            f"Chưa có bản đồ ô lưới: {csv_path}. "
+            "Chạy `uv run fetch-open-meteo map-grid --execute` trước."
         )
     with csv_path.open(encoding="utf-8", newline="") as stream:
         return tuple(
@@ -181,6 +182,7 @@ def cells_for(model: str, path: str | Path = SEED_PATH) -> tuple[GridCell, ...]:
     }
     if not seen:
         raise RuntimeError(
-            f"Bản đồ ô lưới chưa có model {model!r}. Chạy `make map-grid MODEL={model}`."
+            f"Bản đồ ô lưới chưa có model {model!r}. Chạy "
+            f"`uv run fetch-open-meteo map-grid --models {model} --execute`."
         )
     return tuple(sorted(seen, key=lambda c: (c.latitude, c.longitude)))

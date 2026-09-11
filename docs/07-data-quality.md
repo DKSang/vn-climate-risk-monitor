@@ -54,7 +54,8 @@ Kiểm tra chất lượng được đặt làm các **cổng chặn (hard gates
                └────────────────────────────────────────────────────────┘
 ```
 
-Mọi gate đều trả **exit code non-zero** khi phát hiện vi phạm. Trong Airflow DAG hoặc Makefile, bước tiếp theo sẽ bị **chặn hoàn toàn**, ngăn chặn dữ liệu bẩn lan truyền lên các tầng phục vụ.
+Mọi gate đều trả **exit code non-zero** khi phát hiện vi phạm. Trong Airflow DAG
+hoặc CI, bước tiếp theo sẽ bị chặn, không cho dữ liệu lỗi đi tiếp lên serving.
 
 ---
 
@@ -90,8 +91,8 @@ Provero được cấu hình với connector riêng `autoloader.provero_ducklake
 ```bash
 # --no-store: BẮT BUỘC. Tránh bug datetime serialization trong Provero v0.2.1 khi range check fail.
 # --no-optimize: chạy từng check tuần tự để bảo toàn trace lỗi.
-uv run provero run -c quality/provero.yaml --no-optimize --no-store
-uv run provero run -c quality/provero_archive.yaml --no-optimize --no-store
+docker compose exec -T airflow uv run provero run -c quality/provero.yaml --no-optimize --no-store
+docker compose exec -T airflow uv run provero run -c quality/provero_archive.yaml --no-optimize --no-store
 ```
 
 ---
@@ -142,8 +143,8 @@ Khai báo tại [transform/models/sources.yml](../transform/models/sources.yml) 
 
 Chạy kiểm tra:
 ```bash
-make freshness
-# Tương đương: cd transform && uv run dbt source freshness --profiles-dir .
+docker compose exec -T airflow uv run python scripts/run_dbt.py source freshness \
+  --project-dir transform --profiles-dir transform
 ```
 
 ---
@@ -176,7 +177,14 @@ bật khi CLI có `--require-gold`. Chúng ngăn serving âm thầm rơi về ca
 nếu checkpoint publication bị thiếu hoặc snapshot đã bị expire quá sớm.
 
 ### 4.2 Định dạng kết quả JSON
-Lệnh `make health` (hoặc `scripts/healthcheck.py --output logs/health.json`) sinh file audit:
+Health collector chạy trong runtime container:
+
+```bash
+docker compose exec -T airflow uv run python scripts/healthcheck.py \
+  --scope all --require-gold --output logs/health.json
+```
+
+File audit có dạng:
 ```json
 {
   "status": "HEALTHY",
@@ -186,7 +194,7 @@ Lệnh `make health` (hoặc `scripts/healthcheck.py --output logs/health.json`)
     {
       "name": "host.free_disk",
       "status": "PASS",
-      "message": "Còn 42.15 GiB tại /home/dksan/vn-climate-risk-monitor",
+      "message": "Còn 42.15 GiB tại /project",
       "metrics": { "free_gib": 42.15, "minimum_gib": 5.0 }
     }
   ]
@@ -216,9 +224,9 @@ Trong [orchestration/dags/common.py](../orchestration/dags/common.py), callback 
 ## 6. Sổ tay vận hành (Runbook)
 
 ### 6.1 Khi Provero báo FAIL
-- **Hiện tượng**: `make quality-forecast` hoặc `make quality-archive` trả mã lỗi 1.
+- **Hiện tượng**: task quality trong Airflow hoặc lệnh Provero runtime trả mã lỗi 1.
 - **Nguyên nhân phổ biến**:
-  - `freshness` fail: fetch cron bị chết, không có file mới nạp trong 24h.
+  - `freshness` fail: DAG fetch không chạy hoặc không có file mới trong ngưỡng.
   - `range` fail: API Open-Meteo trả giá trị bất thường (ví dụ < 0 hoặc > 500mm).
 - **Cách xử lý**:
   1. Kiểm tra log autoloader: `docker compose logs airflow` hoặc xem `logs/health.json`.
@@ -227,12 +235,13 @@ Trong [orchestration/dags/common.py](../orchestration/dags/common.py), callback 
      SELECT * FROM ingestion.ingestion_files WHERE status = 'FAILED';
      ```
   3. Re-run riêng lẻ để kiểm tra:
-     ```bash
-     make quality-forecast
-     ```
+      ```bash
+      docker compose exec -T airflow uv run provero run \
+        -c quality/provero.yaml --no-optimize --no-store
+      ```
 
 ### 6.2 Khi dbt tests báo FAIL
-- **Hiện tượng**: `make dbt-test` fail hoặc bước `transform` dừng lại.
+- **Hiện tượng**: dbt test fail hoặc task transform dừng lại.
 - **Nguyên nhân**:
   - Grain trùng: lỗi ở logic dedup tại `int_weather_*`.
   - Monotonic fail: lỗi tính toán cửa sổ trượt trong macro `rolling_rain_sums`.
@@ -240,16 +249,20 @@ Trong [orchestration/dags/common.py](../orchestration/dags/common.py), callback 
 - **Cách xử lý**:
   1. Đọc query fail trong `transform/target/run_results.json` hoặc `transform/logs/dbt.log`.
   2. Chạy thử singular test cụ thể bằng:
-     ```bash
-     cd transform && uv run dbt test --select assert_weather_archive_hourly_grain
-     ```
+      ```bash
+      docker compose exec -T airflow uv run python scripts/run_dbt.py test \
+        --project-dir transform --profiles-dir transform \
+        --select assert_weather_archive_hourly_grain
+      ```
 
 ### 6.3 Khi healthcheck báo DEGRADED hoặc UNHEALTHY
 - **`host.free_disk` FAIL**: Dừng writer, kiểm tra volume và chạy maintenance
-  thường kỳ trước. `make clean-lake` chỉ là biện pháp emergency vì xóa toàn bộ
-  time travel.
-- **`ingestion.backlog` WARN**: Autoloader chưa kịp xử lý lượng file landing lớn; chạy `make load` thủ công để tiêu thụ backlog.
-- **`archive.monthly_coverage` FAIL**: Có tháng bị thiếu giờ; kiểm tra lại tham số START/END và chạy `make fetch-archive START=... END=... EXEC=1`.
+  thường kỳ trước. `clean_lake.py` chỉ dùng emergency vì xóa toàn bộ time travel.
+- **`ingestion.backlog` WARN**: Autoloader chưa kịp xử lý file landing; chạy
+  `docker compose exec -T airflow uv run load-sources` để tiêu thụ backlog.
+- **`archive.monthly_coverage` FAIL**: Có tháng thiếu giờ; re-fetch đúng khoảng
+  bằng `fetch-open-meteo archive --start ... --end ... --execute` trong Airflow
+  container.
 
 ---
 

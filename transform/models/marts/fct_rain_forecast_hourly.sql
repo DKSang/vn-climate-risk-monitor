@@ -1,10 +1,4 @@
-/*
-    MART HISTORY — mưa dự báo theo vintage × ô lưới × giờ.
-    `rain_*h_mm` là trailing context; `forecast_next_*h_mm` là lượng mưa
-    forecast strictly sau valid time hiện tại (t+1h … t+Hh) để phục vụ pressure
-    alert. Row tại valid time đã thuộc giờ vừa kết thúc.
-    Rolling partition theo forecast_run_id để không trộn hai vintage.
-*/
+/* Forecast rain history by vintage × grid × hour. */
 
 {{ config(
     materialized = 'incremental',

@@ -10,6 +10,5 @@ checkpoint:
   safety_lag: 15 minutes
 
 runner:
-  # Chỉ publish các marts thuộc forecast serving contract; không kéo theo
-  # downstream nghiên cứu vào hourly pipeline.
-  select: "bridge_ward_grid fct_rain_forecast_hourly fct_rain_forecast_current_hourly fct_rain_pressure_alert"
+  # Only publish marts in the forecast serving contract.
+  select: "dim_grid bridge_ward_grid fct_rain_forecast_hourly fct_rain_forecast_current_hourly fct_rain_pressure_alert"

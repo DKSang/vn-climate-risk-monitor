@@ -6,7 +6,8 @@
         "~/.agents/skills": true,
         "~/.copilot/skills": true,
         "~/.claude/skills": true,
-        "~/.vscode-server/extensions/synapsevscode.synapse-1.25.0/copilot/skills": true
+        "~/.vscode-server/extensions/synapsevscode.synapse-1.25.0/copilot/skills": true,
+        "~/.vscode/extensions/synapsevscode.synapse-1.26.0/copilot/skills": true
     },
     "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
     "dbt.dbtPythonPathOverride": "${workspaceFolder}/.venv/bin/python"

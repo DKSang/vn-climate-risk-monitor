@@ -1,6 +1,7 @@
 # Runbook — Ingestion
 
-**Cập nhật 2026-09-10** — `fetch.land` (HTTP→MinIO); `autoloader` (file→bảng); cấu hình nguồn ở `sources/`.
+`fetch.land` xử lý HTTP→MinIO; `autoloader` nạp file→bảng; cấu hình nguồn nằm ở
+`sources/`.
 
 ---
 
@@ -27,13 +28,10 @@
 | trước 2017 | `era5` (0,25°) | 12 | `open_meteo_archive` | `catalog1.silver.stg_weather_archive_hourly` |
 | từ 2017-01 | `ecmwf_ifs` (~9km) | 48 | `open_meteo_ifs` | `catalog1.silver.stg_weather_archive_hourly` |
 
-**Giữ cả hai.** IFS không có dữ liệu trước 2017 (probe 2026-08-28: 2016 mọi quý NULL) — bỏ ERA5 là mất 17 năm baseline. Fetch theo ô: 126 phường chỉ rơi vào 12 ô ERA5 và **mọi bản sao trong cùng ô giống hệt nhau** (0 cặp (ô, giờ) nào lệch), nên fetch theo phường tiêu quota gấp ~10 lần mà không thêm thông tin. Chiếu ngược về phường qua `bridge_ward_grid` (ở marts/Gold).
-
-`ecmwf_ifs` cho tín hiệu khác nhau THẬT giữa các phường: cùng ngày mưa, ba phường mà ERA5 gộp thành một chuỗi 9,3mm thì IFS trả 105,0 / 137,9 / 116,2 mm. Khoảng cách phường→tâm ô giảm từ 18,9km (era5) xuống 5,5km.
-
-**Không dùng** `era5_land` (không có biến mưa nào — đã probe) và `era5_seamless` (toạ độ mịn 0,1° nhưng giá trị mưa vẫn là ERA5 0,25° dán lại, làm trùng lặp bị GIẤU thay vì lộ ra và hỏng dedup theo ô).
-
-`ecmwf_ifs` là chuỗi phân tích nghiệp vụ, **không phải reanalysis** — đồng nhất theo thời gian kém hơn era5. Đừng so trực tiếp trung bình trước/sau mốc 2017.
+Giữ ERA5 cho lịch sử trước 2017 và dùng `ecmwf_ifs` từ 2017. Archive fetch theo
+ô lưới rồi chiếu về phường qua `bridge_ward_grid`; không fetch lặp theo 126
+phường. `ecmwf_ifs` không phải reanalysis, nên không so trực tiếp baseline hai
+phía mốc chuyển model.
 
 Forecast vẫn fetch **theo phường**, cố ý: lưới `best_match` mịn hơn (48 ô/126 phường) và mesh của nó đổi khi Open-Meteo chuyển model nền, nên danh sách ô cache cứng sẽ mục.
 
@@ -46,52 +44,53 @@ ghi dở rồi tiến trình chết vẫn được nhặt ở lần chạy sau.
 
 ## Bootstrap dữ liệu địa lý
 
-Sau `make up && make bootstrap` chạy:
+`docker compose up -d --build` đã seed và build geography trong bước bootstrap.
+Khi seed tĩnh đổi, chạy lại phần geography trong runtime container:
 
 ```bash
-make bootstrap-geography
+docker compose exec -T airflow uv run python scripts/run_dbt.py seed \
+  --project-dir transform --profiles-dir transform
+docker compose exec -T airflow uv run python scripts/run_dbt.py run \
+  --project-dir transform --profiles-dir transform \
+  --select stg_seed__ward stg_seed__ward_grid stg_seed__flood_point \
+  stg_seed__flood_observation dim_ward dim_flood_point fct_flood_event_observation
 ```
 
-Target seed `ward_coordinates_seed` (CSV version-control, không còn đọc
-`public.wards` từ PostgreSQL) và build đúng graph tổ tiên của `gold.dim_ward`.
-Nó tách khỏi bootstrap hạ tầng để không tạo vòng phụ thuộc, đồng thời không
-build các fact thời tiết chưa có raw source object.
+Target này seed dữ liệu geography và build các model tĩnh cần cho Gold, không
+đụng các fact thời tiết chưa có raw source object.
 
 ## Lệnh hằng ngày
 
 ```bash
-make forecast-pipeline
+docker compose exec airflow airflow dags unpause open_meteo_forecast_hourly
+docker compose exec airflow airflow dags trigger open_meteo_forecast_hourly
 ```
 
-Target production chạy cố định `fetch forecast -> load open_meteo_forecast ->
-quality Silver staging -> dbt build`. Mỗi bước phải thành công trước khi sang bước kế;
-đặc biệt Provero trả lỗi sẽ chặn transform. Cron chỉ gọi target này một lần nên
-không có quality job chạy trùng.
+DAG chạy cố định `fetch forecast -> load open_meteo_forecast -> quality Silver
+staging -> dbt build -> health`. Mỗi task phải thành công trước khi task sau chạy;
+Provero fail sẽ chặn transform.
 
-Các lệnh thành phần vẫn dùng được khi xử lý sự cố. Với fetch riêng, bỏ `EXEC=1`
-thì chỉ in kế hoạch, không gọi API.
+Các lệnh thành phần vẫn dùng được khi xử lý sự cố. Với fetch riêng, bỏ
+`--execute` thì chỉ in kế hoạch, không gọi API.
 
 ## Backfill lịch sử
 
-**Chạy `make map-grid EXEC=1` một lần trước** (≈252 đơn vị) để chốt ô lưới, rồi
-`make seed`. Bản đồ chỉ cần làm lại khi danh sách phường đổi.
-
-Còn thiếu 2014→nay = 152 tháng. Fetch theo ô nên chỉ **267 request / 13.121 đơn
-vị ≈ 1,4 ngày**, thay vì 912 request / ~42.400 đơn vị ≈ 4,2 ngày nếu fetch theo
-phường.
+Repo đã có seed ánh xạ ô lưới. Chỉ map lại khi danh sách phường hoặc model archive
+đổi.
 
 ```bash
-make map-grid EXEC=1 && make seed        # một lần
-make fetch-archive EXEC=1                # dò kế hoạch trước khi thêm EXEC=1
-make load SOURCE="open_meteo_archive open_meteo_ifs"
+docker compose exec -T airflow uv run fetch-open-meteo map-grid --execute
+docker compose exec -T airflow uv run python scripts/run_dbt.py seed \
+  --project-dir transform --profiles-dir transform
+docker compose exec -T airflow uv run load-sources open_meteo_archive open_meteo_ifs
 ```
 
-Bỏ `EXEC=1` để xem kế hoạch. Không cần `--start/--end`: planner tự bỏ qua tháng
-đã ĐỦ GIỜ trong raw landing, nên chạy lại dải mặc định 2000→nay vẫn ra đúng 267
-request. Muốn chia nhỏ thì vẫn dùng `--start/--end` như cũ:
+Fetch archive theo khoảng explicit. Bỏ `--execute` để xem kế hoạch. Planner tự bỏ
+qua tháng đã đủ giờ trong raw landing, nên retry cùng khoảng là an toàn:
 
 ```bash
-make fetch-archive EXEC=1 START=2018-01-01 END=2018-12-01
+docker compose exec -T airflow uv run fetch-open-meteo archive \
+  --start 2018-01-01 --end 2018-12-01 --execute
 ```
 
 Resumable ở hai tầng: tháng đã đủ giờ trong raw landing thì bỏ hẳn; trong một tháng,
@@ -100,12 +99,9 @@ riêng nên không bao giờ ghi đè object cũ.
 
 ### Nhịp và song song
 
-**Không có pacing chủ động.** `fetch.pool` chạy `OPEN_METEO_FETCH_WORKERS`
-(mặc định 4) luồng song song, mỗi luồng gọi `land()` ngay khi có việc — không
-`sleep` trước, không token bucket, không biết trần giờ/ngày của Open-Meteo. Dự
-án từng có một `QuotaLimiter` (token bucket, cửa sổ trượt, hai tầng trần, trạng
-thái ghi đĩa) nhưng đã gỡ để đơn giản hoá; nếu cần lại pacing chủ động thì viết
-mới, đừng tìm `fetch/pacing.py` — nó không còn trong cây code.
+`fetch.pool` chạy `OPEN_METEO_FETCH_WORKERS` (mặc định 4) luồng song song và không
+có pacing chủ động. Quota được xử lý bằng retry phản ứng trong `land()`; khi
+backfill lớn, hạ số worker hoặc chia nhỏ `--start`/`--end`.
 
 Ràng buộc quota giờ hoàn toàn dựa vào retry **phản ứng** trong `land()`
 ([fetch/__init__.py](../src/fetch/__init__.py)): gặp 429/500/502/503/504 thì
@@ -121,35 +117,42 @@ chờ giữa các đợt.
 Kiểm tra tiến độ:
 
 ```bash
-docker run --rm --network host --entrypoint sh minio/mc -c "
-mc alias set m http://127.0.0.1:9000 minioadmin minioadmin >/dev/null
-mc ls -r m/vn-climate/bronze/files/open_meteo/historical_weather_hourly/" \
+docker compose exec -T minio sh -lc '
+mc alias set m http://127.0.0.1:9000 "$MINIO_ROOT_USER" "$(cat /run/secrets/minio_secret_key)" >/dev/null
+mc ls -r m/vn-climate/bronze/files/open_meteo/historical_weather_hourly/' \
   | grep -o 'year=[0-9]*/month=[0-9]*' | sort -u | wc -l
 ```
 
 ## Đặt lịch
 
-Mẫu cron ở `orchestration/cron/*.cron.example`. Cả hai job dùng **chung một
-`flock`** vì cùng tiêu vào một hạn mức rate limit của Open-Meteo.
+Airflow DAG `open_meteo_archive_monthly` chạy `30 2 1 * *`, `catchup=False` và
+`max_active_runs=1`. Mỗi run chỉ fetch tháng đã hoàn tất ngay trước
+`data_interval_start`, sau đó load, quality, transform và health gate.
 
-Backfill **không đặt lịch** — chạy tay như trên. `scripts/backfill_archive.sh`
-(lặp từng năm) vẫn chạy được nhưng không còn cần thiết: planner đã tự bỏ qua
-tháng đã đủ, nên một lệnh `make fetch-archive EXEC=1` xử lý cả dải.
+DAG mới bị pause mặc định. Bật một lần sau khi kiểm tra stack:
+
+```bash
+docker compose exec airflow airflow dags unpause open_meteo_archive_monthly
+```
+
+Backfill lịch sử vẫn chạy tay với khoảng `--start/--end`; planner bỏ qua tháng đã
+đủ nên có thể retry cùng khoảng an toàn.
 
 ## Backup và restore metadata PostgreSQL
 
 PostgreSQL chứa metadata DuckLake, ingestion checkpoint và dữ liệu tham chiếu.
 Script mặc định backup toàn database bằng custom archive; có thể giới hạn bằng
-`POSTGRES_SCHEMAS="ducklake ducklake ingestion"`. Cài PostgreSQL client
-(`pg_dump`, `pg_restore`) trên máy chạy lệnh và truyền cấu hình bằng môi trường:
+`POSTGRES_SCHEMAS="ducklake ingestion processing"`. Đây là thao tác operator trên
+host: cần Bash, PostgreSQL client (`pg_dump`, `pg_restore`) và credential riêng.
+Default secret sinh trong Docker không được copy ra host tự động.
 
 ```bash
 export POSTGRES_HOST=127.0.0.1
 export POSTGRES_PORT=5432
 export POSTGRES_DB=vnclimate
 export POSTGRES_USER=vnclimate
-export POSTGRES_PASSWORD_FILE=/run/secrets/postgres_password
-BACKUP_DIR=/secure/backups make backup-metadata
+export PGPASSFILE=/secure/pgpass
+BACKUP_DIR=/secure/backups bash scripts/backup_metadata.sh
 ```
 
 Backup được ghi qua file tạm với `umask 077`, kiểm tra bằng `pg_restore --list`,
@@ -164,7 +167,7 @@ database đích:
 ```bash
 BACKUP_FILE=/secure/backups/vnclimate_metadata_20260830T010203Z.dump \
 RESTORE_CONFIRM=vnclimate \
-make restore-metadata
+bash scripts/restore_metadata.sh
 ```
 
 Sidecar SHA-256 là bắt buộc mặc định. Chỉ dùng `RESTORE_VERIFY_CHECKSUM=0` cho
@@ -176,7 +179,8 @@ Metadata backup không chứa object MinIO. Để có disaster recovery đầy �
 hình MinIO Client alias, dừng mọi writer rồi dùng:
 
 ```bash
-LAKEHOUSE_BACKUP_ROOT=/mnt/backup BACKUP_QUIESCED=1 make backup-lakehouse
+LAKEHOUSE_BACKUP_ROOT=/mnt/backup BACKUP_QUIESCED=1 \
+  bash scripts/backup_lakehouse.sh
 ```
 
 Thư mục đích phải nằm trên filesystem/volume độc lập với volume MinIO hiện hành.
@@ -186,7 +190,7 @@ chạm hệ thống đích:
 
 ```bash
 LAKEHOUSE_BACKUP_DIR=/mnt/backup/lakehouse_<timestamp> \
-make verify-lakehouse-backup
+  bash scripts/verify_lakehouse_backup.sh
 ```
 
 Restore tự chạy lại verifier trước khi ghi và yêu cầu xác nhận cả trạng thái
@@ -195,7 +199,7 @@ quiesced lẫn đúng tên bucket:
 ```bash
 LAKEHOUSE_BACKUP_DIR=/mnt/backup/lakehouse_<timestamp> \
 RESTORE_QUIESCED=1 RESTORE_LAKEHOUSE_CONFIRM=vn-climate \
-make restore-lakehouse
+  bash scripts/restore_lakehouse.sh
 ```
 
 ## Xử lý sự cố
@@ -255,7 +259,11 @@ DELETE FROM ingestion.ingestion_runs WHERE dataset = 'forecast';
 
 Tiến trình chết giữa chừng để lại file ở `PROCESSING`. `claim_files` tự thu hồi
 khi `lease_expires_at_utc` quá hạn (mặc định 300s) — chỉ cần chờ rồi chạy lại
-`make load`.
+autoloader:
+
+```bash
+docker compose exec -T airflow uv run load-sources
+```
 
 ### Processing run `RUNNING` mồ côi
 
@@ -268,8 +276,8 @@ Chỉ sau khi đã xác minh process/container cũ không còn chạy, xem audit
 run mồ côi với lý do cụ thể:
 
 ```bash
-uv run python scripts/run_processing.py status forecast_silver
-uv run python scripts/run_processing.py abandon forecast_silver \
+docker compose exec -T airflow uv run python scripts/run_processing.py status forecast_silver
+docker compose exec -T airflow uv run python scripts/run_processing.py abandon forecast_silver \
   --reason 'Docker host restart; verified previous worker no longer exists'
 ```
 
@@ -280,8 +288,9 @@ khóa (`forecast_gold`, `silver_weather` hoặc `rain_gold`) nếu cần.
 ### Hết dung lượng MinIO
 
 ```bash
-make maintain-lake  # retention bình thường: snapshot 7d, file grace 2d
-make clean-lake     # emergency: squash snapshot, bỏ time-travel
+docker compose exec -T airflow uv run python scripts/maintain_lake.py \
+  --snapshot-retention-days 7 --file-grace-days 2
+docker compose exec -T airflow uv run python scripts/clean_lake.py
 ```
 
 `maintain-lake` là đường production. `clean-lake` mất time-travel và chỉ
@@ -299,63 +308,21 @@ my_source.sql    SELECT ... FROM read_json_auto({{ files }})
 **REST API** — planner trong `vn_climate_risk_monitor/<tên>.py`, copy dùng `fetch.land`.
 
 `{{ files }}` được engine thay bằng danh sách file đã claim. Không cần DDL tay:
-lần `make load` đầu tiên tự `CREATE TABLE IF NOT EXISTS <target> AS (<sql>) WHERE
+lần `load-sources` đầu tiên tự `CREATE TABLE IF NOT EXISTS <target> AS (<sql>) WHERE
 false`, nên schema bảng luôn khớp SELECT. Bảng đã có thì engine không đụng vào —
 muốn partition/constraint riêng thì cứ tạo tay trước.
 
-## ADR — các quyết định đã chốt của kiến trúc hiện tại
+## Quyết định kiến trúc hiện tại
 
-**Integrity delegated cho MinIO (2026-08-22, cột collector DROP 2026-08-27).**
-Kiến trúc cũ tính SHA-256 lúc ghi và verify lúc đọc. Directory-listing discovery
-không tải file về nên không băm được; hợp đồng checksum đã bỏ. Cơ chế bảo toàn
-vẹn còn lại: MinIO bitrot protection + `etag`/`size_bytes` trong
-`file_parameters` JSONB lúc discovery. Các cột collector trên
-`ingestion.ingestion_files` (`sha256`, `http_status`, `rows_parsed`, …) đã DROP.
-
-**Archive fetch theo ô lưới, hai model theo thời kỳ (2026-08-28).** Trước đó
-fetch 126 phường cho mọi tháng. Đo trên raw landing: 126 phường rơi vào 12 ô
-ERA5 (seed; nearest-neighbour từng lệch 12 vs 13) và 0 cặp (ô, giờ) nào có
-giá trị lệch nhau — tức trả quota gấp ~10 lần cho dữ liệu nhân bản. Nay fetch
-theo ô, marts chiếu ngược qua `bridge_ward_grid`. **Giữ cả hai model:** IFS
-không có dữ liệu trước 2017 (probe 2026-08-28: 2016 mọi quý NULL), nên ERA5
-là chuỗi lịch sử sâu duy nhất; từ 2017 dùng `ecmwf_ifs` ~9km cho tín hiệu
-khác nhau thật giữa các phường. Backfill còn lại: 267 request / 13.121 đơn vị
-thay vì 912 / ~42.400. Đánh đổi: `ecmwf_ifs` không phải reanalysis nên có bước
-nhảy ở mốc 2017, và `weather_model` phải nằm trong mọi khoá join phía sau.
-
-**Song song thay pacing chủ động, retry phản ứng gánh quota (2026-08-28).**
-Nhịp tuần tự cũ `sleep(3600 × units / per_hour)` chỉ biết trần giờ: chạy đều
-4.500/giờ thì cạn ngân sách NGÀY sau ~2,2 giờ rồi 429 hàng loạt và chết. Từng
-thay bằng `QuotaLimiter` (token bucket, cửa sổ trượt, trần giờ VÀ ngày, state
-ghi đĩa) nhưng đã **gỡ lại** để đơn giản hoá — `fetch.pool` giờ chỉ chạy
-`OPEN_METEO_FETCH_WORKERS` luồng song song, không giữ nhịp dưới trần nào cả.
-Quota hoàn toàn dựa vào retry phản ứng của `land()` (429 → sleep 60s, tối đa 5
-lần) cộng chính sách dừng-cả-lô của pool. Đánh đổi: 429 có thể xảy ra thật khi
-backfill nhiều tháng liền; giảm nhẹ bằng cách hạ `OPEN_METEO_FETCH_WORKERS`
-hoặc chia nhỏ `--start`/`--end`.
-
-**Bảng đích do engine tạo (2026-08-28).** Trước đó thêm nguồn mới phải chạy DDL
-tay, và quên thì `make load` chết ở INSERT vào bảng không tồn tại — `bootstrap.py`
-chỉ tạo *schema* `catalog1.silver` và `catalog1.gold`, không tạo table. Nay engine tự
-`CREATE TABLE IF NOT EXISTS ... AS (<sql>) WHERE false`, lấy schema từ chính SQL
-của nguồn nên không có danh sách cột thứ hai để lệch. Probe `SELECT 1 FROM
-<target> WHERE false` chạy trước vì `CREATE TABLE IF NOT EXISTS ... AS SELECT`
-vẫn bind câu select kể cả khi bảng đã có, tức bắt `read_json_auto` đọc S3 để suy
-schema; probe chỉ hỏi catalog. Cả hai chỉ chạy một lần cho mỗi tiến trình.
-
-**Metrics per-file không ghi (2026-08-22).** Engine INSERT cả lô bằng một câu SQL
-nên chỉ biết tổng; chia đều cho từng file là số giả. Tổng của lượt chạy in ra ở
-stdout khi `make load`.
-
-**Discovery run ổn định (2026-08-27).** Autoloader không mint `logical_key =
-discovery:{timestamp}` mỗi lần load. Một run `SUCCEEDED` / nguồn
-(`logical_key=discovery`) nhận thêm file PENDING. Lease trên `PROCESSING` vẫn
-là crash recovery (flock chỉ chống hai process sống cùng lúc).
-
-**Silver staging INSERT, dedup và MERGE change-aware (2026-08-22, refactor 2026-09-07).**
-Không MERGE theo row id ở staging. Archive và forecast staging đều giữ dài hạn.
-Forecast dedup theo `(forecast_run_id, model, ô lưới, valid_time)` để không ghi
-đè các vintage; archive dedup theo `(model, ô lưới, valid_time)`. MERGE
-change-aware thực hiện ở intermediate. Chi phí: re-land
-cùng tháng làm staging phình (đo 2026-08-21: 3.062.736 dòng thô cho 1.106.784
-khóa duy nhất) — chấp nhận vì Parquet trên MinIO local gần như miễn phí.
+- MinIO chịu trách nhiệm integrity của object; discovery lưu `etag` và
+  `size_bytes`, không tải lại file chỉ để tính checksum.
+- Archive fetch theo ô lưới. ERA5 dùng trước 2017, `ecmwf_ifs` dùng từ 2017;
+  `weather_model` nằm trong grain/join key phía sau.
+- Fetch chạy song song theo `OPEN_METEO_FETCH_WORKERS`; 429 được retry trong
+  `land()`. Backfill lớn nên giảm worker hoặc chia nhỏ khoảng thời gian.
+- Autoloader tự tạo bảng đích từ SQL nguồn khi bảng chưa tồn tại. Bootstrap chỉ
+  tạo schema/control plane.
+- Staging giữ dữ liệu append-only. Dedup và MERGE change-aware nằm ở Silver
+  intermediate; forecast giữ vintage theo `forecast_run_id`.
+- Discovery dùng một logical run ổn định cho mỗi source; lease `PROCESSING` xử lý
+  crash recovery.

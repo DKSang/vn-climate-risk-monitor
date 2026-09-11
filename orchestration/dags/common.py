@@ -1,4 +1,4 @@
-"""Hằng số và cấu hình dùng chung cho các DAGs của vn-climate-risk-monitor."""
+"""Shared Airflow configuration."""
 
 from __future__ import annotations
 
@@ -8,11 +8,7 @@ from typing import Any
 
 
 def on_failure_alert(context: dict[str, Any]) -> None:
-    """Callback gửi alert khi task Airflow thất bại.
-
-    Gọi scripts/alert_health.py để gửi health report tới ALERT_WEBHOOK_URL
-    nếu biến môi trường đó được thiết lập.
-    """
+    """Run the health alert hook after a task failure."""
     project_dir = os.getenv("PROJECT_DIR", "/project")
     task_instance = context.get("task_instance")
     task_id = task_instance.task_id if task_instance else "unknown"
@@ -26,24 +22,20 @@ def on_failure_alert(context: dict[str, Any]) -> None:
     )
 
 
-# Thư mục gốc repo được bake trong image runtime.
 PROJECT_DIR = os.getenv("PROJECT_DIR", "/project")
 
-# Airflow Pool 1 slot thay thế flock — tránh xung đột DuckLake và quota API
+# Serialize lakehouse writes and API-heavy tasks.
 POOL = "lakehouse_single_writer_pool"
 
-# Default arguments chuẩn cho mọi DAG
 DEFAULT_ARGS = {
     "owner": "data_engineering",
     "depends_on_past": False,
     "email_on_failure": False,
     "retries": 2,
-    "retry_delay": 180,  # 3 phút
+    "retry_delay": 180,
     "on_failure_callback": on_failure_alert,
 }
 
-# Lệnh chạy Provero data quality gate (quét staging sau load)
-# Connector đọc PostgreSQL/MinIO secret từ *_FILE do Compose mount.
 PROVERO_CMD = "uv run provero run -c quality/provero.yaml --no-optimize --no-store"
 PROVERO_ARCHIVE_CMD = (
     "uv run provero run -c quality/provero_archive.yaml --no-optimize --no-store"

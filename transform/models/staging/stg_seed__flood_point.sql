@@ -1,11 +1,4 @@
-/*
-    STAGING — điểm úng ngập Hà Nội từ seed.
-
-    Quy chuẩn toạ độ theo mục 3 của contract (canonicalize 6 chữ số thập phân).
-    Khớp với `stg_seed__ward` bằng tên phường để lấy `ward_code`.
-    Dùng LEFT JOIN với điều kiện tương đối (bỏ tiền tố 'Phường ') để đảm bảo
-    không bị thất thoát dòng do chênh lệch cách ghi tên đơn vị hành chính.
-*/
+/* Flood-point seed normalized to ward_code and 6-decimal coordinates. */
 
 {{ config(materialized = 'view') }}
 

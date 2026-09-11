@@ -1,13 +1,4 @@
-"""PostgreSQL DDL for the processing control plane.
-
-Tách HẲN khỏi ``ingestion`` schema. Hai câu hỏi khác nhau, không được trộn:
-
-    ingestion.ingestion_files   File này đã vào Bronze chưa?
-    processing.processing_state Process này đã xử lý source tới mốc nào?
-
-Cùng một bảng Bronze có thể nuôi nhiều process với tiến độ hoàn toàn khác nhau,
-nên checkpoint thuộc về PROCESS, không thuộc về source.
-"""
+"""PostgreSQL DDL cho processing checkpoint và run audit."""
 
 from __future__ import annotations
 
@@ -48,13 +39,9 @@ SCHEMA_STATEMENTS = (
         bounds JSONB NOT NULL DEFAULT '{}'::jsonb
             CHECK (jsonb_typeof(bounds) = 'object'),
         checkpoint_candidate TIMESTAMPTZ,
-        -- Số dòng trong target SAU khi run thành công. Đủ để bắt "run xanh
-        -- nhưng bảng rỗng" — thứ mà insert/update count sinh ra để bắt, nhưng
-        -- rẻ hơn nhiều: dbt của ta không phát ra rows_affected cho
-        -- materialization DuckLake (main statement là DROP TABLE tmp).
+        -- Row count sau run để phát hiện target rỗng.
         target_row_count BIGINT,
-        -- Snapshot hiện hành sau khi toàn bộ dbt build/test của process pass.
-        -- Serving chỉ đọc snapshot của run SUCCEEDED, không đọc HEAD giữa build.
+        -- Snapshot publish sau khi build/test pass.
         published_snapshot_id BIGINT,
         -- Soft delete: NULL khi process không khai báo rule nào.
         rows_deactivated BIGINT,
@@ -67,9 +54,7 @@ SCHEMA_STATEMENTS = (
         updated_at_utc TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
     """,
-    # Hai run cùng process ghi đè checkpoint của nhau. Chặn ở DB, không ở code.
-    # KHÔNG có lease tự hết hạn: `dbt build` chạy hàng giờ là hợp lệ, một lease
-    # đoán sai sẽ giết run đang chạy thật. Run chết phải `abandon` tay, có audit.
+    # Mỗi process/scope chỉ có một run đang chạy.
     """
     CREATE UNIQUE INDEX IF NOT EXISTS processing_one_running_per_process
         ON processing.processing_runs (process_key, scope)
@@ -79,8 +64,7 @@ SCHEMA_STATEMENTS = (
     CREATE INDEX IF NOT EXISTS processing_runs_history_idx
         ON processing.processing_runs (process_key, scope, started_at_utc DESC)
     """,
-    # Cột thêm 2026-09-03. ADD COLUMN IF NOT EXISTS để control plane đang chạy
-    # nâng cấp tại chỗ, không phải dựng lại.
+    # Migration idempotent cho control plane đang chạy.
     *(
         f"ALTER TABLE processing.processing_runs "
         f"ADD COLUMN IF NOT EXISTS {column} BIGINT"

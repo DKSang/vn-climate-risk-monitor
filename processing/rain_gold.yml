@@ -3,11 +3,7 @@ target: gold.fct_rain_archive_hourly
 scope: production
 
 sources:
-  # Đọc lớp CURATED (intermediate), không đọc staging. Watermark trên
-  # `_updated_at` — cột chỉ nhích khi giá trị thật sự đổi (so `_row_hash`), nên
-  # lần chạy không có dữ liệu mới không kéo theo bất kỳ dòng Gold nào.
-  # Đổi ref từ `weather_hourly` (2026-09-03, tái cấu trúc 3 lớp) — checkpoint
-  # cũ theo ref cũ thành dead row, lần chạy kế full refresh một lần.
+  # _updated_at advances only when the curated row changes.
   - ref: int_weather_archive_hourly
     change_column: _updated_at
 
@@ -15,13 +11,10 @@ checkpoint:
   safety_lag: 15 minutes
 
 runner:
-  # Contract Gold archive hiện hành. Selector tường minh để không kéo forecast
-  # marts hoặc model nghiên cứu không phục vụ dashboard vào archive pipeline.
+  # Keep the archive serving graph explicit.
   select: "dim_grid dim_ward dim_flood_point bridge_ward_grid fct_flood_event_observation fct_rain_archive_hourly"
 
-# Danh mục phường CÓ THỂ bị xoá ở nguồn (sáp nhập/giải thể theo nghị quyết), và
-# seed liệt kê được toàn bộ key nên anti-join chạy được. Weather thì không:
-# Open-Meteo là REST không liệt kê được key, và quan trắc không bao giờ bị xoá.
+# Soft-delete only dimensions with complete source key sets.
 soft_delete:
   - target: gold.dim_ward
     business_key: [ward_code]
@@ -38,9 +31,7 @@ soft_delete:
         model AS weather_model
       FROM catalog1.seed.ward_grid_map_seed
       UNION ALL
-      -- Forecast map cũng được materialize trong bridge_ward_grid. Nếu bỏ 126
-      -- key này, anti-join hiểu nhầm toàn bộ mesh forecast đã bị xoá và guard
-      -- chặn rain_gold ở 126/378 dòng sau khi dbt đã chạy thành công.
+      -- Forecast keys are also materialized in bridge_ward_grid.
       SELECT commune_code AS ward_code, 'ecmwf_ifs_fc' AS weather_model
       FROM catalog1.seed.ward_coordinates_seed
       WHERE province_code = '01'

@@ -51,7 +51,7 @@ là control bắt buộc tối thiểu.
 | Public-source | Open-Meteo, S13, văn bản/điểm công khai | Read cho consumer | Attribution, giữ source URL/version |
 | Curated-public | Gold rainfall, pressure, ward/flood reference | Read-only serving | dbt tests + published snapshot |
 | Internal-operational | checkpoint, run/error metadata, logs, backup manifest | Operator/maintainer | Không expose qua dashboard công cộng |
-| Secret | password, access key, webhook | Chỉ runtime/operator | `.env` ignored, `/run/secrets`, rotate khi lộ |
+| Secret | password, access key, webhook | Chỉ runtime/operator | Local Compose sinh credential vào `runtime_secrets`; runtime đọc `/run/secrets`; `.env` chỉ override khi cần |
 
 Dự án không chủ ý thu thập PII. Không thêm tên cá nhân, số điện thoại, biển số,
 định danh thiết bị hoặc dữ liệu camera vào seed/Gold. Nếu nguồn mới chứa PII,
