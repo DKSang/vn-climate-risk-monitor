@@ -44,16 +44,7 @@ def _terminate(signum: int, _frame: FrameType | None) -> None:
 
 
 def install_signal_handlers() -> None:
-    """Biến SIGTERM thành exception để run được đánh FAILED trước khi chết.
-
-    Mặc định SIGTERM giết process ngay, không chạy ``except``, nên bỏ lại một row
-    ``RUNNING`` mồ côi — và unique index chặn RUNNING sẽ khóa mọi lần chạy sau cho
-    tới khi có người `abandon` tay. Đây không phải đường hiếm: cron bọc `timeout`,
-    `systemd stop`, và Docker stop đều gửi SIGTERM giữa lúc `dbt build` chạy vài
-    phút. Đo 2026-09-03: `timeout 60` trên một build 3 phút để lại đúng row đó.
-
-    SIGINT đã tự raise ``KeyboardInterrupt`` nên không cần xử lý.
-    """
+    """Convert SIGTERM to an exception so the active run is marked FAILED."""
     signal.signal(signal.SIGTERM, _terminate)
 
 
@@ -81,7 +72,6 @@ def parse_timestamp(value: str) -> datetime:
     return moment if moment.tzinfo else moment.replace(tzinfo=UTC)
 
 
-# ── commands ─────────────────────────────────────────────────────────────────
 def cmd_run(args: argparse.Namespace) -> int:
     if args.full_refresh and not (args.reason and args.reason.strip()):
         raise SystemExit("--full-refresh cần --reason để audit")
@@ -93,12 +83,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     deletions: list[SoftDeleteResult] = []
 
     def execute(bounds: object) -> dict[str, int | None]:
-        """dbt rồi soft delete, TRONG CÙNG một run.
-
-        Thứ tự bắt buộc: soft delete đọc bảng mà dbt vừa ghi. Và vì nó nằm trong
-        `execute`, lỗi ở đây làm run FAILED nên checkpoint KHÔNG nhích — lần sau
-        chạy lại đúng cửa sổ đó.
-        """
+        """Run dbt and soft delete under the same checkpointed run."""
         run_dbt(bounds, project_dir=TRANSFORM_DIR, select=select)  # type: ignore[arg-type]
         lakehouse = get_connection()
         try:
@@ -254,13 +239,7 @@ def cmd_abandon(args: argparse.Namespace) -> int:
 
 
 def cmd_migrate(args: argparse.Namespace) -> int:
-    """Chuyển watermark cũ sang processing_state.
-
-    Giá trị cũ là ``MAX(_ingested_at)`` đọc SAU khi dbt xong, nên nó có thể đi
-    TRƯỚC thứ đã thực sự được xử lý — đó chính là bug thiết kế cũ. Migration chỉ
-    copy nguyên trạng; đóng khoảng hở là quyết định của người vận hành qua
-    `reprocess-from`, không phải thứ script tự đoán.
-    """
+    """Copy the legacy watermark into processing_state without adjusting it."""
     config = load_config(args.process_key)
     legacy = args.legacy_pipeline or config.process_key
     repository, connection = open_repository()

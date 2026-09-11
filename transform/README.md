@@ -55,28 +55,32 @@ và không được dùng để phát hành xác suất hay độ sâu ngập.
 Từ thư mục repository:
 
 ```bash
-make transform             # Silver + Gold archive
-make transform-forecast    # Silver + Gold forecast
+docker compose exec -T airflow uv run python scripts/run_dbt.py seed --project-dir transform --profiles-dir transform
+docker compose exec -T airflow uv run python scripts/run_processing.py run silver_weather
+docker compose exec -T airflow uv run python scripts/run_processing.py run rain_gold
+docker compose exec -T airflow uv run python scripts/run_processing.py run forecast_silver
+docker compose exec -T airflow uv run python scripts/run_processing.py run forecast_gold
 ```
 
 Khi business rule/schema của model incremental thay đổi, chạy migration
 full-refresh qua processing framework để giữ audit và checkpoint an toàn:
 
 ```bash
-make processing-full-refresh PROCESS=rain_gold \
-  REASON='describe archive schema change'
-make processing-full-refresh PROCESS=forecast_gold \
-  REASON='describe forecast schema change'
+docker compose exec -T airflow uv run python scripts/run_processing.py run rain_gold \
+  --full-refresh --reason 'describe archive schema change'
+docker compose exec -T airflow uv run python scripts/run_processing.py run forecast_gold \
+  --full-refresh --reason 'describe forecast schema change'
 ```
 
-Hoặc từ thư mục `transform/`:
+Khi phát triển trên host và đã cấu hình credential runtime:
 
 ```bash
-uv run dbt build --profiles-dir .
+uv run python scripts/run_dbt.py build --project-dir transform --profiles-dir transform
 ```
 
 Chỉ build Gold archive contract:
 
 ```bash
-uv run dbt build --profiles-dir . --select fct_rain_archive_hourly
+uv run python scripts/run_dbt.py build --project-dir transform --profiles-dir transform \
+  --select fct_rain_archive_hourly
 ```

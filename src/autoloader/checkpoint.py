@@ -25,18 +25,7 @@ class StateTransitionError(RuntimeError):
 
 
 def connect_control_plane(dsn: str) -> psycopg.Connection[Any]:
-    """Open a direct connection to the PostgreSQL control plane.
-
-    Nhận DSN dạng chuỗi (``postgresql://user:pass@host:port/db`` hoặc keyword
-    string của libpq) để package không phụ thuộc kiểu cấu hình của dự án nào.
-
-    ``autocommit=True`` là BẮT BUỘC, không phải tuỳ chọn hiệu năng. Mọi method
-    của repository đã tự quản transaction bằng ``with connection.transaction()``.
-    Trong psycopg3, block đó chỉ COMMIT khi nó là block ngoài cùng; nếu trước đó
-    có một ``execute`` trần mở sẵn transaction ngầm thì nó tụt xuống thành
-    SAVEPOINT và không commit gì cả — đóng connection là mất trắng.
-    Bật autocommit khiến mỗi block luôn là ngoài cùng, nên luôn commit thật.
-    """
+    """Kết nối control plane; repository tự quản transaction."""
     return psycopg.connect(dsn, autocommit=True)
 
 
@@ -47,13 +36,7 @@ class PostgresIngestionRepository:
         self.connection = connection
 
     def control_now(self) -> datetime:
-        """Đồng hồ quyền uy của platform — dùng cho ``_ingested_at`` của Bronze.
-
-        KHÔNG dùng ``CURRENT_TIMESTAMP`` của DuckDB: nó là giờ của MÁY WORKER,
-        trong khi processing framework so sánh ``_ingested_at`` với start time
-        lấy từ Postgres. Hai đồng hồ lệch vài giây là đủ để một cửa sổ
-        incremental bỏ sót row, và lỗi đó không tái hiện được.
-        """
+        """Clock chuẩn dùng chung cho ingestion và processing."""
         row = self.connection.execute("SELECT CURRENT_TIMESTAMP").fetchone()
         assert row is not None
         return row[0]
@@ -111,8 +94,7 @@ class PostgresIngestionRepository:
                     status=RunStatus(status),
                 )
             attempt_id = uuid4()
-            # ponytail: expected_file_count CHECK (>0) còn trên schema collector;
-            # 1 là dummy. Drop cột khi evolve schema.
+            # Legacy constraint vẫn yêu cầu expected_file_count > 0.
             self.connection.execute(
                 """
                 INSERT INTO ingestion.ingestion_runs (
@@ -234,10 +216,7 @@ class PostgresIngestionRepository:
                 )
 
     def known_object_keys(self) -> set[str]:
-        """Object key đã biết, ở BẤT KỲ trạng thái nào.
-
-        CỐ Ý truy vấn TOÀN CỤC: cột ``object_key`` UNIQUE toàn bảng.
-        """
+        """Object key đã biết; `object_key` unique toàn bảng."""
         rows = self.connection.execute(
             "SELECT object_key FROM ingestion.ingestion_files"
         ).fetchall()

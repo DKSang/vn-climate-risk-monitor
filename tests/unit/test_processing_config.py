@@ -161,7 +161,7 @@ def test_forecast_processing_has_separate_silver_and_gold_checkpoints() -> None:
     )
     assert gold.source_refs == ("int_weather_forecast_hourly",)
     assert gold.runner.select == (
-        "bridge_ward_grid fct_rain_forecast_hourly "
+        "dim_grid bridge_ward_grid fct_rain_forecast_hourly "
         "fct_rain_forecast_current_hourly fct_rain_pressure_alert"
     )
 

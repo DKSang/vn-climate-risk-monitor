@@ -15,7 +15,7 @@ Theo dõi **mưa lớn và áp lực mưa** cho Hà Nội, chi tiết đến **1
 | 5 | Clean, Transform & KPI | [05-kpi-methodology.md](05-kpi-methodology.md) | ✅ Rainfall windows + pressure alert + archive replay |
 | 6 | Lưu trữ — single source of truth | [06-storage-modeling.md](06-storage-modeling.md) | ✅ Gold SSOT và processing checkpoint |
 | 7 | Data Quality & Observability | [07-data-quality.md](07-data-quality.md) | ✅ Provero (Forecast + Archive), dbt tests, Healthcheck collector, Airflow callback alerting |
-| 8 | Make it accessible | [08-serving-bi.md](08-serving-bi.md) | ✅ Streamlit Dashboard (bản đồ pressure + drill-down phường/điểm ngập) |
+| 8 | Serving & BI | [08-serving-bi.md](08-serving-bi.md) | ✅ Streamlit Dashboard (bản đồ pressure + drill-down phường/điểm ngập) |
 | 9 | Governance & Continuous Improvement | [09-governance.md](09-governance.md) | ✅ Policy, contract, SLO, risk và improvement loop |
 
 ## Trạng thái hệ thống
@@ -38,8 +38,11 @@ MinIO      → bronze/files (raw)  ·  silver/  ·  gold/
 | gold forecast | `fct_rain_forecast_hourly` · `fct_rain_forecast_current_hourly` · `fct_rain_pressure_alert` |
 
 Không hard-code row count của current view/pressure vào tài liệu vì chúng thay
-đổi theo giờ. Dùng `make health SCOPE=all REQUIRE_GOLD=1` để lấy trạng thái và số
-dòng tại thời điểm kiểm tra.
+đổi theo giờ. Lấy trạng thái trực tiếp từ runtime:
+
+```bash
+docker compose exec -T airflow uv run python scripts/healthcheck.py --scope all --require-gold
+```
 
 Staging có thể giữ nhiều bản ghi cùng grain một cách CÓ CHỦ Ý: đó là
 change log của các lần fetch. Dedup xảy ra ở Silver intermediate.
@@ -47,21 +50,16 @@ change log của các lần fetch. Dedup xảy ra ở Silver intermediate.
 ## Lệnh thường dùng
 
 ```bash
-make up                      # build/bật toàn bộ Compose stack
-make fetch-forecast EXEC=1   # land dự báo slot giờ hiện tại
-make load                    # autoloader nạp file raw vào silver.stg_*
-make transform               # dbt build qua processing framework
-make processing-status       # checkpoint + lịch sử run
-make processing-full-refresh PROCESS=rain_gold \
-  SELECT='fct_rain_archive_hourly+' REASON='rain band v2'
-make quality                 # Provero quét silver staging
-make backfill-archive        # fetch+load archive theo năm
-make clean-lake              # emergency: squash lakehouse, bỏ time-travel
-make maintain-lake           # snapshot 7 ngày, file deletion grace 2 ngày
-make backup-lakehouse        # PostgreSQL + MinIO, khi writer đã quiesce
-make verify-lakehouse-backup # checksum dump + từng object, không ghi vào đích
-make dbt-docs                # sinh và mở dbt docs
+docker compose up -d --build
+docker compose exec airflow airflow dags unpause open_meteo_forecast_hourly
+docker compose exec airflow airflow dags trigger open_meteo_forecast_hourly
+docker compose exec -T airflow uv run python scripts/healthcheck.py --scope all --require-gold
+docker compose exec -T airflow uv run python scripts/run_processing.py status rain_gold
+docker compose exec -T airflow uv run python scripts/maintain_lake.py --snapshot-retention-days 7 --file-grace-days 2
 ```
+
+Các lệnh data-plane chạy trong Airflow container. Ruff, docs link checker và dbt
+docs là tác vụ phát triển trên host nên cần Python/`uv`.
 
 ## Cổng vào bước 9 — đã đạt
 

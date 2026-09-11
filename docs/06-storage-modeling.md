@@ -97,17 +97,19 @@ control table bằng tay.
 DuckLake gồm hai phần không thể thay thế nhau: PostgreSQL giữ catalog/control
 plane, MinIO giữ raw object và Parquet. `backup-metadata` chỉ phù hợp khi cần bảo
 vệ metadata; disaster recovery phải dùng `backup-lakehouse` khi mọi writer đã
-dừng:
+dừng. Đây là workflow operator trên host, cần Bash, PostgreSQL client, MinIO
+Client và credential được cấp riêng:
 
 ```bash
 LAKEHOUSE_BACKUP_ROOT=/mnt/backup \
 BACKUP_QUIESCED=1 \
-make backup-lakehouse
+bash scripts/backup_lakehouse.sh
 ```
 
 MinIO Client alias mặc định là `lakehouse`; có thể đổi bằng
 `MC_SOURCE_ALIAS`. Restore yêu cầu `RESTORE_QUIESCED=1` và xác nhận đúng tên
-bucket để tránh ghi nhầm. Sau restore phải chạy `make quality`, bao gồm test đọc
-file thật `assert_gold_is_readable`. Trước restore, chạy
-`LAKEHOUSE_BACKUP_DIR=... make verify-lakehouse-backup`; verifier kiểm checksum
-của PostgreSQL dump và từng object MinIO mà không thay đổi đích.
+bucket để tránh ghi nhầm. Trước restore, chạy
+`LAKEHOUSE_BACKUP_DIR=... bash scripts/verify_lakehouse_backup.sh`; verifier kiểm
+checksum của PostgreSQL dump và từng object MinIO mà không thay đổi đích. Sau
+restore, chạy quality/dbt tests trong Airflow container, gồm
+`assert_gold_is_readable`.

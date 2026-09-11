@@ -1,13 +1,4 @@
-/*
-    MART — quan sát ngập đã xác nhận, theo địa điểm × thời điểm × nguồn.
-
-    Grain: `observation_id`. Mọi cột ở đây đến từ báo cáo/bài báo, không có cột
-    nào suy ra từ Open-Meteo. Bảng chỉ phục vụ đối chiếu trên archive replay;
-    không phải feature huấn luyện hay đầu vào của pressure signal.
-
-    Incremental để một lần sửa nguồn (đính chính độ sâu, hạ hạng nguồn) không
-    xoá lịch sử các dòng còn lại.
-*/
+/* Verified flood observations; grain = observation_id. */
 
 {{ config(
     materialized = 'incremental',
@@ -18,17 +9,7 @@
 SELECT
     o.observation_id,
     o.event_id,
-    {#
-        Danh tính ĐỊA ĐIỂM, khác với danh tính quan sát.
-
-        Tần suất ngập lịch sử — biến mạnh nhất khi thiếu dữ liệu hạ tầng — là
-        phép đếm trên địa điểm, nên nó cần một khoá bền qua nhiều trận mưa và
-        nhiều nguồn.
-
-        Hệ quả phải biết trước: hai bài báo viết tên cùng một chỗ khác nhau sẽ
-        thành hai địa điểm và chia đôi tần suất. Chuẩn hoá tên là việc thủ công
-        không tránh được, không phải thứ SQL đoán hộ được.
-    #}
+    {# location_key ổn định giữa nhiều observation cùng tên địa điểm. #}
     MD5(LOWER(TRIM(o.location_name_raw))) AS location_key,
     o.location_name_raw,
     o.ward_code,
@@ -59,17 +40,7 @@ SELECT
     o.source_visualisation_id,
     o.source_visualisation_version,
     o.source_updated_at_utc,
-    {#
-        Cờ dùng được cho archive replay, tách khỏi is_flooded. Cần CẢ BA:
-
-        - hạng A/B/C: hạng D (mạng xã hội chưa xác minh) chưa kiểm chứng được;
-        - biết rõ GIỜ: ghép mưa 1h với một nhãn "sáng 7/10" là gán sai thời
-          điểm, và sai thời điểm tệ hơn thiếu dòng;
-        - có ward_code: không có phường thì không có ô lưới, không có ô lưới
-          thì không có lượng mưa để ghép. `ward_code` chỉ non-NULL khi geocode
-          ĐÃ ĐƯỢC NGƯỜI SOÁT (`stg_seed__flood_observation` gác sẵn), nên điều
-          kiện này đã bao hàm cả `geocode_verified`.
-    #}
+    {# Replay chỉ dùng nguồn đã xác minh, đúng giờ và có ward mapping. #}
     (
         o.source_grade IN ('A', 'B', 'C')
         AND o.observed_at_precision = 'hour'

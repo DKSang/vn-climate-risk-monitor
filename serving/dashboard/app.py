@@ -22,6 +22,7 @@ from serving.dashboard.ui import (
     local_time,
     metric_strip,
     navigation,
+    warn_if_stale,
 )
 
 configure_page("Hanoi Climate Monitor", "◈")
@@ -73,12 +74,7 @@ metric_strip(
     ]
 )
 
-freshness_minutes = int(metadata.get("freshness_minutes") or 0)
-if freshness_minutes > 90:
-    st.warning(
-        f"Snapshot đã được cập nhật cách đây khoảng {freshness_minutes // 60} giờ "
-        f"{freshness_minutes % 60} phút. Hãy kiểm tra pipeline trước khi dùng cho vận hành."
-    )
+warn_if_stale(metadata)
 
 if ward_count and ward_count < len(wards):
     st.warning(

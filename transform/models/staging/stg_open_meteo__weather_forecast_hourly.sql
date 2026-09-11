@@ -1,10 +1,4 @@
-/*
-    STAGING — nguồn open_meteo forecast, hợp đồng một-một với bảng vật lý
-    `silver.stg_weather_forecast` mà autoloader ghi (ngoài đồ thị dbt).
-
-    MỎNG CÓ CHỦ ĐÍCH: chỉ chọn cột, gán weather_model = 'ecmwf_ifs_fc', và loại dòng
-    không có `valid_time_utc`. KHÔNG dedup hay canonical toạ độ ở đây.
-*/
+/* Thin view trên forecast staging; dedup/canonicalization nằm ở intermediate. */
 
 {{ config(materialized = 'view') }}
 

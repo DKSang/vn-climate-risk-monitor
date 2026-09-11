@@ -1,9 +1,4 @@
-"""Operational health and data-quality checks for the lakehouse.
-
-The collector intentionally reads catalogs instead of Parquet paths so DuckLake
-snapshot semantics are preserved. It never includes connection strings or
-credentials in its output.
-"""
+"""Operational health and data-quality checks for the lakehouse."""
 
 from __future__ import annotations
 
@@ -155,7 +150,9 @@ def _check_weather_table(
 def _check_forecast_coverage(connection: Any) -> CheckResult:
     if not _relation_exists(connection, "gold.dim_ward"):
         return _result(
-            "forecast.complete_run", "FAIL", "Thiếu gold.dim_ward; chạy make transform"
+            "forecast.complete_run",
+            "FAIL",
+            "Thiếu gold.dim_ward; chạy dbt seed và build geography",
         )
     run = connection.execute(
         """
@@ -283,14 +280,7 @@ def _check_archive_duplicates(connection: Any) -> CheckResult:
 
 
 def _check_mapping(connection: Any) -> CheckResult:
-    """Mỗi phường phải có đúng một ô lưới cho mỗi model.
-
-    Bản cũ đo `mapping_distance_km`; cột đó đến từ model `ward_grid_map` tự tính
-    nearest-neighbour, nay đã bỏ. Ánh xạ hiện lấy thẳng từ phép snap của
-    Open-Meteo (seed) nên khoảng cách không còn là thứ ta kiểm soát — thứ đáng
-    kiểm là ĐỘ PHỦ: thiếu một dòng thì phường đó biến mất khỏi fact mà INNER JOIN
-    không báo gì.
-    """
+    """Mỗi phường phải có đúng một ô lưới cho mỗi model."""
     relation = "gold.bridge_ward_grid"
     if not _relation_exists(connection, relation):
         return _result("archive.ward_mapping", "FAIL", f"Thiếu {relation}")
@@ -313,12 +303,7 @@ def _check_mapping(connection: Any) -> CheckResult:
 
 
 def _check_archive_gold(connection: Any) -> list[CheckResult]:
-    """Fact mưa lõi: có tồn tại, có dòng, và grain không trùng.
-
-    CỐ Ý không kiểm freshness ở phase này: pipeline mới chỉ có lịch sử, nên
-    `valid_time_utc` mới nhất luôn lùi vài tuần một cách hợp lệ. Freshness quay
-    lại cùng nhánh forecast.
-    """
+    """Kiểm tra tồn tại, row count và grain của archive fact."""
     relation = "gold.fct_rain_archive_hourly"
     if not _relation_exists(connection, relation):
         return [
@@ -613,9 +598,7 @@ def collect_health(
                 if require_gold:
                     checks.extend(_check_forecast_gold(connection))
             if scope in {"archive", "all"}:
-                # era5 và ecmwf_ifs dùng CHUNG một bảng staging, phân biệt bằng
-                # cột `weather_model`, nên một check thay cho hai. Độ phủ theo
-                # từng model vẫn được `archive.monthly_coverage` kiểm riêng.
+                # Hai model archive dùng chung staging; coverage kiểm theo model.
                 checks.extend(
                     _check_weather_table(
                         connection,

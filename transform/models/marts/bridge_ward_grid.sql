@@ -1,20 +1,4 @@
-/*
-    MART — cầu nối phường ↔ ô lưới, theo từng model.
-
-    378 dòng cho các model hiện hành (archive + forecast). Nhỏ đến mức mọi câu hỏi
-    theo GIỜ ở cấp phường chỉ cần join bảng
-    này với `fct_rain_archive_hourly` lúc query — không cần một fact phường×giờ nhân bản
-    26 triệu dòng giống hệt nhau (126 phường chỉ có 12 hoặc 48 giá trị khác
-    nhau ở mỗi giờ).
-
-    `ward_count_on_grid` để xếp hạng áp lực mưa mà KHÔNG nhân bản trọng số khi
-    nhiều phường dùng chung một ô (Q4).
-*/
-
-{#
-    INCREMENTAL cùng lý do với `dim_ward`: giữ dòng của phường đã giải thể để
-    archive replay và forecast history không mất địa bàn khi INNER JOIN.
-#}
+/* Ward ↔ weather grid mapping by model. */
 {{ config(
     materialized = 'incremental',
     unique_key = 'ward_grid_key',
@@ -30,9 +14,7 @@ WITH archive_map AS (
     FROM {{ ref('stg_seed__ward_grid') }}
 ),
 
--- Forecast best_match có thể đổi mesh. Lấy tập ô của run mới nhất rồi
--- ánh xạ centroid phường tới tâm ô gần nhất; với run hiện tại kết quả
--- khớp đủ 126/126 với phép snap API đã lưu cho IFS.
+-- Forecast mesh lấy từ run mới nhất; ward map vào grid gần nhất.
 latest_forecast_run AS (
     SELECT forecast_run_id
     FROM {{ ref('int_weather_forecast_hourly') }}
@@ -99,8 +81,5 @@ SELECT
     CAST(NULL AS TIMESTAMPTZ) AS _deactivated_at,
     {{ processing_updated_at() }} AS _updated_at
 FROM all_maps AS map
--- INNER JOIN: một dòng ánh xạ trỏ tới ô không tồn tại trong dữ liệu là lỗi
--- ánh xạ, và test relationships sẽ chỉ ra ngay thay vì để nó lặng lẽ sinh
--- fact phường rỗng.
 INNER JOIN {{ ref('dim_grid') }} AS grid
     ON grid.grid_cell_id = map.grid_cell_id

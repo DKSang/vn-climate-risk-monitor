@@ -101,7 +101,7 @@ seeds:
         longitude: DOUBLE
         status: VARCHAR
         source_reference: VARCHAR
-    # Sinh bởi `make fetch-flood-observations`, không sửa tay: mọi dòng phải
+    # Sinh bởi `uv run python -m vn_climate_risk_monitor.flood_observations`, không sửa tay: mọi dòng phải
     # truy được về đúng một snapshot Flourish có version.
     #
     # `observed_at_local` giữ VARCHAR chứ không để dbt suy TIMESTAMP: 4/123

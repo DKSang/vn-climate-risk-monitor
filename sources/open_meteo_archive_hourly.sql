@@ -1,22 +1,6 @@
--- Transform cho dữ liệu hourly của Open-Meteo archive API.
---
--- MỘT file cho NHIỀU model thời tiết (era5, ecmwf_ifs...). Chúng là các endpoint
--- khác nhau nhưng trả đúng một bộ cột, nên tách thành hai file SQL lệch nhau
--- đúng một dòng chỉ tạo ra hai thứ sẽ trôi khỏi nhau. Model đến từ
--- `parameters.weather_model` trong YAML của từng nguồn.
--- Chạy bởi autoloader engine, thay các placeholder:
---   {{ files }}          danh sách file đã claim trong lô này
---   {{ weather_model }}  từ `parameters` trong YAML của nguồn
---   {{ ingested_at }}    giờ từ Postgres control plane — KHÔNG dùng
---                        CURRENT_TIMESTAMP của DuckDB (giờ máy worker), vì
---                        checkpoint downstream so mốc này với giờ Postgres.
---
--- Probe 2026-08-28: era5 và ecmwf_ifs đều có đủ 5 biến đang dùng, nên một bảng
--- Bronze duy nhất phân biệt bằng cột `weather_model` là đủ — Silver không còn
--- phải union hai bảng có schema y hệt nhau.
---
--- Rescue (tinh thần _rescued_data của Auto Loader): dùng TRY_CAST thay CAST, giá
--- trị hỏng thành NULL và được ghi lại trong _rescued_data thay vì làm gãy cả lô.
+-- Shared archive transform for models with the same Open-Meteo payload.
+-- {{ ingested_at }} comes from the Postgres control-plane clock used by checkpoints.
+-- TRY_CAST preserves bad values in _rescued_data instead of failing the batch.
 
 WITH raw AS (
     SELECT *
@@ -37,7 +21,7 @@ exploded AS (
         timezone,
         utc_offset_seconds,
         hourly_units,
-        -- payload lỗi của Open-Meteo (rate limit...) không có `hourly`
+        -- Error payloads do not include hourly data.
         UNNEST(hourly.time)                      AS t_raw,
         UNNEST(hourly.precipitation)             AS precipitation_raw,
         UNNEST(hourly.rain)                      AS rain_raw,
@@ -64,7 +48,7 @@ SELECT
     CAST(hourly_units AS VARCHAR)                     AS hourly_units_json,
     filename                                          AS _source_file,
     {{ ingested_at }}                                 AS _ingested_at,
-    -- _rescued_data: ghi lại giá trị KHÔNG ép kiểu được, thay vì fail cả lô
+    -- Keep invalid source values for inspection.
     NULLIF(
         TRIM(
             CASE WHEN TRY_CAST(CAST(t_raw AS VARCHAR) AS BIGINT) IS NULL

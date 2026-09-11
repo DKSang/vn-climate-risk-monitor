@@ -83,6 +83,7 @@ def test_command_passes_vars_as_json_and_select() -> None:
     command = build_command(bounds(lower=at(9, 45)), select="+tag:historical")
 
     assert command[1] == "build"
+    assert command[command.index("--indirect-selection") + 1] == "cautious"
     payload = json.loads(command[command.index("--vars") + 1])
     assert payload["processing_incremental"] is True
     assert command[command.index("--select") + 1] == "+tag:historical"

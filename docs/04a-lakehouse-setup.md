@@ -29,30 +29,30 @@ fetch quản lý (không còn `bronze/tables/` — autoloader ghi thẳng vào
 ## Khởi động
 
 ```bash
-make up
-make bootstrap
-make quality
+docker compose up -d --build
 ```
 
-Compose lấy bốn secret bắt buộc từ `.env` rồi mount thành file chỉ đọc trong
-`/run/secrets`. PostgreSQL/pgAdmin dùng cơ chế `_FILE` của image; Airflow dùng
-`*_CMD`; code dự án ưu tiên `POSTGRES_PASSWORD_FILE` và
-`MINIO_SECRET_KEY_FILE`. Không truyền password trực tiếp qua container
-environment. Trước deployment ngoài local, thay toàn bộ giá trị `CHANGE_ME` và
-không dùng cặp MinIO mặc định.
+Compose tự sinh secret local ở lần chạy đầu và giữ chúng trong named volume
+`runtime_secrets`. PostgreSQL/pgAdmin dùng cơ chế `_FILE`; Airflow dùng `*_CMD`;
+code dự án đọc `POSTGRES_PASSWORD_FILE` và `MINIO_SECRET_KEY_FILE`. `.env` chỉ
+cần khi muốn override cấu hình hoặc cung cấp credential cố định ngay từ lần chạy
+đầu.
 
-Kiểm tra sau bootstrap: `make quality` (Provero quét silver staging qua catalog DuckLake,
-exit 1 khi có check fail) và `make transform` (dbt build qua processing framework kèm test).
-Script POC `scripts/verify_lakehouse.py` đã xoá — mọi check của nó giờ có bản
-chạy liên tục: bootstrap step 4 (schema), dbt build + `assert_gold_is_readable`
-(đọc Parquet thật, chống bảng ma), Provero (row_count/freshness).
+Service `bootstrap` chạy sau khi PostgreSQL và MinIO healthy, tạo bucket,
+DuckLake/control plane và geography seed trước khi Airflow hoặc dashboard khởi
+động. Có thể chạy lại idempotently bằng `docker compose run --rm bootstrap`.
 
-`make bootstrap` thực hiện idempotently:
+Các check runtime chạy trong Airflow container để dùng đúng secret và dependency
+đã khóa. Bootstrap kiểm tra schema; dbt có `assert_gold_is_readable` để buộc đọc
+Parquet thật; Provero kiểm tra row count/freshness.
+
+Bootstrap thực hiện idempotently:
 
 1. Tạo bucket MinIO nếu chưa có.
 2. Cài/load DuckLake extension trong DuckDB và attach catalog `catalog1` backed by PostgreSQL (`ducklake`).
 3. Tạo hai schema `catalog1.silver` và `catalog1.gold`.
 4. Tạo control plane tables trong PostgreSQL (schema `ingestion` và `processing`).
+5. Seed geography và build các model tĩnh cần trước khi DAG chạy.
 
 ## Storage ownership
 
@@ -77,7 +77,8 @@ Maintenance tách khỏi dbt build: snapshot kỹ thuật giữ bảy ngày, fil
 đang còn hiệu lực trong table; Raw/Staging forecast cũng được giữ để replay.
 
 ```bash
-make maintain-lake
+docker compose exec -T airflow uv run python scripts/maintain_lake.py \
+  --snapshot-retention-days 7 --file-grace-days 2
 ```
 
 `clean-lake` xóa lịch sử snapshot của DuckLake catalog `catalog1`; chỉ dùng khi

@@ -1,9 +1,4 @@
-/*
-    MART — Dimension điểm úng ngập Hà Nội.
-
-    Incremental để bảo toàn lịch sử và cờ soft-delete (`is_active = FALSE`)
-    nếu điểm ngập được giải tỏa/sửa chữa và cập nhật trong tương lai.
-*/
+/* Flood-point dimension. Incremental giữ state soft-delete. */
 
 {{ config(
     materialized = 'incremental',

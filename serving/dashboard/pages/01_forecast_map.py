@@ -26,13 +26,11 @@ from serving.dashboard.queries import (
 )
 from serving.dashboard.ui import (
     MAP_STYLES,
-    POINT_INACTIVE_COLOR,
-    POINT_SCENARIO_LABELS,
-    POINT_TRIGGERED_COLOR,
     RAIN_INDICATORS,
     classify_rain_band,
     configure_page,
     default_hour_index,
+    flood_point_layer,
     legend_row,
     local_time,
     metric_strip,
@@ -41,6 +39,8 @@ from serving.dashboard.ui import (
     page_header,
     pressure_score_label,
     rain_label,
+    ward_polygon_layer,
+    warn_if_stale,
 )
 
 configure_page("Bản đồ dự báo mưa", "◈")
@@ -69,13 +69,7 @@ page_header(
     f"Forecast S{table_snapshot_version} · {local_time(metadata.get('updated_at_utc'), '%H:%M · %d/%m')}",
 )
 
-freshness_minutes = int(metadata.get("freshness_minutes") or 0)
-if freshness_minutes > 90:
-    st.warning(
-        f"Snapshot đã chậm khoảng {freshness_minutes // 60} giờ "
-        f"{freshness_minutes % 60} phút. Không dùng cho quyết định vận hành "
-        "trước khi pipeline được kiểm tra."
-    )
+warn_if_stale(metadata)
 
 with st.container(border=True):
     control_left, indicator_col, control_right, style_col = st.columns(
@@ -238,83 +232,19 @@ if len(boundary_codes) != 126:
     )
     st.stop()
 
-layers: list[pdk.Layer] = [
-    pdk.Layer(
-        "GeoJsonLayer",
-        geojson_data,
-        opacity=0.62,
-        stroked=True,
-        filled=True,
-        get_fill_color="properties.fill_color",
-        get_line_color=[226, 232, 240, 110],
-        line_width_min_pixels=1.2,
-        pickable=True,
-        auto_highlight=True,
-        highlight_color=[255, 255, 255, 70],
+layers: list[pdk.Layer] = [ward_polygon_layer(geojson_data)]
+pressure_by_ward = {
+    str(row["ward_code"]).zfill(5): (
+        f"{row.get('pressure_level') or 'Chưa có'} · "
+        f"{pressure_score_label(row.get('pressure_score'), digits=1)}"
     )
-]
-
-visible_points = df_points
-if point_mode == "Chỉ điểm đạt ngưỡng 1h":
-    visible_points = df_points.loc[df_points["is_triggered"].fillna(False)]
-elif point_mode == "Không hiển thị":
-    visible_points = df_points.iloc[0:0]
-
-if not visible_points.empty:
-    visible_points = visible_points.copy()
-    visible_points["color"] = [
-        POINT_TRIGGERED_COLOR if bool(value) else POINT_INACTIVE_COLOR
-        for value in visible_points["is_triggered"]
-    ]
-    visible_points["line_color"] = [
-        [255, 255, 255, 240] if bool(value) else [20, 21, 26, 200]
-        for value in visible_points["is_triggered"]
-    ]
-    visible_points["threshold_label"] = [
-        POINT_SCENARIO_LABELS.get(str(value), "Không rõ")
-        for value in visible_points["rain_scenario"]
-    ]
-    visible_points["tooltip_name"] = visible_points["point_name"]
-    visible_points["tooltip_rain_1h"] = [
-        rain_label(value) for value in visible_points["rain_1h_mm"]
-    ]
-    visible_points["tooltip_primary_label"] = "Kịch bản danh mục"
-    visible_points["tooltip_primary_value"] = visible_points["threshold_label"]
-    pressure_by_ward = {
-        str(row["ward_code"]).zfill(5): (
-            f"{row.get('pressure_level') or 'Chưa có'} · "
-            f"{pressure_score_label(row.get('pressure_score'), digits=1)}"
-        )
-        for row in df_forecast.to_dict(orient="records")
-    }
-    visible_points["tooltip_pressure"] = [
-        pressure_by_ward.get(str(code).zfill(5), "Chưa có")
-        for code in visible_points["ward_code"]
-    ]
-    visible_points["tooltip_pressure_reason"] = "Xem trên polygon phường"
-    visible_points["tooltip_status"] = [
-        "Đã đạt ngưỡng" if bool(value) else f"Chưa đạt · {label}"
-        for value, label in zip(
-            visible_points["is_triggered"],
-            visible_points["threshold_label"],
-            strict=True,
-        )
-    ]
-    layers.append(
-        pdk.Layer(
-            "ScatterplotLayer",
-            visible_points,
-            get_position=["longitude", "latitude"],
-            get_fill_color="color",
-            get_line_color="line_color",
-            stroked=True,
-            line_width_min_pixels=1.5,
-            get_radius=160,
-            radius_min_pixels=6,
-            radius_max_pixels=12,
-            pickable=True,
-        )
-    )
+    for row in df_forecast.to_dict(orient="records")
+}
+point_layer = flood_point_layer(
+    df_points, point_mode, pressure_by_ward=pressure_by_ward
+)
+if point_layer is not None:
+    layers.append(point_layer)
 
 map_legend = tuple(indicator["legend"])
 if point_mode != "Không hiển thị":

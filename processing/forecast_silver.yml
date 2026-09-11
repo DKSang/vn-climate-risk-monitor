@@ -10,6 +10,5 @@ checkpoint:
   safety_lag: 15 minutes
 
 runner:
-  # Forecast Silver sở hữu checkpoint staging -> curated history.
-  # Gold có checkpoint riêng trên _updated_at của bảng intermediate này.
+  # Gold checkpoints independently on this intermediate table.
   select: "stg_open_meteo__weather_forecast_hourly int_weather_forecast_hourly"

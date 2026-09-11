@@ -1,12 +1,4 @@
-/*
-    MART — cảnh báo áp lực mưa theo phường × giờ.
-
-    Đây là tín hiệu vận hành giải thích được, KHÔNG phải xác suất ngập và
-    không thay thế cảnh báo chính thức của cơ quan KTTV. Nó kết hợp lượng mưa
-    forecast nhìn về tương lai với persistence/revision giữa các forecast run.
-
-    Grain: (forecast_run_id, ward_code, valid_time_utc).
-*/
+/* Rain pressure signal by forecast run × ward × hour. */
 
 {{ config(
     materialized = 'table',
@@ -31,7 +23,6 @@ WITH history AS (
 ranked_runs AS (
     SELECT
         forecast_run_id,
-        MAX(_ingested_at) AS issued_at_utc,
         ROW_NUMBER() OVER (
             ORDER BY MAX(_ingested_at) DESC, forecast_run_id DESC
         ) AS run_rank
@@ -43,16 +34,6 @@ run_pressure AS (
     SELECT
         f.grid_cell_id,
         f.valid_time_utc,
-        MAX(CASE WHEN r.run_rank = 1 THEN f.forecast_next_1h_mm END)
-            AS latest_next_1h_mm,
-        MAX(CASE WHEN r.run_rank = 1 THEN f.forecast_next_3h_mm END)
-            AS latest_next_3h_mm,
-        MAX(CASE WHEN r.run_rank = 1 THEN f.forecast_next_6h_mm END)
-            AS latest_next_6h_mm,
-        MAX(CASE WHEN r.run_rank = 1 THEN f.forecast_next_24h_mm END)
-            AS latest_next_24h_mm,
-        MAX(CASE WHEN r.run_rank = 1 THEN f.forecast_run_id END)
-            AS latest_forecast_run_id,
         MAX(CASE WHEN r.run_rank = 2 THEN f.forecast_next_24h_mm END)
             AS previous_next_24h_mm,
         MAX(CASE WHEN r.run_rank = 2 THEN f.forecast_run_id END)
@@ -142,7 +123,6 @@ classified AS (
     SELECT
         *,
         CASE
-            -- Không suy diễn từ vintage cũ khi vintage hiện tại không có input.
             WHEN coverage_status = 'NONE' THEN 'UNKNOWN'
             WHEN forecast_next_1h_mm >= {{ high_next_1h }}
               OR forecast_next_3h_mm >= {{ high_next_3h }}
@@ -157,7 +137,6 @@ classified AS (
               OR persistence_runs >= 2
               OR revision_direction = 'RISING'
                 THEN 'WATCH'
-            -- NORMAL là một kết luận có dữ liệu, không phải fallback cho NULL.
             WHEN coverage_status <> 'COMPLETE' THEN 'UNKNOWN'
             ELSE 'NORMAL'
         END AS pressure_level,

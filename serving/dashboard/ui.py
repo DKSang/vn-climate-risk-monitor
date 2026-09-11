@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import pandas as pd
+import pydeck as pdk
 import streamlit as st
 
 HANOI_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
@@ -26,15 +28,10 @@ SCENARIO_SHORT_LABELS = {
 }
 
 SCENARIO_COLORS = {
-    "below_50": [75, 85, 99, 100],  # Xám than mờ hơn (#4B5563, ~40% alpha)
-    "from_50_to_under_70": [
-        250,
-        204,
-        21,
-        190,
-    ],  # Vàng hổ phách cảnh báo (#FACC15, ~75% alpha)
-    "from_70_to_100": [249, 115, 22, 215],  # Cam đậm nguy cơ cao (#F97316, ~84% alpha)
-    "over_100": [239, 68, 68, 240],  # Đỏ rực đặc biệt nguy hiểm (#EF4444, ~94% alpha)
+    "below_50": [75, 85, 99, 100],
+    "from_50_to_under_70": [250, 204, 21, 190],
+    "from_70_to_100": [249, 115, 22, 215],
+    "over_100": [239, 68, 68, 240],
 }
 
 SCENARIO_RANK = {
@@ -56,8 +53,8 @@ POINT_SCENARIO_LABELS = {
     "scenario_over_100mm": "Trên 100 mm/giờ",
 }
 
-POINT_TRIGGERED_COLOR = [6, 182, 212, 255]  # Cyan neon rực sáng (#06B6D4)
-POINT_INACTIVE_COLOR = [100, 116, 139, 140]  # Xám phiến mờ (#64748B)
+POINT_TRIGGERED_COLOR = [6, 182, 212, 255]
+POINT_INACTIVE_COLOR = [100, 116, 139, 140]
 
 MAP_STYLES: dict[str, str] = {
     "Tối (Dark Matter)": "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json",
@@ -65,14 +62,7 @@ MAP_STYLES: dict[str, str] = {
     "Địa hình & Đường sá (Voyager)": "https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json",
 }
 
-# Chỉ báo mưa dùng chung cho bản đồ forecast và trang phát lại archive.
-#
-# Ngưỡng 1 giờ của QĐ 2280 KHÔNG bắt được mưa dai: trận 07/10/2025 có đỉnh
-# `rain_1h_mm` toàn thành phố 24,8 mm — dưới mốc 50 mm ở mọi ô lưới, mọi giờ —
-# trong khi `rain_12h_mm` đạt 140,7 mm và `rain_24h_mm` đạt 159,5 mm. Vì vậy
-# mặc định là tích lũy 24 giờ; dải 1 giờ vẫn giữ để đối chiếu đúng nguồn.
-#
-# Thứ tự khai báo là thứ tự hiển thị, và phần tử đầu là mặc định của selectbox.
+# Thứ tự là thứ tự selectbox; 24h mặc định để bắt cả mưa kéo dài.
 RAIN_INDICATORS: dict[str, dict] = {
     "Mưa tích lũy 24 giờ": {
         "metric": "rain_24h_mm",
@@ -83,12 +73,12 @@ RAIN_INDICATORS: dict[str, dict] = {
         "max_key": "max_rain_24h_mm",
         "summary_key": "elevated_ward_count_24h",
         "colors": {
-            "below_50": [75, 85, 99, 100],  # Xám than mờ
-            "from_50_to_under_100": [56, 189, 248, 170],  # Xanh da trời (#38BDF8)
-            "from_100_to_under_150": [250, 204, 21, 190],  # Vàng cảnh báo (#FACC15)
-            "from_150_to_under_200": [249, 115, 22, 215],  # Cam nguy cơ cao (#F97316)
-            "from_200_to_300": [239, 68, 68, 235],  # Đỏ rất nguy hiểm (#EF4444)
-            "over_300": [168, 85, 247, 245],  # Tím cực đoan (#A855F7)
+            "below_50": [75, 85, 99, 100],
+            "from_50_to_under_100": [56, 189, 248, 170],
+            "from_100_to_under_150": [250, 204, 21, 190],
+            "from_150_to_under_200": [249, 115, 22, 215],
+            "from_200_to_300": [239, 68, 68, 235],
+            "over_300": [168, 85, 247, 245],
         },
         "labels": {
             "below_50": "Dưới 50 mm/24 giờ",
@@ -116,11 +106,11 @@ RAIN_INDICATORS: dict[str, dict] = {
         "max_key": "max_rain_12h_mm",
         "summary_key": "elevated_ward_count_12h",
         "colors": {
-            "below_30": [75, 85, 99, 100],  # Xám than mờ
-            "from_30_to_under_50": [56, 189, 248, 170],  # Xanh da trời (#38BDF8)
-            "from_50_to_under_70": [250, 204, 21, 190],  # Vàng cảnh báo (#FACC15)
-            "from_70_to_100": [249, 115, 22, 215],  # Cam nguy cơ cao (#F97316)
-            "over_100": [239, 68, 68, 240],  # Đỏ rất nguy hiểm (#EF4444)
+            "below_30": [75, 85, 99, 100],
+            "from_30_to_under_50": [56, 189, 248, 170],
+            "from_50_to_under_70": [250, 204, 21, 190],
+            "from_70_to_100": [249, 115, 22, 215],
+            "over_100": [239, 68, 68, 240],
         },
         "labels": {
             "below_30": "Dưới 30 mm/12 giờ",
@@ -158,9 +148,9 @@ RAIN_INDICATORS: dict[str, dict] = {
 
 
 def classify_rain_band(value: object, indicator_name: str) -> str:
-    """Phân loại dải mưa dựa trên giá trị số đo thực tế để đảm bảo độ mịn chi tiết."""
+    """Phân loại band từ lượng mưa thực tế."""
     val = number(value)
-    if val is None or not math.isfinite(val) or val <= 0:
+    if val <= 0:
         return ""
     if indicator_name == "Mưa tích lũy 24 giờ":
         if val > 300:
@@ -298,6 +288,16 @@ def local_time(value: object, pattern: str = "%H:%M · %d/%m/%Y") -> str:
     return parsed.tz_convert(HANOI_TZ).strftime(pattern)
 
 
+def warn_if_stale(metadata: Mapping[str, object], *, threshold_minutes: int = 90) -> None:
+    freshness_minutes = int(metadata.get("freshness_minutes") or 0)
+    if freshness_minutes <= threshold_minutes:
+        return
+    st.warning(
+        f"Snapshot đã chậm khoảng {freshness_minutes // 60} giờ "
+        f"{freshness_minutes % 60} phút. Kiểm tra pipeline trước khi dùng cho vận hành."
+    )
+
+
 def to_local_naive(series: pd.Series) -> pd.Series:
     return pd.to_datetime(series, utc=True).dt.tz_convert(HANOI_TZ).dt.tz_localize(None)
 
@@ -326,6 +326,81 @@ def scenario_label(value: object, *, short: bool = False) -> str:
 def point_is_triggered(point_scenario: object, ward_scenario: object) -> bool:
     return SCENARIO_RANK.get(str(ward_scenario), -1) >= POINT_SCENARIO_RANK.get(
         str(point_scenario), 99
+    )
+
+
+def ward_polygon_layer(geojson_data: dict) -> pdk.Layer:
+    return pdk.Layer(
+        "GeoJsonLayer",
+        geojson_data,
+        opacity=0.62,
+        stroked=True,
+        filled=True,
+        get_fill_color="properties.fill_color",
+        get_line_color=[226, 232, 240, 110],
+        line_width_min_pixels=1.2,
+        pickable=True,
+        auto_highlight=True,
+        highlight_color=[255, 255, 255, 70],
+    )
+
+
+def flood_point_layer(
+    points: pd.DataFrame,
+    mode: str,
+    *,
+    pressure_by_ward: Mapping[str, str] | None = None,
+) -> pdk.Layer | None:
+    if mode == "Chỉ điểm đạt ngưỡng 1h":
+        points = points.loc[points["is_triggered"].fillna(False)]
+    elif mode == "Không hiển thị":
+        return None
+    if points.empty:
+        return None
+
+    points = points.copy()
+    points["color"] = [
+        POINT_TRIGGERED_COLOR if bool(value) else POINT_INACTIVE_COLOR
+        for value in points["is_triggered"]
+    ]
+    points["line_color"] = [
+        [255, 255, 255, 240] if bool(value) else [20, 21, 26, 200]
+        for value in points["is_triggered"]
+    ]
+    points["threshold_label"] = [
+        POINT_SCENARIO_LABELS.get(str(value), "Không rõ")
+        for value in points["rain_scenario"]
+    ]
+    points["tooltip_name"] = points["point_name"]
+    points["tooltip_rain_1h"] = [rain_label(value) for value in points["rain_1h_mm"]]
+    points["tooltip_primary_label"] = "Kịch bản danh mục"
+    points["tooltip_primary_value"] = points["threshold_label"]
+    points["tooltip_status"] = [
+        "Đã đạt ngưỡng" if bool(value) else f"Chưa đạt · {label}"
+        for value, label in zip(
+            points["is_triggered"], points["threshold_label"], strict=True
+        )
+    ]
+    if pressure_by_ward is not None:
+        points["tooltip_pressure"] = [
+            pressure_by_ward.get(str(code).zfill(5), "Chưa có")
+            for code in points["ward_code"]
+        ]
+        points["tooltip_pressure_reason"] = "Xem trên polygon phường"
+
+    return pdk.Layer(
+        "ScatterplotLayer",
+        points,
+        id="catalogue-flood-points",
+        get_position=["longitude", "latitude"],
+        get_fill_color="color",
+        get_line_color="line_color",
+        stroked=True,
+        line_width_min_pixels=1.5,
+        get_radius=160,
+        radius_min_pixels=6,
+        radius_max_pixels=12,
+        pickable=True,
     )
 
 

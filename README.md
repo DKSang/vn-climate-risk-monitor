@@ -1,321 +1,400 @@
 # Hanoi Flood & Climate Risk Monitor
+### Rainfall Pressure & Historical Replay System
 
-A production-like, zero-cost data platform for monitoring heavy-rain pressure across Hanoi from hourly forecasts and historical weather data.
+![Python](https://img.shields.io/badge/Language-Python_3.12%2B-3776AB?logo=python&logoColor=white)
+![Docker](https://img.shields.io/badge/Runtime-Docker_Compose-2496ED?logo=docker&logoColor=white)
+![DuckLake](https://img.shields.io/badge/Lakehouse-DuckLake-FFF000)
+![dbt](https://img.shields.io/badge/Transform-dbt-FF694B?logo=dbt&logoColor=white)
+![Airflow](https://img.shields.io/badge/Orchestration-Apache_Airflow-017CEE?logo=apacheairflow&logoColor=white)
+![Streamlit](https://img.shields.io/badge/Dashboard-Streamlit-FF4B4B?logo=streamlit&logoColor=white)
+![Status](https://img.shields.io/badge/Status-Active-success)
 
-The project is built as a **single-node lakehouse** to demonstrate practical data engineering concerns: immutable ingestion, incremental processing, idempotency, data contracts, quality gates, orchestration, recovery, and serving. It intentionally stops short of claiming flood probability because the available data does not support that conclusion.
+## Problem Statement
 
-## What this project answers
+Hanoi is exposed to recurring heavy-rain and urban flooding events, but the data
+available to a small engineering project does not support a calibrated
+street-level flood probability model.
 
-For each Hanoi ward and forecast hour, the platform answers:
+This project focuses on a narrower, defensible problem: build a reproducible data
+platform that ingests hourly forecasts and historical rainfall, preserves source
+history, validates data quality, and surfaces an explainable **rainfall-pressure
+signal** for Hanoi's 126 wards/communes.
 
-- How much rain is expected in the next 1, 3, 6, 12, and 24 hours?
-- Which wards should be reviewed first based on rainfall pressure?
-- Is the signal persistent across recent forecast runs?
-- Is the latest 24-hour forecast rising or falling compared with the previous run?
-- Is the underlying data complete, fresh, and safe to publish?
-- What did historical rainfall look like around previously observed flooding events?
+The platform answers questions such as:
 
-The main output is an **explainable rainfall-pressure signal**, not an official weather warning or a calibrated flood-probability model.
+- how much rain is expected over the next 1, 3, 6, 12, and 24 hours;
+- which wards should be reviewed first based on forecast rainfall pressure;
+- whether that signal persists across recent forecast runs;
+- whether the latest forecast is rising or falling relative to the previous run;
+- whether the current data is complete, fresh, and safe to publish;
+- what historical rainfall looked like around sourced flood observations.
 
-## Scale at a glance
+The output is an operational rainfall-pressure signal, not an official weather
+warning or flood-probability forecast.
 
-| Area | Current scope |
-|---|---|
-| Geography | 126 Hanoi wards/communes |
-| Forecast | 72-hour horizon, refreshed hourly |
-| Forecast spatial grid | 48 ECMWF IFS cells mapped to wards |
-| Historical weather | ERA5 before 2017, ECMWF IFS from 2017 onward |
-| Historical ERA5 grid | 12 cells for Hanoi |
-| Completed archive example | 1,106,784 ward-hour rows for year 2000 |
-| Flood reference points | 15 sourced and geocoded locations |
-| Runtime target | Single node, Docker Compose, zero mandatory cloud spend |
-
-## Architecture
+## Project Architecture
 
 ```mermaid
 flowchart LR
-    A[Open-Meteo REST] --> B[Python Fetch]
-    R[Versioned reference data] --> G[dbt Seeds]
+    A[Open-Meteo APIs] --> B[Python fetch]
+    R[Versioned reference data] --> S[dbt seeds]
 
     B --> C[(MinIO Bronze\nimmutable JSON)]
     C --> D[Autoloader\ndiscovery + file ledger]
-    D --> E[(DuckLake Silver Staging\nappend-only)]
+    D --> E[(DuckLake Silver staging\nappend-only)]
 
-    P[(PostgreSQL\ncontrol plane + DuckLake metadata)] --> D
-    P --> F[Incremental Processing]
+    P[(PostgreSQL\nDuckLake metadata + control plane)] --> D
+    P --> F[Incremental processing]
     E --> F
-    G --> F
+    S --> F
 
-    F --> S[(Silver Curated\ndedup + conform)]
-    S --> M[(Gold Marts\ndim / bridge / fact)]
+    F --> G[(Silver curated\ndedup + conform)]
+    G --> H[(Gold marts\ndim / bridge / fact)]
 
     Q1[Provero quality gate] --> F
-    M --> Q2[dbt tests + health checks]
-    Q2 --> API[FastAPI]
-    Q2 --> UI[Streamlit Dashboard]
+    H --> Q2[dbt tests + health checks]
+    Q2 --> UI[Streamlit dashboard]
+    Q2 --> API[FastAPI ops API]
 
-    AF[Airflow] --> B
+    AF[Apache Airflow] --> B
     AF --> D
     AF --> Q1
     AF --> F
     AF --> Q2
 ```
 
-The physical stack is deliberately small:
+The deployment target is intentionally small:
 
 ```text
-MinIO + PostgreSQL/DuckLake + DuckDB/dbt + Airflow
-Bronze -> Silver -> Gold -> Serving
+Open-Meteo -> MinIO Bronze -> DuckLake Silver -> DuckLake Gold -> Dashboard/API
+                         \-> PostgreSQL control plane
+Airflow orchestrates fetch, load, quality, transform, and maintenance.
 ```
 
-## Data contracts
+## Tech Stack
 
-| Layer | Contract | Responsibility |
-|---|---|---|
-| Bronze | Immutable source responses | Preserve replayable source data exactly as landed |
-| Silver staging | Append-only parsed records | Keep source vintages and ingestion metadata |
-| Silver curated | Typed, deduplicated, conformed data | Resolve late/repeated records at business grain |
-| Gold | Stable analytical and serving models | Publish dimensions, facts, current forecast, and rainfall-pressure signals |
+### Lakehouse & Storage
 
-The separation is intentional: raw history stays replayable, while deduplication and business semantics remain downstream where they can be tested and changed safely.
+![MinIO](https://img.shields.io/badge/MinIO-C72E49?style=for-the-badge&logo=minio&logoColor=white)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)
+![DuckDB](https://img.shields.io/badge/DuckDB-FFF000?style=for-the-badge&logo=duckdb&logoColor=black)
+![DuckLake](https://img.shields.io/badge/DuckLake-Lakehouse-FFF000?style=for-the-badge)
 
-## Engineering decisions
+### Data Engineering
 
-### 1. At-least-once ingestion, deterministic downstream correctness
+![dbt](https://img.shields.io/badge/dbt-FF694B?style=for-the-badge&logo=dbt&logoColor=white)
+![Open-Meteo](https://img.shields.io/badge/Open--Meteo-Weather_API-3B82F6?style=for-the-badge)
 
-PostgreSQL and DuckLake do not share a distributed transaction. A file may be written successfully to staging before its control-plane state is marked `COMMITTED`.
+### Orchestration & Quality
 
-Instead of pretending this is exactly-once, the loader is designed for **at-least-once delivery**:
+![Airflow](https://img.shields.io/badge/Apache_Airflow-017CEE?style=for-the-badge&logo=apacheairflow&logoColor=white)
+![Provero](https://img.shields.io/badge/Provero-Data_Quality-6B7280?style=for-the-badge)
 
-1. discover immutable objects in MinIO;
-2. register unseen files in PostgreSQL;
-3. claim a micro-batch with a lease;
-4. insert into append-only Silver staging;
-5. mark files committed after the data write succeeds;
-6. deduplicate later using the business grain.
+### Serving
 
-A crash between steps 4 and 5 may replay data, but it does not corrupt the final curated model.
+![Streamlit](https://img.shields.io/badge/Streamlit-FF4B4B?style=for-the-badge&logo=streamlit&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white)
+![Altair](https://img.shields.io/badge/Altair-Visualization-2563EB?style=for-the-badge)
 
-### 2. Ingestion checkpoints and processing checkpoints are separate
+### Containerization
 
-The system keeps two different control-plane concepts:
+![Docker](https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white)
+
+### Programming Languages
+
+![Python](https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white)
+![SQL](https://img.shields.io/badge/SQL-4479A1?style=for-the-badge&logo=postgresql&logoColor=white)
+
+### Key Libraries
+
+- `duckdb` - query engine and DuckLake access
+- `dbt-duckdb` - Silver/Gold transformations and tests
+- `minio` - object storage client
+- `psycopg` - PostgreSQL control-plane access
+- `provero` - staging data-quality checks
+- `streamlit` - dashboard UI
+- `pydeck` - map rendering
+- `altair` - charts
+- `fastapi` / `uvicorn` - operational API
+- `pandas` - dashboard-side tabular rendering
+
+## Project Structure
 
 ```text
-ingestion.*   -> Has this source file been loaded?
-processing.*  -> How far has this transformation processed its upstream data?
-```
-
-A single upstream dataset can feed multiple transformations with different progress, so processing state belongs to the **process**, not to the source file ledger.
-
-### 3. Incremental processing uses overlap, not a fragile closed window
-
-Incremental transforms read from `checkpoint - safety_lag`. The overlap deliberately re-reads a small amount of data and relies on idempotent merge semantics.
-
-This handles rows whose transaction timestamp is earlier than the moment they become visible to the next processing run. Advancing checkpoints only after a successful run prevents gaps after failures.
-
-### 4. Forecast history and current serving state are different products
-
-Every complete forecast run is retained so revisions can be audited. Gold exposes both:
-
-- `fct_rain_forecast_hourly`: forecast history by logical run;
-- `fct_rain_forecast_current_hourly`: the latest complete run for serving;
-- `fct_rain_pressure_alert`: explainable ward-hour pressure level, coverage, persistence, and revision.
-
-This avoids overwriting yesterday's forecast with today's and preserves the ability to compare model revisions.
-
-### 5. Quality gates block publication
-
-The pipeline treats data quality as executable logic rather than documentation.
-
-Before downstream publication, checks cover:
-
-- required keys and physical rainfall ranges;
-- source freshness;
-- duplicate business grain;
-- rolling-window monotonicity;
-- 126/126 ward coverage;
-- forecast forward coverage;
-- pressure-signal semantics;
-- readability of actual Gold data files, not only catalog metadata;
-- ingestion backlog, failed files, and host disk capacity.
-
-A failing gate returns a non-zero exit code and stops the production flow.
-
-### 6. Complexity is constrained by the deployment target
-
-This project intentionally does **not** use Kubernetes, Kafka, Spark, multi-region storage, or active-active infrastructure. The current workload does not justify them.
-
-The design target is a recoverable single-node system with clear correctness boundaries, not distributed infrastructure for its own sake.
-
-## Data model
-
-Core Gold models:
-
-| Model | Grain | Purpose |
-|---|---|---|
-| `dim_ward` | one row per ward | Geographic serving dimension |
-| `dim_grid` | one row per weather grid cell/model | Weather-model spatial dimension |
-| `bridge_ward_grid` | ward x weather model | Maps wards to source grid cells |
-| `dim_flood_point` | one row per sourced flood point | Reference locations for replay/analysis |
-| `fct_rain_archive_hourly` | grid cell x observed hour | Historical rainfall fact |
-| `fct_rain_forecast_hourly` | forecast run x grid cell x valid hour | Versioned forecast history |
-| `fct_rain_forecast_current_hourly` | grid cell x valid hour | Latest complete forecast run |
-| `fct_rain_pressure_alert` | forecast run x ward x valid hour | Explainable operational rainfall-pressure signal |
-
-Detailed storage and grain decisions are documented in [Storage & Modeling](docs/06-storage-modeling.md).
-
-## Reliability and observability
-
-The production-like flow includes:
-
-- resumable object discovery;
-- lease-based file claims and retry accounting;
-- immutable raw storage for replay;
-- append-only staging;
-- incremental processing checkpoints with audit history;
-- Airflow scheduling and single-writer coordination;
-- Provero checks before transformation;
-- dbt schema and singular tests;
-- health checks for freshness, completeness, backlog, grain, Gold readiness, and disk capacity;
-- metadata and full-lakehouse backup/restore workflows;
-- webhook alert integration for failed or unhealthy runs.
-
-See [Data Quality & Observability](docs/07-data-quality.md) and the [Ingestion Runbook](docs/04b-ingestion-runbook.md).
-
-## Tech stack
-
-| Concern | Technology |
-|---|---|
-| Language | Python 3.12+ |
-| Raw/object storage | MinIO |
-| Lakehouse table format/catalog | DuckLake |
-| Metadata & control plane | PostgreSQL |
-| Query engine | DuckDB |
-| Transformation | dbt-duckdb |
-| Data quality | Provero + dbt tests + custom health checks |
-| Orchestration | Apache Airflow |
-| API | FastAPI |
-| Dashboard | Streamlit + PyDeck + Altair |
-| Runtime | Docker Compose |
-| Dependency management | uv |
-| CI | GitHub Actions |
-
-## Quick start
-
-### Prerequisites
-
-- Docker with Docker Compose
-- Python 3.12+
-- `uv`
-- GNU Make
-
-### 1. Configure the environment
-
-```bash
-cp .env.example .env
-```
-
-Set the required local secrets in `.env`. The file is intentionally ignored by Git.
-
-### 2. Start the runtime services
-
-```bash
-make up
-```
-
-This starts PostgreSQL, MinIO, pgAdmin, Airflow, and the dashboard.
-
-### 3. Bootstrap storage and geography
-
-```bash
-make bootstrap
-make bootstrap-geography
-```
-
-### 4. Run the forecast pipeline
-
-```bash
-make forecast-pipeline
-```
-
-The flow is:
-
-```text
-fetch -> load -> staging quality gate -> Silver/Gold processing -> health gate
-```
-
-Fetch commands are dry-run by default when called directly. Add `EXEC=1` to perform network writes:
-
-```bash
-make fetch-forecast EXEC=1
-make fetch-archive START=2026-01-01 END=2026-02-01 EXEC=1
-```
-
-## Common operations
-
-```bash
-make quality                 # staging quality checks
-make dbt-test                # dbt schema + singular tests
-make freshness               # dbt source freshness
-make health                  # operational health collector
-make lint                    # static checks
-make docs-check              # validate documentation links
-make serve-api               # local FastAPI serving
-make serve-dashboard         # local Streamlit dashboard
-```
-
-Archive loading and transformation can be run independently:
-
-```bash
-make load SOURCE="open_meteo_archive open_meteo_ifs"
-make archive-pipeline START=2026-01-01 END=2026-02-01
-```
-
-## Repository structure
-
-```text
-.
+vn-climate-risk-monitor/
+│
+├── docker-compose.yml
+├── pyproject.toml
+├── uv.lock
+├── .env.example
+│
+├── docker/
+│   ├── airflow.Dockerfile
+│   └── dashboard.Dockerfile
+│
 ├── src/
-│   ├── fetch/                     # concurrent HTTP landing primitives
+│   ├── fetch/                     # HTTP landing + concurrent fetch pool
 │   ├── autoloader/                # discovery, file ledger, lease-based loading
-│   ├── processing/                # incremental processing state machine
+│   ├── processing/                # incremental processing + checkpoints
 │   └── vn_climate_risk_monitor/   # domain, storage, health, Open-Meteo logic
-├── sources/                       # source contracts + SQL parsing rules
+│
+├── sources/                       # source contracts + parsing SQL
+│   ├── open_meteo_forecast.yml
+│   ├── open_meteo_forecast.sql
+│   ├── open_meteo_archive.yml
+│   ├── open_meteo_archive_hourly.sql
+│   └── open_meteo_ifs.yml
+│
 ├── transform/
 │   ├── models/staging/            # thin dbt source views
 │   ├── models/intermediate/       # curated incremental models
 │   ├── models/marts/              # dimensions, bridges, facts
+│   ├── macros/
+│   ├── seeds/
 │   └── tests/                     # cross-row/business-invariant tests
-├── orchestration/dags/            # Airflow production flows
+│
+├── processing/                    # process definitions for Silver/Gold runs
 ├── quality/                       # Provero staging checks
-├── serving/                       # FastAPI + Streamlit
-├── reference/                     # versioned geographic reference data
-├── scripts/                       # bootstrap, health, recovery, maintenance
+│
+├── orchestration/
+│   └── dags/
+│       ├── forecast_hourly_dag.py
+│       ├── archive_monthly_dag.py
+│       └── lakehouse_maintenance_dag.py
+│
+├── serving/
+│   ├── api/                       # FastAPI operational endpoint
+│   └── dashboard/                 # Streamlit application and pages
+│
+├── reference/                     # versioned geographic reference files
+├── scripts/                       # bootstrap, health, dbt wrapper, recovery
 ├── tests/unit/                    # Python unit tests
-└── docs/                          # design, modeling, runbooks, governance
+└── docs/                          # architecture, modeling, runbooks, governance
 ```
 
-See [Repository Structure](docs/03a-repo-structure.md) for the full map.
+See [Repository Structure](docs/03a-repo-structure.md) for the detailed map.
 
-## Scope and trade-offs
+## Data Sources
 
-This is a **portfolio production-like system**, not a claim of city-scale production infrastructure.
+| Source | Type | Coverage / scope | Used for |
+|---|---|---|---|
+| Open-Meteo Forecast API | Hourly forecast | 126 Hanoi wards, 72-hour horizon | Current forecast and rainfall-pressure signal |
+| Open-Meteo Historical Weather API | ERA5 archive | Before 2017 | Historical rainfall baseline/replay |
+| Open-Meteo Historical Forecast API | ECMWF IFS archive | 2017 onward | Higher-resolution historical replay |
+| Ward coordinate seed | CSV | 126 wards/communes | Geography dimension |
+| Ward-grid mapping seed | CSV | Forecast/archive grid mapping | Ward-to-grid bridge |
+| S13 ward polygons | GeoJSON | 126 Hanoi wards/communes | Dashboard maps and geocoding |
+| Flood point seed | Curated CSV | Sourced flood locations | Map/replay reference |
+| Flood observation seeds | Curated source + reviewed geocode | Sourced flood observations | Historical replay comparison |
 
-Current constraints are explicit:
+Forecast runs are versioned instead of overwritten. Historical archive data uses
+ERA5 before 2017 and ECMWF IFS from 2017 onward; the two are kept distinct in the
+model because they are not one homogeneous time series.
 
-- one-node deployment;
-- Open-Meteo Free API availability and quota constraints;
-- several wards share the same source weather grid cell;
-- rainfall forcing is not street-level rainfall observation;
-- no sewer-network, water-level, detailed terrain, or representative negative-label dataset;
-- rainfall-pressure thresholds are version-controlled heuristics, not calibrated flood probabilities;
-- no high availability or multi-region disaster recovery.
+More detail: [Data Sources](docs/02-data-sources.md).
 
-These constraints are surfaced in the product rather than hidden behind false precision.
+## Pipeline Phases
+
+- [x] Phase 1: Source contracts, geography, and reference seeds
+- [x] Phase 2: Immutable Bronze landing in MinIO
+- [x] Phase 3: Autoloader discovery and Silver staging
+- [x] Phase 4: Incremental Silver/Gold processing with dbt
+- [x] Phase 5: Provero, dbt, and operational health gates
+- [x] Phase 6: Hourly forecast orchestration in Airflow
+- [x] Phase 7: Monthly archive refresh and daily lakehouse maintenance
+- [x] Phase 8: Streamlit dashboard and FastAPI operational serving
+- [x] Phase 9: Backup, recovery, governance, and runbooks
+
+The main production flow is:
+
+```text
+fetch -> load -> staging quality -> Silver -> Gold -> health gate -> serving
+```
+
+Scheduled DAGs:
+
+| DAG | Schedule | Purpose |
+|---|---|---|
+| `open_meteo_forecast_hourly` | `15 * * * *` | Fetch, validate, transform, and publish hourly forecast data |
+| `open_meteo_archive_monthly` | `30 2 1 * *` | Load the previous completed archive month |
+| `lakehouse_maintenance_daily` | `30 3 * * *` | Expire old DuckLake snapshots and clean eligible files |
+
+## Dashboard
+
+The Streamlit application exposes three operational views.
+
+### Forecast Map
+
+Shows the current complete forecast run and rainfall-pressure signal across Hanoi.
+The map is ward-oriented, while rainfall values retain the source weather-grid
+semantics underneath.
+
+### Ward Drilldown
+
+Explores one ward in more detail, including forward rainfall windows, pressure
+level, persistence, and forecast revision behavior.
+
+### Archive Replay
+
+Replays historical rainfall and compares it with sourced flood observations where
+the observation has enough verified metadata to be eligible for replay.
+
+After startup, open:
+
+- Dashboard: [http://localhost:8501](http://localhost:8501)
+- Airflow: [http://localhost:8080](http://localhost:8080)
+- MinIO Console: [http://localhost:9001](http://localhost:9001)
+- pgAdmin: [http://localhost:5050](http://localhost:5050)
+
+See [Serving & BI](docs/08-serving-bi.md) for query and serving behavior.
+
+## Steps to Reproduce
+
+### Prerequisites
+
+Only Docker with Docker Compose is required for the default local runtime.
+
+| Tool | Purpose |
+|---|---|
+| Docker Desktop / Docker Engine | Run PostgreSQL, MinIO, Airflow, bootstrap, and dashboard services |
+| Docker Compose | Build and start the complete local stack |
+| Python 3.12+ and `uv` | Optional; only needed for host-side development commands |
+
+No `.env` file is required for the default local stack. Compose generates and
+persists local runtime secrets in the `runtime_secrets` named volume.
+
+---
+
+### 1. Clone the repository
+
+```bash
+git clone https://github.com/DKSang/vn-climate-risk-monitor.git
+cd vn-climate-risk-monitor
+```
+
+---
+
+### 2. Start the full stack
+
+```bash
+docker compose up -d --build
+```
+
+The first startup:
+
+- generates local runtime secrets;
+- starts PostgreSQL and MinIO;
+- creates the DuckLake catalog and control-plane schemas;
+- seeds geography/reference data;
+- builds static geography models;
+- starts Airflow and the Streamlit dashboard.
+
+Use `.env.example` only when you need to override ports, Open-Meteo settings, or
+provide deterministic local credentials before the first startup.
+
+---
+
+### 3. Check the services
+
+```bash
+docker compose ps
+```
+
+To re-run the idempotent bootstrap manually:
+
+```bash
+docker compose run --rm bootstrap
+```
+
+---
+
+### 4. Enable scheduled DAGs
+
+New DAGs start paused by default in the local stack. Enable the flows you want to
+run:
+
+```bash
+docker compose exec airflow airflow dags unpause open_meteo_forecast_hourly
+docker compose exec airflow airflow dags unpause open_meteo_archive_monthly
+docker compose exec airflow airflow dags unpause lakehouse_maintenance_daily
+```
+
+---
+
+### 5. Trigger the forecast pipeline
+
+```bash
+docker compose exec airflow airflow dags trigger open_meteo_forecast_hourly
+```
+
+The DAG runs:
+
+```text
+fetch forecast
+  -> load staging
+  -> Provero checks
+  -> forecast health checks
+  -> Silver processing
+  -> Gold processing
+  -> Gold health gate
+```
+
+---
+
+### 6. Run one-off ingestion commands
+
+Fetch commands are dry-run unless `--execute` is present.
+
+```bash
+docker compose exec -T airflow uv run fetch-open-meteo forecast --execute
+
+docker compose exec -T airflow uv run fetch-open-meteo archive \
+  --start 2026-01-01 \
+  --end 2026-02-01 \
+  --execute
+
+docker compose exec -T airflow uv run load-sources open_meteo_forecast
+docker compose exec -T airflow uv run load-sources open_meteo_archive open_meteo_ifs
+```
+
+---
+
+### 7. Run transformations and quality checks
+
+```bash
+docker compose exec -T airflow uv run python scripts/run_processing.py run forecast_silver
+docker compose exec -T airflow uv run python scripts/run_processing.py run forecast_gold
+
+docker compose exec -T airflow uv run provero run \
+  -c quality/provero.yaml --no-optimize --no-store
+
+docker compose exec -T airflow uv run python scripts/run_dbt.py test \
+  --project-dir transform --profiles-dir transform
+
+docker compose exec -T airflow uv run python scripts/healthcheck.py \
+  --scope all --require-gold
+```
+
+All runtime commands execute inside the Airflow container so they use the same
+locked dependencies and generated secrets as scheduled DAGs.
+
+---
+
+### 8. Run host-side development checks (optional)
+
+Install the development environment only when working on the codebase itself:
+
+```bash
+uv sync --dev
+uv run ruff check .
+uv run pytest
+uv run python scripts/check_docs.py
+```
 
 ## Documentation
 
-The README is intentionally an overview. Design rationale and operating detail live in focused documents:
+The README stays at project-overview level. Detailed design and operating notes
+live in focused documents:
 
 - [Business Problem](docs/01-business-problem.md)
 - [Data Sources](docs/02-data-sources.md)
@@ -329,6 +408,8 @@ The README is intentionally an overview. Design rationale and operating detail l
 - [Serving & BI](docs/08-serving-bi.md)
 - [Governance](docs/09-governance.md)
 
-## Data usage
+## Data Usage
 
-Open-Meteo Free API is used for non-commercial portfolio purposes. Published Open-Meteo-derived data must retain the required attribution. Reference datasets remain subject to their original source terms.
+Open-Meteo Free API is used for non-commercial portfolio purposes. Published
+Open-Meteo-derived data should retain source attribution. Reference datasets and
+media-derived observations remain subject to their original source terms.

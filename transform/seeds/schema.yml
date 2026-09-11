@@ -4,7 +4,7 @@ seeds:
   - name: ward_grid_map_seed
     description: >
       Ánh xạ phường → ô lưới cho từng model archive, lấy từ CHÍNH phép snap của
-      Open-Meteo (sinh bởi `make map-grid`, không phải tính nearest-neighbour —
+      Open-Meteo (sinh bởi `uv run fetch-open-meteo map-grid --execute`, không phải tính nearest-neighbour —
       hai cách này lệch nhau).
       Đây là thứ cho phép fetch theo ô thay vì theo phường: 126 phường Hà Nội chỉ
       rơi vào 12 ô ERA5 với dữ liệu giống hệt nhau, nên fetch theo phường tiêu
@@ -43,7 +43,7 @@ seeds:
 
   - name: flood_event_observations_seed
     description: >
-      Quan sát ngập THỰC TẾ, sinh bởi `make fetch-flood-observations` từ bảng
+      Quan sát ngập THỰC TẾ, sinh bởi `uv run python -m vn_climate_risk_monitor.flood_observations` từ bảng
       Flourish nhúng trong bài tường thuật VnExpress ngày 07/10/2025.
       Khác `hanoi_flood_points_seed`: file đó là DANH MỤC điểm có nguy cơ theo
       QĐ 2280, file này là BẰNG CHỨNG một địa điểm đã ngập vào một thời điểm.
@@ -97,7 +97,7 @@ seeds:
   - name: flood_observation_geocode_seed
     description: >
       Toạ độ và phường cho từng quan sát ngập. Sinh nháp bởi
-      `make geocode-flood-observations` (Nominatim + point-in-polygon trên 126
+      `uv run python -m vn_climate_risk_monitor.flood_geocode` (Nominatim + point-in-polygon trên 126
       ranh giới ở `reference/s13_wards/`), sau đó NGƯỜI soát.
 
       Tách khỏi `flood_event_observations_seed.csv` vì file đó do máy sinh và bị

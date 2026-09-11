@@ -1,13 +1,4 @@
-/*
-    MART — mưa theo ô lưới × giờ, kèm cửa sổ trượt và dải kịch bản.
-
-    Đây là Gold archive duy nhất: dashboard replay chiếu sang phường lúc query
-    qua bridge_ward_grid, tránh materialize thêm fact ngày hoặc ward × ngày.
-
-    `rain_{N}h_mm` NULL nghĩa là cửa sổ THIẾU GIỜ. Không có cột `_is_complete`
-    song song — NULL đã mang đúng nghĩa đó, và 14 cột phụ của bản cũ chỉ là
-    cùng một thông tin viết lại ba lần.
-*/
+/* Archive rain fact by grid × hour. NULL window means incomplete coverage. */
 
 {{ config(
     materialized = 'incremental',
@@ -15,12 +6,6 @@
     tags = ['fact', 'rain']
 ) }}
 
-{#
-    Lookback SUY RA từ danh sách cửa sổ, không gõ tay: cửa sổ rộng nhất N giờ
-    thì một giờ mới ở T làm sai các dòng đầu ra trong [T, T+(N−1)h], và để
-    tính chúng phải đọc từ T−(N−1)h. Đổi cửa sổ lớn nhất thì lookback tự cập
-    nhật theo — không có chỗ nào để quên sửa.
-#}
 {% set windows = rain_windows() %}
 {% set lookback = (windows | max - 1) ~ ' hours' %}
 

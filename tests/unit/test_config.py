@@ -5,6 +5,17 @@ import pytest
 from vn_climate_risk_monitor.config import load_settings
 
 
+@pytest.fixture(autouse=True)
+def runtime_secrets(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("POSTGRES_PASSWORD", "test-postgres")
+    monkeypatch.setenv("MINIO_SECRET_KEY", "test-minio")
+    monkeypatch.delenv("POSTGRES_PASSWORD_FILE", raising=False)
+    monkeypatch.delenv("MINIO_SECRET_KEY_FILE", raising=False)
+    load_settings.cache_clear()
+    yield
+    load_settings.cache_clear()
+
+
 def test_pyarrow_is_not_a_direct_dependency() -> None:
     text = Path("pyproject.toml").read_text(encoding="utf-8")
     assert "pyarrow" not in text
@@ -101,3 +112,16 @@ def test_secret_file_takes_precedence_over_environment(
     assert load_settings().postgres.password == "from-file"
 
     load_settings.cache_clear()
+
+
+@pytest.mark.parametrize("name", ["POSTGRES_PASSWORD", "MINIO_SECRET_KEY"])
+def test_missing_secret_is_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+    name: str,
+) -> None:
+    monkeypatch.delenv(name, raising=False)
+    monkeypatch.delenv(f"{name}_FILE", raising=False)
+    load_settings.cache_clear()
+
+    with pytest.raises(ValueError, match=name):
+        load_settings()

@@ -1,11 +1,5 @@
 -- depends_on: {{ ref('stg_open_meteo__weather_forecast_hourly') }}
-/*
-    INTERMEDIATE — lịch sử forecast vintage theo
-    (forecast_run_id, ô lưới forecast, valid_time).
-
-    Mỗi logical run được giữ để audit revision và persistence.
-    Chỉ run đủ 126 location × forecast_hours mới được publish.
-*/
+/* Forecast vintage history; chỉ publish run đủ location × horizon. */
 
 {{ config(
     materialized = 'incremental',
@@ -13,9 +7,6 @@
     tags = ['intermediate']
 ) }}
 
-{#
-    Cột GIÁ TRỊ dùng cho `_row_hash`. Khác archive: có showers và pop, không có soil_moisture.
-#}
 {% set value_columns = [
     'precipitation_mm',
     'rain_mm',
@@ -65,7 +56,6 @@ complete_runs AS (
        AND MAX(locations) = {{ var('forecast_expected_locations', 126) }}
 ),
 
--- Các requested point có thể trùng returned grid; dedup trong TỪNG run.
 deduplicated AS (
     SELECT *
     FROM staged
@@ -102,11 +92,7 @@ incoming AS (
         valid_time_utc,
         {% for column in value_columns %}{{ column }},
         {% endfor %}
-        MD5(CONCAT_WS('|',
-            {%- for column in value_columns %}
-            COALESCE(CAST({{ column }} AS VARCHAR), ''){{ "," if not loop.last }}
-            {%- endfor %}
-        )) AS _row_hash,
+        {{ stable_row_hash(value_columns) }} AS _row_hash,
         forecast_run_id,
         _source_file,
         _ingested_at
@@ -119,10 +105,4 @@ SELECT
     {{ processing_updated_at() }} AS _updated_at
 FROM incoming
 
-{% if is_incremental() %}
--- Change-aware MERGE: chỉ giữ dòng MỚI hoặc ĐỔI THẬT.
-LEFT JOIN {{ this }} AS existing
-    ON existing.weather_forecast_hourly_key = incoming.weather_forecast_hourly_key
-WHERE existing.weather_forecast_hourly_key IS NULL
-   OR existing._row_hash <> incoming._row_hash
-{% endif %}
+{{ incremental_new_or_changed('weather_forecast_hourly_key') }}

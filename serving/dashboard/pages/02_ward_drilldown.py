@@ -35,6 +35,7 @@ from serving.dashboard.ui import (
     page_header,
     pressure_score_label,
     to_local_naive,
+    warn_if_stale,
 )
 
 configure_page("Chi tiết phường/xã", "⌖")
@@ -60,13 +61,7 @@ page_header(
     f"Forecast S{table_snapshot_version} · {local_time(metadata.get('updated_at_utc'), '%H:%M · %d/%m')}",
 )
 
-freshness_minutes = int(metadata.get("freshness_minutes") or 0)
-if freshness_minutes > 90:
-    st.warning(
-        f"Snapshot đã chậm khoảng {freshness_minutes // 60} giờ "
-        f"{freshness_minutes % 60} phút. Không dùng cho quyết định vận hành "
-        "trước khi pipeline được kiểm tra."
-    )
+warn_if_stale(metadata)
 
 ward_options = {f"{ward['ward_name']} · {ward['ward_code']}": ward for ward in wards}
 with st.container(border=True):

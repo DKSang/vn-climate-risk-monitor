@@ -1,21 +1,4 @@
-"""Engine generic: discovery → checkpoint → SQL transform → commit.
-
-Không biết gì về Open-Meteo, thời tiết, hay bất kỳ nguồn cụ thể nào. Mọi thứ
-riêng của nguồn nằm trong YAML (:mod:`autoloader.config`) và file SQL.
-
-Vòng đời một lần chạy, bám sát Databricks Auto Loader::
-
-    1. discover()      liệt kê file trên storage        (directory listing)
-    2. register        ghi file mới vào checkpoint      (PENDING)
-    3. claim_files()   lấy một micro-batch + lease      (maxFilesPerTrigger)
-    4. execute SQL     DuckDB đọc file và ghi bảng đích (xử lý bằng SQL)
-    5. commit_file()   đánh dấu COMMITTED               (exactly-once)
-
-Bảng đích tự tạo ở lần nạp đầu tiên (xem :meth:`AutoLoader._ensure_target`), nên
-thêm nguồn mới vẫn chỉ là 1 YAML + 1 SQL.
-
-Bước 4 giao explode/ép kiểu cho DuckDB. Python chỉ điều phối.
-"""
+"""Generic file autoloader: discover, claim, transform, commit."""
 
 from __future__ import annotations
 
@@ -78,7 +61,6 @@ class AutoLoader:
         self.worker_id = worker_id or f"{socket.gethostname()}-{os.getpid()}"
         self._target_ready = False
 
-    # ── bước 1 + 2 ────────────────────────────────────────────────────────────
     def register_new_files(self, *, now: datetime) -> tuple[int, int]:
         """Liệt kê storage, ghi file chưa biết vào checkpoint. Trả (thấy, mới)."""
         found = discover(
@@ -110,7 +92,6 @@ class AutoLoader:
             )
         return len(found), len(fresh)
 
-    # ── bước 3 + 4 + 5 ────────────────────────────────────────────────────────
     def claim_batch(self) -> tuple[Any, ...]:
         """Giữ một micro-batch kèm lease. Tương ứng maxFilesPerTrigger."""
         return self.checkpoint.claim_files(
@@ -124,11 +105,7 @@ class AutoLoader:
         )
 
     def process_batch(self, claimed: Sequence[Any] | None = None) -> _BatchResult:
-        """Chạy SQL cho một lô đã claim rồi commit.
-
-        Phân biệt số file đã claim với số file commit thành công để đường cô lập
-        không báo file FAILED là đã commit.
-        """
+        """Transform một micro-batch và commit các file thành công."""
         if claimed is None:
             claimed = self.claim_batch()
         if not claimed:
@@ -137,21 +114,14 @@ class AutoLoader:
         uris = [f"s3://{self.bucket}/{item.object_key}" for item in claimed]
         try:
             rows = self._run_transform(uris)
-        except Exception:  # noqa: BLE001 — cô lập file lỗi ở _isolate_failures
-            # KHÔNG đánh hỏng cả lô. Một file JSON hỏng từng làm mất luôn các file
-            # lành đi cùng lô: đo 2026-08-21 với batch_size=10, 2 file lành + 1 file
-            # hỏng -> 0 dòng vào bảng, cả 3 kẹt FAILED sau khi hết retry.
-            # Đó chính là thứ control plane sinh ra để tránh, nên phải cô lập.
+        except Exception:  # noqa: BLE001 - isolate bad files without losing the batch
             return self._isolate_failures(claimed)
 
         self._commit_all(claimed)
         return _BatchResult(len(claimed), len(claimed), rows, ())
 
     def _isolate_failures(self, claimed: Sequence[Any]) -> _BatchResult:
-        """Chạy lại từng file một để tìm đúng file hỏng.
-
-        Chi phí chỉ phát sinh khi có lỗi; đường thành công vẫn chạy cả lô một lần.
-        """
+        """Retry từng file để cô lập file lỗi."""
         committed_files = 0
         total_rows = 0
         failures: list[str] = []
@@ -175,8 +145,7 @@ class AutoLoader:
         )
 
     def _commit_all(self, claimed: Sequence[Any]) -> None:
-        # Không ghi rows per-file: INSERT chạy cả lô nên chỉ biết tổng, chia đều
-        # là số giả — tổng nằm trong LoadResult (xem commit_file).
+        # Batch INSERT chỉ có tổng row count, không gán số giả cho từng file.
         committed_at = datetime.now(UTC)
         for item in claimed:
             self.checkpoint.commit_file(
@@ -187,18 +156,7 @@ class AutoLoader:
             )
 
     def _ensure_target(self, target: str, select_sql: str) -> None:
-        """Tạo bảng đích nếu chưa có, lấy schema từ CHÍNH SQL của nguồn.
-
-        `CREATE TABLE ... AS <select> WHERE false` nên schema không bao giờ lệch
-        khỏi SELECT — không có danh sách cột thứ hai để quên cập nhật. Bảng đã có
-        thì `IF NOT EXISTS` giữ nguyên, kể cả bảng chỉnh tay.
-
-        Probe bằng `SELECT ... WHERE false` trước vì `CREATE TABLE IF NOT EXISTS
-        ... AS SELECT` vẫn BIND câu select kể cả khi bảng đã tồn tại (đo trên
-        DuckDB 1.5: nó ném IOException khi file nguồn không tồn tại). Bind nghĩa
-        là read_json_auto phải suy schema, tức đọc thật trên S3 — probe chỉ hỏi
-        catalog nên rẻ hơn hẳn.
-        """
+        """Tạo bảng đích từ schema của source SQL khi bảng chưa tồn tại."""
         if self._target_ready:
             return
         try:
@@ -211,15 +169,7 @@ class AutoLoader:
         self._target_ready = True
 
     def _ingested_at_literal(self) -> str:
-        """Timestamp cho ``_ingested_at``, lấy từ control plane chứ không từ DuckDB.
-
-        ``CURRENT_TIMESTAMP`` của DuckDB là giờ máy worker; downstream lại so nó
-        với checkpoint lấy giờ Postgres. Một đồng hồ, một hệ quy chiếu.
-
-        Dấu thời gian này là lúc lô BẮT ĐẦU ghi, nên luôn SỚM HƠN lúc row visible.
-        Đó là hướng an toàn: consumer bù bằng safety lag ở chặn dưới. Nếu đóng dấu
-        muộn hơn commit thì không có cách nào bù được.
-        """
+        """Timestamp `_ingested_at` từ control-plane clock."""
         moment = self.checkpoint.control_now()
         if moment.tzinfo is None:
             moment = moment.replace(tzinfo=UTC)
@@ -227,12 +177,7 @@ class AutoLoader:
         return f"TIMESTAMPTZ '{stamp}'"
 
     def _render(self, uris: Sequence[str]) -> str:
-        """Thay placeholder trong SQL của nguồn.
-
-        Hai placeholder do engine cấp (``files``, ``ingested_at``) cộng với
-        ``parameters`` trong YAML. Nhờ ``parameters``, nhiều nguồn cùng schema
-        dùng chung MỘT file SQL thay vì nhân bản file rồi để chúng trôi khỏi nhau.
-        """
+        """Render placeholder engine và source parameters vào SQL."""
         values = {
             "files": "[" + ", ".join(f"'{uri}'" for uri in uris) + "]",
             "ingested_at": self._ingested_at_literal(),
@@ -251,27 +196,15 @@ class AutoLoader:
         result = self.sql.execute(
             f"INSERT INTO {target} BY NAME ({select_sql})"
         ).fetchone()
-        # DuckDB trả số dòng đã chèn ngay từ câu INSERT
         return int(result[0]) if result else 0
 
-    # ── điều phối ─────────────────────────────────────────────────────────────
     def load(self, *, now: datetime | None = None) -> LoadResult:
         moment = now or datetime.now(UTC)
         discovered, registered = self.register_new_files(now=moment)
 
         batches = committed = rows = 0
         failures: list[str] = []
-        # File đã thử trong LẦN CHẠY NÀY. `claim_files` vẫn trả lại file vừa FAILED
-        # khi retry_count chưa chạm trần, nên nếu không nhớ thì vòng lặp sẽ retry
-        # ngay lập tức và đốt hết max_batches vào cùng một file hỏng. Retry nên để
-        # lần chạy sau — lúc đó nguyên nhân tạm thời (mạng, lock) có thể đã hết.
         for _ in range(self.config.loader.max_batches):
-            # KHÔNG lọc file đã thử trong lần chạy này. Từng thử cách đó và nó gây
-            # starvation: claim_files sắp xếp theo (scheduled_at, batch_index) nên
-            # file hỏng luôn được trả trước, lọc nó ra rồi dừng khiến file lành phía
-            # sau không bao giờ tới lượt.
-            # `max_retries` đã chặn sẵn: một file hỏng bị claim tối đa max_retries
-            # lần rồi bị loại khỏi truy vấn, sau đó lô mới lấy được file lành.
             batch = self.process_batch()
             if batch.claimed_files == 0:
                 break

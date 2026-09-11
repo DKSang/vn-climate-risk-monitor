@@ -45,8 +45,8 @@ Ingestion Open-Meteo gồm hai lệnh: `fetch-open-meteo` (missing rows + GET/PU
 MinIO) và `load-sources` (autoloader nạp vào staging `silver.stg_*`). Nguồn geography
 (danh mục phường và ánh xạ ô lưới) đến từ `transform/seeds/*.csv`
 (`ward_coordinates_seed.csv` và `ward_grid_map_seed.csv`), không qua collector hay
-database nguồn PostgreSQL `public.wards`. Lệnh `make bootstrap-geography` seed và
-build trực tiếp graph `+dim_ward` vào DuckLake.
+database nguồn PostgreSQL `public.wards`. Bootstrap seed và build các model tĩnh
+cần cho geography trực tiếp vào DuckLake.
 
 ## Bố trí vật lý trên MinIO
 
@@ -60,8 +60,8 @@ s3://vn-climate/
 ```
 
 `bronze/files` do fetch quản lý và immutable. Parquet của `silver` và `gold` do
-catalog DuckLake quản lý. Thủ tục `make clean-lake` chỉ dọn snapshot/file mồ côi
-trong catalog DuckLake, không bao giờ xóa file trong `bronze/files`.
+catalog DuckLake quản lý. `scripts/clean_lake.py` chỉ dọn snapshot/file mồ côi
+trong catalog DuckLake, không xóa file trong `bronze/files`.
 
 ## Trách nhiệm từng layer
 

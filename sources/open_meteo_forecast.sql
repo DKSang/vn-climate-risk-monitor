@@ -1,15 +1,6 @@
--- Transform cho nguồn open_meteo_forecast.
--- Chạy bởi autoloader engine, thay hai placeholder:
---   {{ files }}        danh sách file đã claim trong lô này
---   {{ ingested_at }}  giờ từ Postgres control plane — KHÔNG dùng
---                      CURRENT_TIMESTAMP của DuckDB (giờ máy worker), vì
---                      checkpoint downstream so mốc này với giờ Postgres.
---
--- Thay thế parser.py (408 dòng Python + pyarrow). Toàn bộ explode và ép kiểu
--- do DuckDB làm.
---
--- Rescue (tinh thần _rescued_data của Auto Loader): dùng TRY_CAST thay CAST, giá
--- trị hỏng thành NULL và được ghi lại trong _rescued_data thay vì làm gãy cả lô.
+-- Forecast payload transform used by the autoloader.
+-- {{ ingested_at }} comes from the Postgres control-plane clock used by checkpoints.
+-- TRY_CAST preserves bad values in _rescued_data instead of failing the batch.
 
 WITH raw AS (
     SELECT *
@@ -30,7 +21,7 @@ exploded AS (
         timezone,
         utc_offset_seconds,
         hourly_units,
-        -- payload lỗi của Open-Meteo (rate limit...) không có `hourly`
+        -- Error payloads do not include hourly data.
         UNNEST(hourly.time)                      AS t_raw,
         UNNEST(hourly.precipitation)             AS precipitation_raw,
         UNNEST(hourly.rain)                      AS rain_raw,
@@ -56,7 +47,7 @@ SELECT
     CAST(hourly_units AS VARCHAR)                     AS hourly_units_json,
     filename                                          AS _source_file,
     {{ ingested_at }}                                 AS _ingested_at,
-    -- _rescued_data: ghi lại giá trị KHÔNG ép kiểu được, thay vì fail cả lô
+    -- Keep invalid source values for inspection.
     NULLIF(
         TRIM(
             CASE WHEN TRY_CAST(CAST(t_raw AS VARCHAR) AS BIGINT) IS NULL
