@@ -17,6 +17,8 @@ from typing import Any
 
 from processing.runner import Bounds
 
+FILE_BACKED_DBT_SETTINGS = ("POSTGRES_PASSWORD", "MINIO_SECRET_KEY")
+
 
 class DbtBuildError(RuntimeError):
     def __init__(self, command: Sequence[str], returncode: int) -> None:
@@ -79,6 +81,27 @@ def build_command(
     return command
 
 
+def _hydrate_file_backed_settings(environment: dict[str, str]) -> None:
+    """Expose Docker secrets only to the dbt child process.
+
+    dbt profile Jinja supports ``env_var`` but cannot read ``*_FILE``. The
+    application itself uses file-backed settings, so without this adapter dbt
+    silently falls back to the development password declared in profiles.yml.
+    File values win over a stale direct variable, matching runtime config.
+    """
+    for name in FILE_BACKED_DBT_SETTINGS:
+        secret_file = environment.get(f"{name}_FILE")
+        if secret_file is None:
+            continue
+        try:
+            value = Path(secret_file).read_text(encoding="utf-8").rstrip("\r\n")
+        except OSError as error:
+            raise ValueError(f"Cannot read {name}_FILE: {secret_file}") from error
+        if not value:
+            raise ValueError(f"{name}_FILE must not be empty")
+        environment[name] = value
+
+
 def run_dbt(
     bounds: Bounds,
     *,
@@ -94,6 +117,7 @@ def run_dbt(
     # ``transform/target`` cũng có cùng vấn đề. Log chuẩn vẫn được Airflow thu từ
     # stdout, còn log/artifact tạm đặt ở /tmp để không phụ thuộc owner bind mount.
     environment = os.environ.copy()
+    _hydrate_file_backed_settings(environment)
     environment.setdefault(
         "DBT_LOG_PATH", str(Path(tempfile.gettempdir()) / "vn-climate-dbt-logs")
     )
