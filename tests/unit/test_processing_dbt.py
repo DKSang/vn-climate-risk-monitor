@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -125,3 +126,28 @@ def test_zero_exit_returns_quietly() -> None:
     assert calls[0]["cwd"] == Path("transform")
     assert calls[0]["env"]["DBT_LOG_PATH"].endswith("vn-climate-dbt-logs")
     assert calls[0]["env"]["DBT_TARGET_PATH"].endswith("vn-climate-dbt-target")
+
+
+def test_file_backed_secrets_are_forwarded_only_to_dbt_child(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    postgres = tmp_path / "postgres_password"
+    minio = tmp_path / "minio_secret_key"
+    postgres.write_text("postgres-from-file\n", encoding="utf-8")
+    minio.write_text("minio-from-file\n", encoding="utf-8")
+    monkeypatch.setenv("POSTGRES_PASSWORD", "stale-environment-value")
+    monkeypatch.setenv("POSTGRES_PASSWORD_FILE", str(postgres))
+    monkeypatch.delenv("MINIO_SECRET_KEY", raising=False)
+    monkeypatch.setenv("MINIO_SECRET_KEY_FILE", str(minio))
+    calls: list[dict[str, Any]] = []
+
+    def fake(command: list[str], **kwargs: Any) -> _Completed:
+        calls.append({"command": command, **kwargs})
+        return _Completed(0)
+
+    run_dbt(bounds(lower=at(9, 45)), project_dir=Path("transform"), runner=fake)
+
+    child_environment = calls[0]["env"]
+    assert child_environment["POSTGRES_PASSWORD"] == "postgres-from-file"
+    assert child_environment["MINIO_SECRET_KEY"] == "minio-from-file"
+    assert os.environ["POSTGRES_PASSWORD"] == "stale-environment-value"
