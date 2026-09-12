@@ -41,3 +41,8 @@ transform/dev.duckdb
 
 # Provero runtime artifacts (Makefile đang chạy --no-store)
 .provero/
+.claude/
+.vscode/
+.pytest_cache/
+.ruff_cache/
+.streamlit/
