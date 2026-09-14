@@ -15,13 +15,9 @@ dependencies = [
 
     # ── Transform (dbt + DuckDB) ──
     "dbt-duckdb>=1.11.0",
-    # Data-quality gates are part of the production pipelines.
-    "provero>=0.2.1",
 
-    # ── Runtime configuration + read-only operational API ──
+    # ── Runtime configuration ──
     "python-dotenv>=1.1.0",
-    "fastapi>=0.116.0",
-    "uvicorn>=0.35.0",
 
     # ── Serving / Dashboard (Streamlit + deck.gl) ──
     "streamlit>=1.45.0",
@@ -35,23 +31,21 @@ dev = [
     "pytest>=8.3.0",
     # Render macro dbt trong unit test, không cần DuckDB/Postgres chạy thật.
     "jinja2>=3.1.0",
-    "responses>=0.25.0",
     "ruff>=0.11.0",
 ]
 
 [project.scripts]
 fetch-open-meteo = "vn_climate_risk_monitor.open_meteo:main"
-load-sources = "vn_climate_risk_monitor.load:main"
-
-# Connector DuckLake cho Provero — Provero tự phát hiện qua entry_points.
-# Không cần fork Provero, không ghi đè connector built-in.
-[project.entry-points."provero.connectors"]
-ducklake = "autoloader.provero_ducklake:DuckLakeConnector"
+auto-loader = "vn_climate_risk_monitor.load:main"
+auto-process = "vn_climate_risk_monitor.processing.cli:main"
+pipeline-health = "vn_climate_risk_monitor.health:main"
+maintain-lakehouse = "vn_climate_risk_monitor.maintenance:main"
+bootstrap-lakehouse = "vn_climate_risk_monitor.bootstrap:main"
+reset-lakehouse = "vn_climate_risk_monitor.reset:main"
 
 [tool.uv.build-backend]
-# `fetch` = HTTP→MinIO; `autoloader` = file→bảng; `processing` = incremental
-# transform có checkpoint; `vn_climate_risk_monitor` = app.
-module-name = ["fetch", "autoloader", "processing", "vn_climate_risk_monitor"]
+# One product package; ingestion and processing are internal capabilities.
+module-name = ["vn_climate_risk_monitor"]
 
 [build-system]
 requires = ["uv_build>=0.12.3,<0.13.0"]

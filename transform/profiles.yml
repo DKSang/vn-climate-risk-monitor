@@ -16,7 +16,7 @@ transform:
       secrets:
         - type: s3
           name: minio_secret
-          key_id: "{{ env_var('MINIO_ACCESS_KEY', 'minioadmin') }}"
+          key_id: "{{ env_var('MINIO_ACCESS_KEY') }}"
           secret: "{{ env_var('MINIO_SECRET_KEY') }}"
           endpoint: "{{ env_var('MINIO_ENDPOINT', '127.0.0.1:9000') }}"
           use_ssl: "{{ env_var('MINIO_SECURE', 'false') | as_native }}"

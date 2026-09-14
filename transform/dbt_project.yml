@@ -101,7 +101,7 @@ seeds:
         longitude: DOUBLE
         status: VARCHAR
         source_reference: VARCHAR
-    # Sinh bởi `uv run python -m vn_climate_risk_monitor.flood_observations`, không sửa tay: mọi dòng phải
+    # Sinh bởi `uv run python tools/flood_observations.py`, không sửa tay: mọi dòng phải
     # truy được về đúng một snapshot Flourish có version.
     #
     # `observed_at_local` giữ VARCHAR chứ không để dbt suy TIMESTAMP: 4/123
@@ -165,32 +165,25 @@ models:
     +database: catalog1
 
     # Ba lớp chuẩn: staging -> intermediate -> marts. THƯ MỤC là cấu trúc dbt;
-    # TÊN VẬT LÝ (schema DuckLake) vẫn theo medallion: staging + intermediate
-    # vào `silver`, marts vào `gold`. SILVER_CLEAN của reference architecture
-    # (bảng MERGE) là `int_weather_archive_hourly`, không phải model nào trong staging/.
-    #
-    # Vì sao staging là view MỎNG (rename/cast/WHERE, không window/join):
-    # DuckDB không đẩy filter xuống dưới window function qua view (đo 9,7s vs
-    # 0,0s). Dedup + `_row_hash` nằm ở intermediate TABLE incremental — chỗ duy
-    # nhất nó rẻ.
+    # TÊN VẬT LÝ (schema DuckLake) vẫn theo medallion: seed-normalization views
+    # ở `silver`, weather staging đã là physical Silver tables, và marts vào
+    # `gold`. Weather intermediate models read those physical tables directly.
 
-    # 1 model / 1 nguồn. Rename + cast. Mặc định view -> không tốn dung lượng
-    # (bản vật lý đã nằm ở catalog, autoloader ghi ngoài dbt cho weather).
+    # Seed/reference normalization remains a thin view layer. Autoloader-owned
+    # weather staging is intentionally not duplicated as dbt models.
     staging:
       +schema: silver
       +materialized: view
       +tags: ['staging']
 
-    # Business logic trung gian: dedup, conform, change-aware MERGE.
-    # Mặc định view; `int_weather_archive_hourly` override = incremental TABLE vì đó
-    # là bảng MERGE, đẩy lên view sẽ tái tạo bug 49s.
+    # Business logic trung gian: dedup, conform and incremental delete+insert.
     intermediate:
       +schema: silver
       +materialized: view
       +tags: ['intermediate']
 
-    # Star schema. Mặc định table; fact/dim mutable ghi `incremental` trong
-    # file để giữ cờ soft delete và `_updated_at` của dòng không đổi.
+    # Star schema. Mutable weather facts use dbt-duckdb's standard incremental
+    # materialization; static seed/reference dimensions and bridges are tables.
     marts:
       +schema: gold
       +materialized: table

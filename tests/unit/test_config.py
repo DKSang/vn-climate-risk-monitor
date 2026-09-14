@@ -8,6 +8,7 @@ from vn_climate_risk_monitor.config import load_settings
 @pytest.fixture(autouse=True)
 def runtime_secrets(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("POSTGRES_PASSWORD", "test-postgres")
+    monkeypatch.setenv("MINIO_ACCESS_KEY", "test-minio-user")
     monkeypatch.setenv("MINIO_SECRET_KEY", "test-minio")
     monkeypatch.delenv("POSTGRES_PASSWORD_FILE", raising=False)
     monkeypatch.delenv("MINIO_SECRET_KEY_FILE", raising=False)
@@ -114,7 +115,9 @@ def test_secret_file_takes_precedence_over_environment(
     load_settings.cache_clear()
 
 
-@pytest.mark.parametrize("name", ["POSTGRES_PASSWORD", "MINIO_SECRET_KEY"])
+@pytest.mark.parametrize(
+    "name", ["POSTGRES_PASSWORD", "MINIO_ACCESS_KEY", "MINIO_SECRET_KEY"]
+)
 def test_missing_secret_is_rejected(
     monkeypatch: pytest.MonkeyPatch,
     name: str,

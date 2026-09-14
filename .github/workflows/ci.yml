@@ -16,7 +16,9 @@ jobs:
   checks:
     runs-on: ubuntu-latest
     env:
+      AIRFLOW_FERNET_KEY: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
       AIRFLOW_SECRET_KEY: ci-airflow-secret-not-for-production
+      MINIO_ACCESS_KEY: ci-minio-access-not-for-production
       MINIO_SECRET_KEY: ci-minio-secret-not-for-production
       PGADMIN_DEFAULT_PASSWORD: ci-pgadmin-password-not-for-production
       POSTGRES_PASSWORD: ci-postgres-password-not-for-production
@@ -92,7 +94,7 @@ jobs:
         run: uv run dbt compile --profiles-dir /tmp/vn-climate-dbt-ci --target ci
 
       - name: Build reproducible runtime images
-        run: docker compose build airflow dashboard
+        run: docker compose build airflow streamlit
 
       - name: Parse DAGs in the runtime image
         run: |

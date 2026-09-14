@@ -43,7 +43,7 @@ seeds:
 
   - name: flood_event_observations_seed
     description: >
-      Quan sát ngập THỰC TẾ, sinh bởi `uv run python -m vn_climate_risk_monitor.flood_observations` từ bảng
+      Quan sát ngập THỰC TẾ, sinh bởi `uv run python tools/flood_observations.py` từ bảng
       Flourish nhúng trong bài tường thuật VnExpress ngày 07/10/2025.
       Khác `hanoi_flood_points_seed`: file đó là DANH MỤC điểm có nguy cơ theo
       QĐ 2280, file này là BẰNG CHỨNG một địa điểm đã ngập vào một thời điểm.
@@ -97,8 +97,8 @@ seeds:
   - name: flood_observation_geocode_seed
     description: >
       Toạ độ và phường cho từng quan sát ngập. Sinh nháp bởi
-      `uv run python -m vn_climate_risk_monitor.flood_geocode` (Nominatim + point-in-polygon trên 126
-      ranh giới ở `reference/s13_wards/`), sau đó NGƯỜI soát.
+      `uv run python tools/flood_geocode.py` (Nominatim + point-in-polygon trên 126
+      bộ ranh giới S13 đã version-control), sau đó NGƯỜI soát.
 
       Tách khỏi `flood_event_observations_seed.csv` vì file đó do máy sinh và bị
       ghi đè mỗi lần fetch lại; gộp chung thì công soát tay mất sạch.

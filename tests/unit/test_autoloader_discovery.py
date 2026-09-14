@@ -5,7 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
-from autoloader.discovery import DiscoveredObject, discover, select_new
+from vn_climate_risk_monitor.ingestion.loader import (
+    DiscoveredObject,
+    discover,
+    select_new,
+)
 
 
 @dataclass

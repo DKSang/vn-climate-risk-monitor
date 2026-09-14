@@ -1,6 +1,6 @@
 """Nguồn Open-Meteo: việc còn thiếu → ``fetch.land`` lên MinIO, chạy song song.
 
-CLI: ``uv run fetch-open-meteo forecast|archive|map-grid``. Load: ``uv run load-sources``.
+CLI: ``uv run fetch-open-meteo forecast|archive|map-grid``. Load: ``uv run auto-loader``.
 
 ── ARCHIVE FETCH THEO Ô LƯỚI, KHÔNG THEO PHƯỜNG ────────────────────────────────
 Đo 2026-08-28: 126 phường Hà Nội chỉ rơi vào 12 ô ERA5, và mọi bản sao trong cùng
@@ -23,74 +23,37 @@ lộ ra, làm hỏng dedup theo ô ở Silver).
 from __future__ import annotations
 
 import argparse
-import calendar
-import math
 import time
-from collections.abc import Iterator, Sequence
-from dataclasses import dataclass
-from datetime import UTC, date, datetime, timedelta
-from itertools import batched
-from pathlib import Path
-from urllib.parse import urlencode, urlparse, urlunparse
+from collections.abc import Iterable, Sequence
+from datetime import UTC, date, datetime
 
 import duckdb
 from minio import Minio
 from minio.error import S3Error
 
-from fetch import FetchTask, land, run_fetch_pool
 from vn_climate_risk_monitor import grid
 from vn_climate_risk_monitor.config import OpenMeteoSettings, load_settings
+from vn_climate_risk_monitor.ingestion.fetch import (
+    FetchTask,
+    ensure_bucket,
+    land,
+    run_fetch_pool,
+)
 from vn_climate_risk_monitor.lakehouse import get_connection
-from vn_climate_risk_monitor.storage import ensure_bucket, get_minio_client
-
-FORECAST_PREFIX = "bronze/files/open_meteo/forecast/incremental"
-FORECAST_FIELDS = "precipitation,rain,showers,precipitation_probability,weather_code"
-ARCHIVE_FIELDS = (
-    "precipitation,rain,weather_code,soil_moisture_0_to_7cm,soil_moisture_7_to_28cm"
+from vn_climate_risk_monitor.sources.open_meteo import (
+    ARCHIVE_MODELS,
+    STAGING_HOURLY,
+    Location,
+    archive_tasks,
+    days_in_month,
+    forecast_run_id,
+    forecast_tasks,
+    model_for_month,
+    month_params,
+    months_between,
+    slot_params,
 )
-
-#: Mốc đầu tiên ``ecmwf_ifs`` có dữ liệu — dò 2026-08-28: 2016 mọi quý đều NULL,
-#: 2017 mọi quý đều có.
-IFS_START = date(2017, 1, 1)
-
-
-@dataclass(frozen=True)
-class ArchiveModel:
-    """Một model archive: tên, nơi land, bảng bronze để biết đã có tháng nào."""
-
-    name: str
-    prefix: str
-
-
-# Hai model chia CHUNG một bảng staging, phân biệt bằng cột `weather_model`.
-# Trước 2026-09-03 mỗi model một bảng, dù schema y hệt nhau.
-STAGING_HOURLY = "catalog1.silver.stg_weather_archive_hourly"
-
-ERA5 = ArchiveModel(
-    name="era5",
-    # Giữ nguyên prefix cũ: dữ liệu ward-based 2000–2013 đã nằm đây và cùng schema.
-    prefix="bronze/files/open_meteo/historical_weather_hourly/backfill",
-)
-IFS = ArchiveModel(
-    name="ecmwf_ifs",
-    prefix="bronze/files/open_meteo/historical_weather_hourly/ifs",
-)
-ARCHIVE_MODELS = (ERA5, IFS)
-
-
-def model_for_month(month: date) -> ArchiveModel:
-    """era5 trước 2017, ecmwf_ifs từ 2017. IFS không có dữ liệu trước 2017."""
-    return ERA5 if month < IFS_START else IFS
-
-
-Row = dict[str, str]
-
-
-@dataclass(frozen=True)
-class Location:
-    ward_code: str
-    latitude: float
-    longitude: float
+from vn_climate_risk_monitor.storage.minio import get_minio_client
 
 
 def load_locations(connection: duckdb.DuckDBPyConnection) -> tuple[Location, ...]:
@@ -102,21 +65,6 @@ def load_locations(connection: duckdb.DuckDBPyConnection) -> tuple[Location, ...
             "gold.dim_ward rỗng — chạy dbt seed và build geography trước"
         )
     return tuple(Location(str(c), float(lat), float(lon)) for c, lat, lon in rows)
-
-
-def effective_call_units(*, locations: int, days: int, variables: int) -> int:
-    return math.ceil(locations * max(1.0, days / 14) * max(1.0, variables / 10))
-
-
-def months_between(start: date, end: date) -> Iterator[date]:
-    current = start.replace(day=1)
-    while current <= end:
-        yield current
-        current = (current.replace(day=28) + timedelta(days=4)).replace(day=1)
-
-
-def days_in_month(month: date) -> int:
-    return calendar.monthrange(month.year, month.month)[1]
 
 
 def covered_months(
@@ -164,143 +112,13 @@ def existing_basenames(client: Minio, bucket: str, prefix: str) -> set[str]:
     }
 
 
-def request_url(base: str, params: dict[str, str]) -> str:
-    return urlunparse(urlparse(base)._replace(query=urlencode(params, safe=",")))
-
-
-def base_params(points: Sequence[object]) -> dict[str, str]:
-    """Toạ độ cho một request. Nhận Location hoặc GridCell — chỉ cần lat/lon."""
+def existing_for_prefixes(
+    client: Minio, bucket: str, prefixes: Iterable[str]
+) -> dict[str, set[str]]:
     return {
-        "latitude": ",".join(f"{p.latitude:.6f}" for p in points),  # type: ignore[attr-defined]
-        "longitude": ",".join(f"{p.longitude:.6f}" for p in points),  # type: ignore[attr-defined]
-        "timezone": "UTC",
-        "timeformat": "unixtime",
+        prefix: existing_basenames(client, bucket, prefix)
+        for prefix in dict.fromkeys(prefixes)
     }
-
-
-def tasks_for_prefix(
-    *,
-    points: Sequence[object],
-    batch_size: int,
-    prefix: str,
-    url: str,
-    extra_params: dict[str, str],
-    existing: set[str],
-    run: str,
-    days: int,
-    variables: int,
-) -> list[FetchTask]:
-    """Một FetchTask cho mỗi lô toạ độ còn thiếu file."""
-    tasks: list[FetchTask] = []
-    for index, batch in enumerate(batched(points, batch_size)):
-        name = f"response_{index:03}.json"
-        if name in existing:
-            continue
-        tasks.append(
-            FetchTask(
-                url=request_url(url, base_params(batch) | extra_params),
-                key=f"{prefix}/{run}/{name}",
-                # Tính theo ĐỘ DÀI LÔ THẬT, không theo batch_size danh nghĩa: lô
-                # cuối thường ngắn hơn và trước đây bị tính (và bị nghỉ) như lô đầy.
-                units=effective_call_units(
-                    locations=len(batch), days=days, variables=variables
-                ),
-            )
-        )
-    return tasks
-
-
-def month_params(month: date, model: ArchiveModel) -> tuple[str, dict[str, str]]:
-    last = month.replace(day=days_in_month(month))
-    prefix = f"{model.prefix}/year={month.year:04}/month={month.month:02}"
-    return prefix, {
-        "hourly": ARCHIVE_FIELDS,
-        "models": model.name,
-        "start_date": month.isoformat(),
-        "end_date": last.isoformat(),
-    }
-
-
-def slot_params(
-    slot: datetime, settings: OpenMeteoSettings
-) -> tuple[str, dict[str, str]]:
-    prefix = f"{FORECAST_PREFIX}/{slot:%Y/%m/%d/%H}"
-    return prefix, {
-        "hourly": FORECAST_FIELDS,
-        "models": settings.forecast_model,
-        "forecast_hours": str(settings.forecast_hours),
-    }
-
-
-def archive_tasks(
-    *,
-    months: Sequence[date],
-    settings: OpenMeteoSettings,
-    client: Minio,
-    bucket: str,
-    run: str,
-    covered: dict[str, frozenset[date]],
-    seed_path: str | Path = grid.SEED_PATH,
-) -> list[FetchTask]:
-    """Kế hoạch archive: mỗi tháng đi theo model của thời kỳ đó, fetch theo ô."""
-    cells = {m.name: grid.cells_for(m.name, seed_path) for m in ARCHIVE_MODELS}
-    variables = len(ARCHIVE_FIELDS.split(","))
-    tasks: list[FetchTask] = []
-    for month in months:
-        model = model_for_month(month)
-        if month in covered.get(model.name, frozenset()):
-            continue
-        prefix, extra = month_params(month, model)
-        tasks.extend(
-            tasks_for_prefix(
-                points=cells[model.name],
-                batch_size=settings.location_batch_size,
-                prefix=prefix,
-                url=settings.archive_url,
-                extra_params=extra,
-                existing=existing_basenames(client, bucket, prefix),
-                run=run,
-                days=days_in_month(month),
-                variables=variables,
-            )
-        )
-    return tasks
-
-
-def forecast_tasks(
-    *,
-    slots: Sequence[datetime],
-    locations: Sequence[Location],
-    settings: OpenMeteoSettings,
-    client: Minio,
-    bucket: str,
-    run: str,
-) -> list[FetchTask]:
-    """Forecast vẫn fetch THEO PHƯỜNG — cố ý.
-
-    Lưới ``best_match`` mịn hơn (48 ô cho 126 phường, chỉ trùng 2,6×) và mesh của
-    nó ĐỔI theo thời gian khi Open-Meteo chuyển model nền, nên danh sách ô cache
-    cứng sẽ mục. Forecast cũng chỉ ~6 request/giờ nên không phải nút thắt.
-    """
-    variables = len(FORECAST_FIELDS.split(","))
-    days = max(1, settings.forecast_hours // 24)
-    tasks: list[FetchTask] = []
-    for slot in slots:
-        prefix, extra = slot_params(slot, settings)
-        tasks.extend(
-            tasks_for_prefix(
-                points=locations,
-                batch_size=settings.location_batch_size,
-                prefix=prefix,
-                url=settings.forecast_url,
-                extra_params=extra,
-                existing=existing_basenames(client, bucket, prefix),
-                run=run,
-                days=days,
-                variables=variables,
-            )
-        )
-    return tasks
 
 
 def _run_pool(
@@ -327,7 +145,7 @@ def _run_pool(
     if not result.ok:
         print("   Không mất dữ liệu: chạy lại, các file đã land sẽ tự bị bỏ qua.")
         return 2
-    print("Bước tiếp theo: uv run load-sources")
+    print("Bước tiếp theo: uv run auto-loader")
     return 0
 
 
@@ -372,13 +190,21 @@ def _cmd_archive(args, settings) -> int:
     finally:
         connection.close()
     client = get_minio_client(settings.minio)
+    cells_by_model = {
+        model.name: grid.cells_for(model.name, grid.SEED_PATH)
+        for model in ARCHIVE_MODELS
+    }
+    prefixes = [
+        month_params(month, model_for_month(month))[0]
+        for month in months
+    ]
     tasks = archive_tasks(
         months=months,
         settings=open_meteo,
-        client=client,
-        bucket=settings.minio.bucket,
         run=f"run_{datetime.now(UTC):%Y%m%dT%H%M%S}",
         covered=covered,
+        cells_by_model=cells_by_model,
+        existing=existing_for_prefixes(client, settings.minio.bucket, prefixes),
     )
     by_model: dict[str, int] = {}
     for month in months:
@@ -396,7 +222,7 @@ def _cmd_archive(args, settings) -> int:
         )
     print(f"   {len(tasks)} request / {sum(t.units for t in tasks):,} đơn vị")
     if not tasks:
-        print("Không còn gì để land. Bước tiếp theo: uv run load-sources")
+        print("Không còn gì để land. Bước tiếp theo: uv run auto-loader")
         return 0
     if not args.execute:
         print("DRY RUN — thêm --execute để chạy thật")
@@ -415,20 +241,22 @@ def _cmd_forecast(args, settings) -> int:
         locations = locations[: args.limit]
     slot = datetime.now(UTC).replace(minute=0, second=0, microsecond=0)
     client = get_minio_client(settings.minio)
+    prefixes = [slot_params(slot, open_meteo)[0]]
     tasks = forecast_tasks(
         slots=[slot],
         locations=locations,
         settings=open_meteo,
-        client=client,
-        bucket=settings.minio.bucket,
-        run=f"run_{datetime.now(UTC):%Y%m%dT%H%M%S}",
+        run=forecast_run_id(slot),
+        existing=existing_for_prefixes(
+            client, settings.minio.bucket, prefixes
+        ),
     )
     print(
         f"Kế hoạch forecast {slot:%Y-%m-%d %H}h: {len(locations)} phường, "
         f"{len(tasks)} request / {sum(t.units for t in tasks):,} đơn vị"
     )
     if not tasks:
-        print("Không còn gì để land. Bước tiếp theo: uv run load-sources")
+        print("Không còn gì để land. Bước tiếp theo: uv run auto-loader")
         return 0
     if not args.execute:
         print("DRY RUN — thêm --execute để chạy thật")

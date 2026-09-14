@@ -1,9 +1,10 @@
-/* Curated archive grain: model × grid × hour, dedup + change-aware merge. */
+/* Curated archive grain: model × grid × hour, dedup + delete/insert. */
 
 {{ config(
     materialized = 'incremental',
     unique_key = 'weather_archive_hourly_key',
-    tags = ['intermediate']
+    incremental_strategy = 'delete+insert',
+    tags = ['intermediate', 'archive']
 ) }}
 
 {# elevation_m không ổn định theo requested point nên không thuộc row hash. #}
@@ -28,7 +29,7 @@ WITH staged AS (
         soil_moisture_7_to_28cm,
         _source_file,
         _ingested_at
-    FROM {{ ref('stg_open_meteo__weather_archive_hourly') }}
+    FROM {{ source('silver_staging', 'stg_weather_archive_hourly') }}
     {{ incremental_changed_filter(
         source_ref = 'stg_weather_archive_hourly',
         change_column = '_ingested_at',
@@ -77,5 +78,3 @@ SELECT
     TRUE AS is_active,
     {{ processing_updated_at() }} AS _updated_at
 FROM incoming
-
-{{ incremental_new_or_changed('weather_archive_hourly_key') }}

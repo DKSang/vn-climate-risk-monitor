@@ -13,13 +13,11 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from processing.config import (
-    CheckpointConfig,
+from vn_climate_risk_monitor.processing.config import (
     ProcessConfig,
-    RunnerConfig,
     SourceBinding,
 )
-from processing.runner import compute_bounds, run_process
+from vn_climate_risk_monitor.processing.runner import compute_bounds, run_process
 
 
 def at(hour: int, minute: int = 0, second: int = 0) -> datetime:
@@ -73,12 +71,11 @@ def build_config(
     sources: tuple[str, ...] = ("archive_hourly",),
 ) -> ProcessConfig:
     return ProcessConfig(
-        process_key="rainfall_historical_hourly",
+        process_key="archive",
         target="gold.fct_rainfall_historical_hourly",
         sources=tuple(SourceBinding(ref=ref) for ref in sources),
         scope="test",
-        checkpoint=CheckpointConfig(safety_lag=safety_lag),
-        runner=RunnerConfig(select="+tag:historical"),
+        safety_lag=safety_lag,
     )
 
 
@@ -325,11 +322,11 @@ def test_metrics_from_execute_are_recorded_with_the_run() -> None:
     run_process(
         config=build_config(),
         repository=repository,
-        execute=lambda b: {"target_row_count": 5_818_584, "rows_deactivated": 1},
+        execute=lambda b: {"target_row_count": 5_818_584, "published_snapshot_id": 42},
     )
 
     assert repository.completed[0]["metrics"]["target_row_count"] == 5_818_584
-    assert repository.completed[0]["metrics"]["rows_deactivated"] == 1
+    assert repository.completed[0]["metrics"]["published_snapshot_id"] == 42
 
 
 def test_execute_may_return_no_metrics() -> None:

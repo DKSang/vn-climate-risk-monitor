@@ -7,6 +7,13 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv()
+except ImportError:
+    pass
+
 
 def _setting(name: str, default: str | None = None) -> str:
     """Read ``NAME_FILE`` first, then ``NAME``."""
@@ -56,11 +63,6 @@ class MinioSettings:
     bucket: str
     secure: bool
 
-    @property
-    def scheme(self) -> str:
-        return "https" if self.secure else "http"
-
-
 @dataclass(frozen=True)
 class PostgresSettings:
     host: str
@@ -75,18 +77,6 @@ class PostgresSettings:
             f"dbname={self.database} host={self.host} port={self.port} "
             f"user={self.user} password={self.password}"
         )
-
-    @property
-    def connect_kwargs(self) -> dict[str, str | int]:
-        """Return keyword arguments accepted by ``psycopg.connect``."""
-        return {
-            "host": self.host,
-            "port": self.port,
-            "dbname": self.database,
-            "user": self.user,
-            "password": self.password,
-        }
-
 
 @dataclass(frozen=True)
 class OpenMeteoSettings:
@@ -108,17 +98,10 @@ class Settings:
 @lru_cache(maxsize=1)
 def load_settings() -> Settings:
     """Load settings once from ``.env`` and environment variables."""
-    try:
-        from dotenv import load_dotenv
-
-        load_dotenv()
-    except ImportError:
-        pass
-
     return Settings(
         minio=MinioSettings(
             endpoint=os.getenv("MINIO_ENDPOINT", "localhost:9000"),
-            access_key=os.getenv("MINIO_ACCESS_KEY", "minioadmin"),
+            access_key=_setting("MINIO_ACCESS_KEY"),
             secret_key=_setting("MINIO_SECRET_KEY"),
             bucket=os.getenv("MINIO_BUCKET", "vn-climate"),
             secure=_as_bool(os.getenv("MINIO_SECURE", "false")),

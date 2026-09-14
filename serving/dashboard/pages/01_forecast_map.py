@@ -4,30 +4,26 @@
 from __future__ import annotations
 
 import copy
-import sys
-from pathlib import Path
-
-ROOT_DIR = Path(__file__).resolve().parent.parent.parent.parent
-if str(ROOT_DIR) not in sys.path:
-    sys.path.insert(0, str(ROOT_DIR))
 
 import pydeck as pdk
 import streamlit as st
 
-from serving.dashboard.geography import load_hanoi_geojson
-from serving.dashboard.queries import (
-    load_flood_points_for_hour,
+from serving.dashboard.common import (
+    load_serving_snapshot,
+    load_weather_flood_points_for_hour,
+)
+from serving.dashboard.forecast import (
+    FORECAST_MODEL,
     load_forecast_by_hour,
     load_forecast_hour_summary,
     load_forecast_hours,
     load_forecast_metadata,
     load_forecast_pressure_ranking,
-    load_serving_snapshot,
 )
+from serving.dashboard.geography import load_hanoi_geojson
 from serving.dashboard.ui import (
     MAP_STYLES,
     RAIN_INDICATORS,
-    classify_rain_band,
     configure_page,
     default_hour_index,
     flood_point_layer,
@@ -135,7 +131,9 @@ df_forecast = load_forecast_by_hour(
     sort_metric=forecast_metric,
 )
 summary = load_forecast_hour_summary(selected_hour, snapshot_version)
-df_points = load_flood_points_for_hour(selected_hour, snapshot_version)
+df_points = load_weather_flood_points_for_hour(
+    "forecast", FORECAST_MODEL, selected_hour, snapshot_version
+)
 df_pressure = load_forecast_pressure_ranking(selected_hour, snapshot_version)
 
 ward_count = int(summary.get("ward_count") or 0)
@@ -182,7 +180,7 @@ for row in df_forecast.to_dict(orient="records"):
     raw_metric_val = row.get(forecast_metric)
     # Không fallback sang trailing band: forecast map phải thể hiện đúng
     # completeness của cửa sổ nhìn về tương lai.
-    band_val = classify_rain_band(raw_metric_val, selected_indicator)
+    band_val = str(row.get(str(indicator["forecast_band"])) or "")
     forecast_lookup[code] = {
         "metric_label": rain_label(raw_metric_val),
         "rain_1h_label": rain_label(row.get("rain_1h_mm")),

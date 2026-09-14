@@ -1,8 +1,7 @@
-/* Hanoi ward dimension. Incremental giữ state soft-delete. */
+/* Hanoi ward reference dimension. Rebuilt from the versioned seed. */
 {{ config(
-    materialized = 'incremental',
-    unique_key = 'ward_code',
-    tags = ['dim']
+    materialized = 'table',
+    tags = ['dim', 'forecast', 'archive']
 ) }}
 
 SELECT
@@ -16,5 +15,5 @@ SELECT
     climate_zone,
     TRUE AS is_active,
     CAST(NULL AS TIMESTAMPTZ) AS _deactivated_at,
-    {{ processing_updated_at() }} AS _updated_at
+    CURRENT_TIMESTAMP AS _updated_at
 FROM {{ ref('stg_seed__ward') }}

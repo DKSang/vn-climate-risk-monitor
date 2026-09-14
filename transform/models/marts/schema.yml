@@ -20,8 +20,9 @@ models:
   - name: dim_ward
     description: >
       126 phường/xã Hà Nội. KHÔNG mang grid_cell_id — xem bridge.
-      Incremental để soft delete giữ được cờ: phường giải thể ở nguồn vẫn còn
-      dòng với `is_active = FALSE`, nên fact lịch sử không thành orphan.
+      Materialized as a table from the versioned reference seed. `is_active`
+      remains TRUE for dashboard compatibility; reference changes are published
+      by rebuilding the table, not by runtime soft delete.
     columns:
       - name: ward_code
         tests: [unique, not_null]
@@ -30,9 +31,13 @@ models:
       - name: is_active
         description: "FALSE = không còn trong seed (giải thể/sáp nhập)"
         tests: [not_null]
+      - name: _deactivated_at
+        description: "Giữ contract lịch sử; static reference hiện không soft-delete"
+      - name: _updated_at
+        tests: [not_null]
 
   - name: dim_flood_point
-    description: "Dimension các điểm úng ngập Hà Nội từ QĐ 2280"
+    description: "Static dimension các điểm úng ngập Hà Nội từ QĐ 2280"
     columns:
       - name: point_id
         tests: [unique, not_null]
@@ -53,6 +58,9 @@ models:
           - accepted_values:
               arguments:
                 values: ['scenario_50_70mm', 'scenario_70_100mm', 'scenario_over_100mm']
+      - name: required_rain_scenario_level
+        description: "Gold severity required for this point: 1=50mm, 2=70mm, 3=>100mm"
+        tests: [not_null]
       - name: latitude
         tests: [not_null]
       - name: longitude
@@ -65,13 +73,24 @@ models:
                 values: ['active', 'inactive']
       - name: is_active
         tests: [not_null]
+      - name: _deactivated_at
+        description: "Giữ contract lịch sử; static reference hiện không soft-delete"
+      - name: _updated_at
+        tests: [not_null]
 
   - name: bridge_ward_grid
-    description: "Phường ↔ ô lưới theo model, gồm cả mesh forecast hiện hành"
+    description: >
+      Static phường ↔ ô lưới theo model, gồm cả mesh forecast hiện hành.
+      Rebuilt from reference seeds and current forecast mesh; no runtime
+      soft-delete state is maintained.
     columns:
       - name: ward_grid_key
         tests: [unique, not_null]
       - name: is_active
+        tests: [not_null]
+      - name: _deactivated_at
+        description: "Giữ contract lịch sử; static reference hiện không soft-delete"
+      - name: _updated_at
         tests: [not_null]
       - name: ward_code
         tests:
@@ -172,6 +191,8 @@ models:
           - accepted_values:
               arguments:
                 values: ['below_50', 'from_50_to_under_70', 'from_70_to_100', 'over_100']
+      - name: hanoi_rain_scenario_level
+        description: "NULL when the 1-hour rainfall window is incomplete"
       - name: vn_rain_band_12h
         tests:
           - accepted_values:
@@ -221,6 +242,23 @@ models:
           - accepted_values:
               arguments:
                 values: ['below_50', 'from_50_to_under_70', 'from_70_to_100', 'over_100']
+      - name: hanoi_rain_scenario_level
+        description: "NULL when the 1-hour rainfall window is incomplete"
+      - name: forecast_next_1h_band
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['below_50', 'from_50_to_under_70', 'from_70_to_100', 'over_100']
+      - name: forecast_next_12h_band
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['below_30', 'from_30_to_under_50', 'from_50_to_under_70', 'from_70_to_100', 'over_100']
+      - name: forecast_next_24h_band
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['below_50', 'from_50_to_under_100', 'from_100_to_under_150', 'from_150_to_under_200', 'from_200_to_300', 'over_300']
       - name: vn_rain_band_12h
         tests:
           - accepted_values:

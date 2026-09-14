@@ -14,9 +14,9 @@ def on_failure_alert(context: dict[str, Any]) -> None:
     task_id = task_instance.task_id if task_instance else "unknown"
     dag_id = context.get("dag").dag_id if context.get("dag") else "unknown"
 
-    print(f"[ALERT] Task {dag_id}.{task_id} failed. Triggering alert_health.py...")
+    print(f"[ALERT] Task {dag_id}.{task_id} failed. Triggering pipeline-health...")
     subprocess.run(
-        ["uv", "run", "python", "scripts/alert_health.py", "--scope", "all"],
+        ["uv", "run", "pipeline-health", "--scope", "all", "--notify"],
         cwd=project_dir,
         check=False,
     )
@@ -35,8 +35,3 @@ DEFAULT_ARGS = {
     "retry_delay": 180,
     "on_failure_callback": on_failure_alert,
 }
-
-PROVERO_CMD = "uv run provero run -c quality/provero.yaml --no-optimize --no-store"
-PROVERO_ARCHIVE_CMD = (
-    "uv run provero run -c quality/provero_archive.yaml --no-optimize --no-store"
-)

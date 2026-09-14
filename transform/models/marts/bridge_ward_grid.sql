@@ -1,8 +1,7 @@
 /* Ward ↔ weather grid mapping by model. */
 {{ config(
-    materialized = 'incremental',
-    unique_key = 'ward_grid_key',
-    tags = ['bridge']
+    materialized = 'table',
+    tags = ['bridge', 'forecast', 'archive']
 ) }}
 
 WITH archive_map AS (
@@ -16,8 +15,12 @@ WITH archive_map AS (
 
 -- Forecast mesh lấy từ run mới nhất; ward map vào grid gần nhất.
 latest_forecast_run AS (
-    SELECT forecast_run_id
-    FROM {{ ref('int_weather_forecast_hourly') }}
+    SELECT REGEXP_EXTRACT(
+        _source_file,
+        '/incremental/[0-9]{4}/[0-9]{2}/[0-9]{2}/[0-9]{2}/(run_[0-9]{8}T[0-9]{6})/',
+        1
+    ) AS forecast_run_id
+    FROM {{ source('silver_staging', 'stg_weather_forecast') }}
     GROUP BY forecast_run_id
     ORDER BY MAX(_ingested_at) DESC, forecast_run_id DESC
     LIMIT 1
@@ -25,11 +28,15 @@ latest_forecast_run AS (
 
 current_forecast_grids AS (
     SELECT DISTINCT
-        grid_cell_id,
+        {{ grid_cell_id("'ecmwf_ifs_fc'", 'ROUND(grid_latitude, 6)', 'ROUND(grid_longitude, 6)') }} AS grid_cell_id,
         grid_latitude,
         grid_longitude
-    FROM {{ ref('int_weather_forecast_hourly') }}
-    WHERE forecast_run_id = (SELECT forecast_run_id FROM latest_forecast_run)
+    FROM {{ source('silver_staging', 'stg_weather_forecast') }}
+    WHERE REGEXP_EXTRACT(
+        _source_file,
+        '/incremental/[0-9]{4}/[0-9]{2}/[0-9]{2}/[0-9]{2}/(run_[0-9]{8}T[0-9]{6})/',
+        1
+    ) = (SELECT forecast_run_id FROM latest_forecast_run)
 ),
 
 forecast_ranked AS (
@@ -79,7 +86,7 @@ SELECT
         AS ward_count_on_grid,
     TRUE AS is_active,
     CAST(NULL AS TIMESTAMPTZ) AS _deactivated_at,
-    {{ processing_updated_at() }} AS _updated_at
+    CURRENT_TIMESTAMP AS _updated_at
 FROM all_maps AS map
 INNER JOIN {{ ref('dim_grid') }} AS grid
     ON grid.grid_cell_id = map.grid_cell_id

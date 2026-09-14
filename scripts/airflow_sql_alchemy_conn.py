@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""Print Airflow's metadata URI using the file-mounted PostgreSQL secret."""
+"""Print Airflow's metadata URI using the required local runtime settings."""
 
 from __future__ import annotations
 
 import os
-from pathlib import Path
 from urllib.parse import quote
 
 
@@ -15,13 +14,8 @@ def required(name: str) -> str:
     return value
 
 
-password_path = Path(required("POSTGRES_PASSWORD_FILE"))
-password = password_path.read_text(encoding="utf-8").rstrip("\r\n")
-if not password:
-    raise SystemExit(f"Empty PostgreSQL secret: {password_path}")
-
 user = quote(required("POSTGRES_USER"), safe="")
-password_encoded = quote(password, safe="")
+password_encoded = quote(required("POSTGRES_PASSWORD"), safe="")
 host = required("POSTGRES_HOST")
 port = required("POSTGRES_PORT")
 database = quote(required("POSTGRES_DB"), safe="")

@@ -7,22 +7,17 @@ hỏng -> 0 dòng vào bảng, cả 3 kẹt FAILED).
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
+import duckdb
 import pytest
 
-from autoloader.checkpoint import PostgresIngestionRepository
-from autoloader.config import (
-    DiscoveryConfig,
-    LoaderConfig,
-    SourceConfig,
-    TransformConfig,
-)
-from autoloader.engine import AutoLoader
+from vn_climate_risk_monitor.ingestion.loader import AutoLoader, SourceConfig
+from vn_climate_risk_monitor.ingestion.state import PostgresIngestionRepository
 
 
 @dataclass
@@ -59,7 +54,9 @@ class FakeCheckpoint:
         self.files: dict[str, dict[str, Any]] = {}
         self.committed: list[UUID] = []
         self.failed: list[UUID] = []
-        self.source_attempt = FakeAttempt(attempt_id=uuid4())
+        self.source_attempts: list[FakeAttempt] = []
+        self.completed_source_runs: list[UUID] = []
+        self.failed_source_runs: list[UUID] = []
         self.now = now or datetime(2026, 9, 3, 10, 0, tzinfo=UTC)
         self.clock_calls = 0
 
@@ -70,8 +67,16 @@ class FakeCheckpoint:
     def known_object_keys(self, **_: Any) -> set[str]:
         return set(self.files)
 
-    def ensure_source_run(self, **_: Any) -> FakeAttempt:
-        return self.source_attempt
+    def begin_source_run(self, **_: Any) -> FakeAttempt:
+        attempt = FakeAttempt(attempt_id=uuid4())
+        self.source_attempts.append(attempt)
+        return attempt
+
+    def complete_source_run(self, attempt_id: UUID, **_: Any) -> None:
+        self.completed_source_runs.append(attempt_id)
+
+    def fail_source_run(self, attempt_id: UUID, **_: Any) -> None:
+        self.failed_source_runs.append(attempt_id)
 
     def register_file(
         self, *, object_key: str, attempt_id: UUID | None = None, **_: Any
@@ -79,7 +84,7 @@ class FakeCheckpoint:
         file_id = uuid4()
         self.files[object_key] = {
             "file_id": file_id,
-            "attempt_id": attempt_id or self.source_attempt.attempt_id,
+            "attempt_id": attempt_id or self.source_attempts[-1].attempt_id,
             "status": "PENDING",
             "retry_count": 0,
         }
@@ -94,6 +99,10 @@ class FakeCheckpoint:
         ]
         chosen = claimable[:limit]
         for _key, meta in chosen:
+            if meta["status"] == "FAILED":
+                # Match PostgresIngestionRepository: retry_count records a
+                # reclaimed FAILED attempt, not the failure transition.
+                meta["retry_count"] += 1
             meta["status"] = "PROCESSING"
         return tuple(FakeClaim(meta["file_id"], key) for key, meta in chosen)
 
@@ -107,8 +116,12 @@ class FakeCheckpoint:
     def fail_file(self, file_id: UUID, **_: Any) -> None:
         meta = self._meta(file_id)
         meta["status"] = "FAILED"
-        meta["retry_count"] += 1
         self.failed.append(file_id)
+
+
+class BrokenRegistrationCheckpoint(FakeCheckpoint):
+    def register_file(self, **_: Any) -> UUID:
+        raise RuntimeError("registration failed")
 
 
 class FakeResult:
@@ -150,16 +163,79 @@ class FakeSql:
         return FakeResult(query.count("s3://") * self.rows_per_file)
 
 
+class RecordingSql:
+    """Real DuckDB with a statement log for cross-system ordering assertions."""
+
+    def __init__(self, events: list[str] | None = None) -> None:
+        self.connection = duckdb.connect()
+        self.events = events if events is not None else []
+
+    def execute(self, query: str, parameters: object = None):
+        self.events.append(query.strip())
+        if parameters is None:
+            return self.connection.execute(query)
+        return self.connection.execute(query, parameters)
+
+
+class CrashGapCheckpoint(FakeCheckpoint):
+    """Crash once after DuckLake commit, then expose lease expiry for retry."""
+
+    def __init__(self, events: list[str]) -> None:
+        super().__init__()
+        self.events = events
+        self.crash_before_postgres_commit = True
+
+    def commit_file(self, file_id: UUID, **kwargs: Any) -> None:
+        if self.crash_before_postgres_commit:
+            self.crash_before_postgres_commit = False
+            self.events.append("POSTGRES COMMIT ATTEMPT")
+            raise RuntimeError("simulated crash after DuckLake commit")
+        self.events.append("POSTGRES COMMIT")
+        super().commit_file(file_id, **kwargs)
+
+    def expire_processing_lease(self) -> None:
+        processing = [m for m in self.files.values() if m["status"] == "PROCESSING"]
+        assert len(processing) == 1
+        processing[0]["status"] = "FAILED"
+        processing[0]["error_type"] = "LeaseExpired"
+
+
 def build_config(tmp_path: Path, *, batch_size: int, max_retries: int = 3):
     sql_file = tmp_path / "t.sql"
     sql_file.write_text("SELECT * FROM read_json_auto({{ files }})", encoding="utf-8")
     return SourceConfig(
         name="src",
         dataset="ds",
+        prefix="raw",
+        pattern="**/*.json",
+        sql_file="t.sql",
+        target="db.schema.tbl",
+        batch_size=batch_size,
+        parameters={},
         scope="test",
-        discovery=DiscoveryConfig(prefix="raw", pattern="**/*.json"),
-        transform=TransformConfig(sql_file="t.sql", target="db.schema.tbl"),
-        loader=LoaderConfig(batch_size=batch_size, max_retries=max_retries),
+        max_retries=max_retries,
+        base_dir=tmp_path,
+    )
+
+
+def build_idempotency_config(tmp_path: Path):
+    sql_file = tmp_path / "idempotency.sql"
+    sql_file.write_text(
+        "SELECT source_file AS _source_file, md5(source_file) AS row_hash "
+        "FROM UNNEST({{ files }}) AS source_files(source_file)",
+        encoding="utf-8",
+    )
+    return SourceConfig(
+        name="src",
+        dataset="ds",
+        prefix="raw",
+        pattern="**/*.json",
+        sql_file=sql_file.name,
+        target="main.staging",
+        batch_size=10,
+        parameters={},
+        scope="test",
+        max_retries=3,
         base_dir=tmp_path,
     )
 
@@ -202,8 +278,89 @@ def test_second_run_loads_nothing_exactly_once(tmp_path: Path) -> None:
     assert second.rows_inserted == 0
 
 
-def test_later_discovery_keeps_the_same_attempt(tmp_path: Path) -> None:
-    """Directory listing không phải collector: mỗi load không được mint logical run mới."""
+def test_failed_registration_closes_the_discovery_run(tmp_path: Path) -> None:
+    loader = AutoLoader(
+        config=build_config(tmp_path, batch_size=1),
+        checkpoint=BrokenRegistrationCheckpoint(),
+        object_client=FakeObjectClient(["raw/a.json"]),
+        sql=FakeSql(),
+        bucket="bkt",
+    )
+
+    with pytest.raises(RuntimeError, match="registration failed"):
+        loader.load()
+
+    assert loader.checkpoint.failed_source_runs == [
+        loader.checkpoint.source_attempts[0].attempt_id
+    ]
+
+
+def test_reloading_the_same_object_replaces_rows_without_duplicates(
+    tmp_path: Path,
+) -> None:
+    checkpoint = FakeCheckpoint()
+    sql = RecordingSql()
+    loader = AutoLoader(
+        config=build_idempotency_config(tmp_path),
+        checkpoint=checkpoint,
+        object_client=FakeObjectClient(["raw/a.json"]),
+        sql=sql,
+        bucket="bkt",
+        worker_id="w1",
+    )
+
+    loader.load()
+    first_rows = sql.connection.execute(
+        "SELECT _source_file, row_hash FROM main.staging ORDER BY 1"
+    ).fetchall()
+    checkpoint.files["raw/a.json"]["status"] = "FAILED"
+    loader.load()
+    second_rows = sql.connection.execute(
+        "SELECT _source_file, row_hash FROM main.staging ORDER BY 1"
+    ).fetchall()
+
+    assert first_rows == [("s3://bkt/raw/a.json", "a941395053fcf7bb5d8fd69fad1db1ab")]
+    assert second_rows == first_rows
+
+
+def test_commit_gap_retry_replaces_rows_after_expired_lease(tmp_path: Path) -> None:
+    events: list[str] = []
+    checkpoint = CrashGapCheckpoint(events)
+    sql = RecordingSql(events)
+    loader = AutoLoader(
+        config=build_idempotency_config(tmp_path),
+        checkpoint=checkpoint,
+        object_client=FakeObjectClient(["raw/a.json"]),
+        sql=sql,
+        bucket="bkt",
+        worker_id="w1",
+    )
+
+    with pytest.raises(RuntimeError, match="simulated crash"):
+        loader.load()
+    first_rows = sql.connection.execute(
+        "SELECT _source_file, row_hash FROM main.staging ORDER BY 1"
+    ).fetchall()
+    assert checkpoint.files["raw/a.json"]["status"] == "PROCESSING"
+    first_postgres_attempt = events.index("POSTGRES COMMIT ATTEMPT")
+    assert events[first_postgres_attempt - 1] == "COMMIT"
+
+    checkpoint.expire_processing_lease()
+    loader.load()
+    second_rows = sql.connection.execute(
+        "SELECT _source_file, row_hash FROM main.staging ORDER BY 1"
+    ).fetchall()
+
+    assert checkpoint.files["raw/a.json"]["status"] == "COMMITTED"
+    assert checkpoint.files["raw/a.json"]["retry_count"] == 1
+    assert checkpoint.files["raw/a.json"]["error_type"] == "LeaseExpired"
+    assert second_rows == first_rows
+    postgres_commit = len(events) - 1 - events[::-1].index("POSTGRES COMMIT")
+    assert events[postgres_commit - 1] == "COMMIT"
+    assert sum(statement.startswith("DELETE FROM main.staging") for statement in events) == 2
+
+
+def test_later_discovery_creates_a_real_discovery_run(tmp_path: Path) -> None:
     loader = build_loader(tmp_path, ["raw/a.json"], batch_size=10)
     loader.load(now=datetime(2026, 1, 1, tzinfo=UTC))
     loader.object_client._keys.append("raw/b.json")
@@ -213,10 +370,11 @@ def test_later_discovery_keeps_the_same_attempt(tmp_path: Path) -> None:
     assert later.newly_registered == 1
     assert later.committed_files == 1
     attempt_ids = {meta["attempt_id"] for meta in loader.checkpoint.files.values()}
-    assert len(attempt_ids) == 1
+    assert len(attempt_ids) == 2
+    assert len(loader.checkpoint.completed_source_runs) == 2
 
 
-@pytest.mark.parametrize(("batch_size", "expected_batches"), [(1, 5), (3, 3), (10, 3)])
+@pytest.mark.parametrize(("batch_size", "expected_batches"), [(1, 6), (3, 4), (10, 4)])
 def test_poison_file_does_not_block_healthy_files(
     tmp_path: Path, batch_size: int, expected_batches: int
 ) -> None:
@@ -251,7 +409,7 @@ def test_poison_file_does_not_block_healthy_files(
 def test_retry_is_bounded_by_max_retries_not_max_batches(tmp_path: Path) -> None:
     """Một file hỏng không được đốt hết max_batches.
 
-    max_batches=100 nhưng max_retries=3, nên file hỏng chỉ bị claim 3 lần.
+    max_batches=100 nhưng max_retries=3, nên có một claim ban đầu và ba retry.
     """
     loader = build_loader(tmp_path, ["raw/poison.json"], batch_size=1)
 
@@ -261,13 +419,13 @@ def test_retry_is_bounded_by_max_retries_not_max_batches(tmp_path: Path) -> None
     assert result.committed_files == 0
     assert result.committed_files == len(loader.checkpoint.committed)
     assert result.rows_inserted == 0
-    assert result.batches == 3, "mỗi lần claim file hỏng vẫn là một batch đã xử lý"
-    assert len(result.failures) == 3
+    assert result.batches == 4, "mỗi lần claim file hỏng vẫn là một batch đã xử lý"
+    assert len(result.failures) == 4
 
 
 def test_retry_stops_at_max_retries(tmp_path: Path) -> None:
     loader = build_loader(tmp_path, ["raw/poison.json"], batch_size=1)
-    loader.config = build_config(tmp_path, batch_size=1, max_retries=2)
+    loader.config = replace(loader.config, max_retries=2)
 
     for _ in range(5):
         loader.load()
@@ -416,29 +574,20 @@ def test_sources_do_not_use_duckdb_clock_for_ingested_at() -> None:
         assert "CURRENT_TIMESTAMP" not in code, path
 
 
-def test_repository_drops_collector_run_lifecycle() -> None:
-    assert not hasattr(PostgresIngestionRepository, "fail_run")
-    assert not hasattr(PostgresIngestionRepository, "succeed_run")
-    assert hasattr(PostgresIngestionRepository, "ensure_source_run")
+def test_repository_has_a_real_discovery_run_lifecycle() -> None:
+    assert hasattr(PostgresIngestionRepository, "begin_source_run")
+    assert hasattr(PostgresIngestionRepository, "complete_source_run")
+    assert hasattr(PostgresIngestionRepository, "fail_source_run")
 
 
-def test_parameters_from_yaml_reach_the_sql(tmp_path: Path) -> None:
+def test_code_native_parameters_reach_the_sql(tmp_path: Path) -> None:
     """Nhiều nguồn cùng schema phải dùng CHUNG một file SQL.
 
     era5 và ecmwf_ifs từng là hai file SQL lệch nhau đúng một dòng — dạng trùng
     lặp chắc chắn sẽ trôi khỏi nhau khi thêm cột.
     """
     config = build_config(tmp_path, batch_size=10)
-    config = SourceConfig(
-        name=config.name,
-        dataset=config.dataset,
-        scope=config.scope,
-        discovery=config.discovery,
-        transform=config.transform,
-        loader=config.loader,
-        parameters={"weather_model": "era5"},
-        base_dir=tmp_path,
-    )
+    config = replace(config, parameters={"weather_model": "era5"})
     (tmp_path / "t.sql").write_text(
         "SELECT '{{ weather_model }}' AS weather_model "
         "FROM read_json_auto({{ files }})",
@@ -462,11 +611,8 @@ def test_parameters_from_yaml_reach_the_sql(tmp_path: Path) -> None:
 
 def test_parameter_cannot_shadow_an_engine_placeholder(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="trùng placeholder"):
-        SourceConfig(
-            name="src",
-            dataset="ds",
-            discovery=DiscoveryConfig(prefix="raw"),
-            transform=TransformConfig(sql_file="t.sql", target="t"),
+        replace(
+            build_config(tmp_path, batch_size=1),
             parameters={"ingested_at": "now()"},
         )
 
@@ -474,24 +620,22 @@ def test_parameter_cannot_shadow_an_engine_placeholder(tmp_path: Path) -> None:
 def test_parameter_with_a_quote_is_rejected(tmp_path: Path) -> None:
     """Giá trị chèn thẳng vào SQL, nên nháy đơn làm gãy câu lệnh ở runtime."""
     with pytest.raises(ValueError, match="nháy đơn"):
-        SourceConfig(
-            name="src",
-            dataset="ds",
-            discovery=DiscoveryConfig(prefix="raw"),
-            transform=TransformConfig(sql_file="t.sql", target="t"),
+        replace(
+            build_config(tmp_path, batch_size=1),
             parameters={"weather_model": "era5' OR '1"},
         )
 
 
 def test_shipped_sources_render_without_leftover_placeholders() -> None:
-    """Mọi YAML trong sources/ phải cấp đủ parameter cho SQL của nó.
+    """Mọi source definition phải cấp đủ parameter cho SQL của nó.
 
     Placeholder thiếu chỉ nổ lúc chạy thật trên DuckDB, sau khi đã claim file.
     """
     import re
 
-    for path in sorted(Path("sources").glob("*.yml")):
-        config = SourceConfig.from_yaml(path)
+    from vn_climate_risk_monitor.load import source_configs
+
+    for config in source_configs():
         rendered = config.sql
         for key, value in {
             "files": "[]",
@@ -502,4 +646,6 @@ def test_shipped_sources_render_without_leftover_placeholders() -> None:
         code = "\n".join(
             line for line in rendered.splitlines() if not line.lstrip().startswith("--")
         )
-        assert not re.search(r"\{\{.*?\}\}", code), f"{path}: còn placeholder chưa thay"
+        assert not re.search(r"\{\{.*?\}\}", code), (
+            f"{config.name}: còn placeholder chưa thay"
+        )

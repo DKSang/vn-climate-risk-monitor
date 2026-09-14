@@ -23,7 +23,7 @@ with DAG(
         pool=POOL,
         cwd=PROJECT_DIR,
         bash_command=(
-            "uv run python scripts/maintain_lake.py "
+            "uv run maintain-lakehouse "
             "--snapshot-retention-days 7 --file-grace-days 2"
         ),
     )

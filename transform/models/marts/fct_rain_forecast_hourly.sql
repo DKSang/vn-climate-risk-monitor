@@ -3,6 +3,8 @@
 {{ config(
     materialized = 'incremental',
     unique_key = 'rain_forecast_hourly_key',
+    incremental_strategy = 'delete+insert',
+    on_schema_change = 'sync_all_columns',
     tags = ['fact', 'rain', 'forecast']
 ) }}
 
@@ -14,7 +16,7 @@ WITH source AS (
     FROM {{ ref('int_weather_forecast_hourly') }}
     {{ incremental_input_scope(
         relation = ref('int_weather_forecast_hourly'),
-        source_ref = 'int_weather_forecast_hourly',
+        source_ref = 'stg_weather_forecast',
         dimension = 'valid_time_utc',
         change_column = '_updated_at',
         expand_backward = lookback,
@@ -73,12 +75,19 @@ published AS (
 SELECT
     *,
     {{ hanoi_rain_scenario_band('rain_1h_mm') }} AS hanoi_rain_scenario_band,
+    {{ hanoi_rain_scenario_level('rain_1h_mm') }} AS hanoi_rain_scenario_level,
     {{ vn_rain_band_12h('rain_12h_mm') }} AS vn_rain_band_12h,
-    {{ vn_rain_band_24h('rain_24h_mm') }} AS vn_rain_band_24h
+    {{ vn_rain_band_24h('rain_24h_mm') }} AS vn_rain_band_24h,
+    {{ hanoi_rain_scenario_band('forecast_next_1h_mm') }}
+        AS forecast_next_1h_band,
+    {{ vn_rain_band_12h('forecast_next_12h_mm') }}
+        AS forecast_next_12h_band,
+    {{ vn_rain_band_24h('forecast_next_24h_mm') }}
+        AS forecast_next_24h_band
 FROM published
 {{ incremental_output_scope(
     relation = ref('int_weather_forecast_hourly'),
-    source_ref = 'int_weather_forecast_hourly',
+    source_ref = 'stg_weather_forecast',
     dimension = 'valid_time_utc',
     change_column = '_updated_at',
     expand_backward = lookback,
