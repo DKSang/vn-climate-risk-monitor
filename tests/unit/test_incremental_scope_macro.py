@@ -1,10 +1,4 @@
-"""Render macro `incremental_scope.sql` bằng Jinja thuần — không cần dbt/DuckDB.
-
-Macro này sinh predicate quyết định model đọc bao nhiêu dữ liệu. Sai nó thì
-rolling window tính trên dữ liệu thiếu và ra số SAI, trong khi mọi test
-not_null/unique vẫn PASS. Không có test ở đây thì chỉ phát hiện được bằng cách
-so tay kết quả Gold.
-"""
+"""Unit tests for incremental_scope.sql without dbt/DuckDB."""
 
 from __future__ import annotations
 
@@ -125,8 +119,7 @@ def test_change_column_is_overridable() -> None:
 
 # ── không có upper bound ─────────────────────────────────────────────────────
 def test_there_is_no_run_start_upper_bound() -> None:
-    """Chặn trên theo run_start làm MẤT row: `_ingested_at` là transaction START
-    time, row chỉ visible lúc COMMIT. Chặn dưới + safety_lag mới là cách chữa."""
+    """Do not add a run-start upper bound to incremental reads."""
     sql = input_scope()
 
     assert "<= TIMESTAMPTZ" not in sql
@@ -135,10 +128,7 @@ def test_there_is_no_run_start_upper_bound() -> None:
 
 # ── output scope hẹp hơn input scope ─────────────────────────────────────────
 def test_output_scope_does_not_expand_backward() -> None:
-    """Row TRƯỚC MIN(changed) không bị dữ liệu mới đụng tới; ghi đè chúng là thừa.
-
-    Đây là điểm bất đối xứng dễ chép nhầm nhất giữa hai predicate.
-    """
+    """Output scope starts at the earliest changed business key."""
     sql = squash(
         render(
             "incremental_output_scope",
@@ -175,12 +165,7 @@ def test_predicate_starts_with_where(macro: str) -> None:
 
 # ── model thật ───────────────────────────────────────────────────────────────
 def test_models_declare_lookback_once() -> None:
-    """Mọi model dùng rolling window phải khai báo lookback MỘT lần rồi truyền
-    vào macro, không viết `INTERVAL '<n> hours'` rải rác.
-
-    Hồi quy: bản cũ lặp `INTERVAL '71 hours'` ba chỗ; lệch nhau là ra số SAI mà
-    mọi test not_null/unique vẫn xanh.
-    """
+    """Rolling-window models declare lookback once."""
     for model_path in Path("transform/models").rglob("*.sql"):
         body = model_path.read_text(encoding="utf-8")
         if "incremental_input_scope" not in body:

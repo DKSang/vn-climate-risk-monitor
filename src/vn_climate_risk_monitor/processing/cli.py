@@ -93,8 +93,7 @@ def _run_one(config: ProcessConfig, args: argparse.Namespace) -> None:
     repository, connection = open_repository()
 
     def execute(bounds: Bounds) -> dict[str, int | None]:
-        # dbt build includes the selected graph's model and data tests. Metrics
-        # are read only after that command returns successfully.
+        # Read metrics only after dbt build and its data tests succeed.
         run_dbt(
             bounds,
             project_dir=TRANSFORM_DIR,

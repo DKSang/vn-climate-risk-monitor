@@ -23,10 +23,7 @@ def test_pyarrow_is_not_a_direct_dependency() -> None:
 
 
 def test_archive_model_is_not_configurable(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Model archive chọn theo thời kỳ (era5 <2017, ecmwf_ifs >=2017).
-
-    Một biến môi trường sẽ âm thầm ghi đè logic đó và trộn hai lưới vào cùng bảng.
-    """
+    """Archive model selection is fixed by historical period."""
     monkeypatch.setenv("OPEN_METEO_ARCHIVE_MODEL", "era5_land")
     load_settings.cache_clear()
 

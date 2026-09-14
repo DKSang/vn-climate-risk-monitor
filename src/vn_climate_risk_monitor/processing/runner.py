@@ -1,20 +1,4 @@
-"""State machine của một lần incremental processing.
-
-run_started_at = control_now()          ← LẤY TRƯỚC khi đọc bất cứ thứ gì
-        ↓
-checkpoint_before = processing_state
-lower_bound = checkpoint_before − safety_lag
-        ↓
-begin_run → RUNNING
-        ↓
-execute(bounds)
-        ↓
-   ┌────┴────┐
- FAIL      SUCCESS
-   ↓          ↓
-state     state = run_started_at
-KHÔNG đổi
-"""
+"""Incremental processing state machine with checkpointed source bounds."""
 
 from __future__ import annotations
 
@@ -49,28 +33,14 @@ class SourceBounds:
 
 @dataclass(frozen=True)
 class Bounds:
-    """CỐ Ý không có upper bound.
-
-    Chặn trên bằng ``run_started_at`` nghe có vẻ cho batch deterministic, nhưng
-    nó loại đúng phần overlap đang bảo vệ ta. ``_ingested_at`` là transaction
-    START time, còn row chỉ visible lúc COMMIT: một row đóng dấu 10:59:58 có thể
-    xuất hiện sau khi run 11:00:00 đã đọc xong. Với upper bound đóng, row đó nằm
-    ngoài mọi cửa sổ tương lai và mất vĩnh viễn.
-
-    Cách chữa duy nhất là chồng lấn có kiểm soát ở CHẶN DƯỚI (``safety_lag``) và
-    dựa vào MERGE idempotent để hấp thụ phần lặp.
-    """
+    """Use lower bounds only; safety overlap covers late row visibility."""
 
     run_started_at: datetime
     sources: tuple[SourceBounds, ...]
 
     @property
     def is_incremental(self) -> bool:
-        """Thiếu checkpoint ở BẤT KỲ source nào là full refresh.
-
-        Source chưa có checkpoint nghĩa là chưa từng được xử lý; lọc incremental
-        trên nó sẽ bỏ qua toàn bộ lịch sử.
-        """
+        """Require checkpoints for every source before incremental mode."""
         return bool(self.sources) and all(
             source.lower_bound is not None for source in self.sources
         )
@@ -94,12 +64,7 @@ def compute_bounds(
     *,
     force_full_refresh: bool = False,
 ) -> Bounds:
-    """checkpoint − safety_lag; full refresh giữ checkpoint chỉ để audit.
-
-    ``force_full_refresh`` không xóa hay rewind checkpoint. Nó chỉ bỏ lower
-    bound trong run hiện tại; run thành công vẫn advance checkpoint theo
-    cùng state machine như incremental.
-    """
+    """Build lower bounds from checkpoints and the configured safety lag."""
     lag = config.safety_lag
     return Bounds(
         run_started_at=run_started_at,
@@ -131,12 +96,7 @@ def run_process(
     actor: str = "runner",
     reason: str | None = None,
 ) -> ProcessingResult:
-    """Chạy transform một lần và chỉ advance checkpoint khi nó thành công.
-
-    ``execute`` có thể trả về metrics (ví dụ số dòng target và snapshot đã publish) để
-    ghi cùng run. Trả ``None`` cũng hợp lệ — metrics là tuỳ chọn, không phải
-    điều kiện để run được coi là thành công.
-    """
+    """Run one transform and advance checkpoints only after success."""
     ensure_active_process_key(config.process_key)
 
     if force_full_refresh and not (reason and reason.strip()):
@@ -187,8 +147,7 @@ def run_process(
         process_key=config.process_key,
         scope=config.scope,
         source_refs=config.source_refs,
-        # KHÔNG phải completed_at, KHÔNG phải MAX(change_column). Row nào đến
-        # trong lúc run chạy sẽ nằm sau mốc này và được lần sau nhặt lên.
+        # Checkpoint at run start so mid-run arrivals stay eligible next run.
         checkpoint=run_started_at,
         completed_at=repository.control_now(),
         metrics=metrics,

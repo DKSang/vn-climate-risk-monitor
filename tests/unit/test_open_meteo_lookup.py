@@ -49,8 +49,7 @@ def seed(tmp_path: Path) -> Path:
         )
         for i in range(4)
     ] + [
-        # P002 và P003 rơi cùng một ô ifs → 3 ô cho 4 phường, và với
-        # batch_size=2 thì lô cuối lẻ 1 ô (chỗ kiểm tra cách tính đơn vị).
+        # P002/P003 share a cell, leaving 3 cells across 4 wards.
         grid.WardGrid(
             "ecmwf_ifs",
             f"P{i:03}",
@@ -139,11 +138,7 @@ def test_units_follow_actual_batch_length_not_nominal(tmp_path: Path) -> None:
 
 # ── resume ────────────────────────────────────────────────────────────────────
 def test_month_already_complete_in_bronze_is_skipped(tmp_path: Path) -> None:
-    """Bỏ qua theo SỐ GIỜ trong bronze, không theo tên file.
-
-    Cách fetch đã đổi từ theo-phường (6 file/tháng) sang theo-ô (1–2 file), nên
-    so khớp response_NNN.json sẽ hiểu sai cả hai chiều.
-    """
+    """Skip archive months by staging coverage, not file names."""
     tasks = archive_plan(
         tmp_path, [date(2016, 6, 1)], covered={"era5": frozenset({date(2016, 6, 1)})}
     )

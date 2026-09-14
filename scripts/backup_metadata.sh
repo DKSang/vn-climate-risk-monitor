@@ -88,8 +88,7 @@ fi
   --file="$tmp_backup" \
   "${schema_args[@]}"
 
-# Refuse to publish a corrupt/truncated custom archive. Keep any previous backup
-# untouched until the replacement archive and its checksum are both ready.
+# Publish only after the archive and checksum are valid.
 "$PG_RESTORE_BIN" --list "$tmp_backup" >/dev/null
 digest=$(sha256sum "$tmp_backup")
 printf '%s  %s\n' "${digest%% *}" "$backup_name" >"$tmp_checksum"

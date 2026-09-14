@@ -1,19 +1,4 @@
-"""Ánh xạ phường → ô lưới model, lấy từ chính phép snap của Open-Meteo.
-
-── VÌ SAO CẦN ──────────────────────────────────────────────────────────────────
-Fetch theo phường là lãng phí: đo 2026-08-28 trên bronze của dự án, 126 phường
-Hà Nội chỉ rơi vào **12 ô ERA5** (0,25°; seed ``ward_grid_map_seed``), và mọi
-bản sao trong cùng một ô có giá trị GIỐNG HỆT nhau — 0 cặp (ô, giờ) nào lệch.
-Tức là trả quota gấp ~10 lần để nhận về cùng một dữ liệu.
-
-Fetch theo ô rồi chiếu ngược về phường ở Silver cho kết quả y hệt với chi phí
-~1/10. Nhưng phép chiếu phải dùng ĐÚNG ô mà API đã gán, không phải ô gần nhất
-do ta tự tính: bin 0,25° và snap API từng lệch nhau.
-
-Nên module này hỏi thẳng API: gửi toạ độ 126 phường, ghi lại ô nó trả về. Một
-lần cho mỗi model, kết quả version-control trong ``transform/seeds/`` để dbt seed
-vào warehouse cho Silver join, và để planner đọc khi lập kế hoạch fetch.
-"""
+"""Map wards to Open-Meteo grid cells used for archive fetching."""
 
 from __future__ import annotations
 
@@ -36,7 +21,7 @@ FIELDNAMES = (
     "grid_longitude",
     "elevation_m",
 )
-# Nhiều toạ độ trong một URL; 40 giữ query string ở mức lành mạnh.
+# Keep multi-coordinate probe URLs small.
 PROBE_CHUNK = 40
 PROBE_DAY = "2024-06-01"
 HTTP_TIMEOUT_S = 60
@@ -119,7 +104,6 @@ def probe_ward_grid(
     return tuple(mapped)
 
 
-# ── seed CSV ──────────────────────────────────────────────────────────────────
 def read_seed(path: str | Path = SEED_PATH) -> tuple[WardGrid, ...]:
     csv_path = Path(path)
     if not csv_path.is_file():

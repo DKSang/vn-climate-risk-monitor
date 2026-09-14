@@ -1,9 +1,4 @@
-"""MinIO client construction without dataset-specific behavior.
-
-Integrity của bronze/files được uỷ cho MinIO (bitrot protection) cộng với
-metadata file ghi trong PostgreSQL lúc discovery; loader giữ lineage bằng
-``_source_file``. Xem [Operations](../../../docs/05-operations.md).
-"""
+"""MinIO client construction for Bronze storage."""
 
 from __future__ import annotations
 

@@ -1,5 +1,4 @@
--- Mỗi run/grid phải có đủ cửa sổ nhìn về phía trước ngay tại giờ đầu tiên.
--- Nếu không, pressure alert sẽ vô tình phân loại dựa trên horizon bị cụt.
+-- Each run/grid needs a complete forward horizon from its first hour.
 WITH first_hour AS (
     SELECT
         forecast_run_id,

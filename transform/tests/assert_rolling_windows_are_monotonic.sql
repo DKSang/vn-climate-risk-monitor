@@ -1,9 +1,4 @@
--- Cửa sổ rộng hơn phải chứa cửa sổ hẹp hơn, nên tổng của nó không thể nhỏ hơn.
--- Đây là test bắt lỗi RANGE/ROWS hoặc PARTITION sai — dạng lỗi cho ra số hợp lý
--- nhưng SAI, mà mọi test not_null/unique vẫn xanh.
---
--- Cặp so sánh sinh TỪ `rain_windows()`, không liệt kê tay: thêm một cửa sổ vào
--- macro mà quên sửa file này thì cửa sổ mới sẽ không được kiểm chứng gì cả.
+-- Wider rainfall windows must not total less than narrower ones.
 {% set windows = rain_windows() %}
 
 SELECT

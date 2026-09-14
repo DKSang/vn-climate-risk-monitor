@@ -1,9 +1,4 @@
-"""Test engine autoloader bằng fake — không cần Postgres/MinIO/DuckDB thật.
-
-Trọng tâm là ĐƯỜNG LỖI, vì đó là chỗ từng có defect mất dữ liệu: một file JSON
-hỏng kéo theo mọi file lành cùng lô (đo 2026-08-21: batch_size=10, 2 lành + 1
-hỏng -> 0 dòng vào bảng, cả 3 kẹt FAILED).
-"""
+"""Autoloader engine tests with fake storage and SQL dependencies."""
 
 from __future__ import annotations
 
@@ -133,11 +128,7 @@ class FakeResult:
 
 
 class FakeSql:
-    """DuckDB giả, có catalog: file nào có `poison` trong tên thì ném lỗi.
-
-    Truy vấn vào bảng chưa tồn tại ném lỗi giống Catalog Error thật, nếu không thì
-    đường tạo bảng đích của engine sẽ không bao giờ được test chạy tới.
-    """
+    """DuckDB fake that fails on poison files and missing tables."""
 
     def __init__(
         self, rows_per_file: int = 100, existing_tables: set[str] | None = None
@@ -148,8 +139,7 @@ class FakeSql:
 
     def execute(self, query: str, parameters: object = None) -> FakeResult:
         self.statements.append(query)
-        # Trước cả CREATE: DuckDB phải suy schema từ file nguồn nên file hỏng cũng
-        # làm gãy câu CREATE ... AS SELECT, không riêng INSERT.
+        # Poison input can fail CREATE AS SELECT during schema inference.
         if "poison" in query:
             raise ValueError("JSON transform error: unknown key")
         if query.startswith("SELECT 1 FROM "):
@@ -378,11 +368,7 @@ def test_later_discovery_creates_a_real_discovery_run(tmp_path: Path) -> None:
 def test_poison_file_does_not_block_healthy_files(
     tmp_path: Path, batch_size: int, expected_batches: int
 ) -> None:
-    """Hồi quy: file hỏng chỉ được làm hỏng chính nó.
-
-    Trước khi sửa, với batch_size > 1 thì cả lô bị đánh FAILED và các file lành
-    không bao giờ vào được bảng đích.
-    """
+    """A poison file must not block healthy files in the same batch."""
     loader = build_loader(
         tmp_path,
         ["raw/good_1.json", "raw/poison.json", "raw/good_2.json"],
@@ -407,10 +393,7 @@ def test_poison_file_does_not_block_healthy_files(
 
 
 def test_retry_is_bounded_by_max_retries_not_max_batches(tmp_path: Path) -> None:
-    """Một file hỏng không được đốt hết max_batches.
-
-    max_batches=100 nhưng max_retries=3, nên có một claim ban đầu và ba retry.
-    """
+    """Retries are bounded by max_retries, independent of max_batches."""
     loader = build_loader(tmp_path, ["raw/poison.json"], batch_size=1)
 
     result = loader.load()
@@ -531,12 +514,7 @@ def test_run_timestamp_is_timezone_aware(tmp_path: Path) -> None:
 
 
 def test_ingested_at_comes_from_control_plane_not_duckdb(tmp_path: Path) -> None:
-    """`_ingested_at` phải là giờ Postgres, không phải CURRENT_TIMESTAMP của DuckDB.
-
-    Downstream so mốc này với checkpoint lấy từ Postgres. Nếu Bronze đóng dấu
-    bằng giờ máy worker thì clock skew vài giây đủ để một cửa sổ incremental bỏ
-    sót row — và lỗi đó không tái hiện được.
-    """
+    """Use the control-plane clock for `_ingested_at`."""
     loader = build_loader(tmp_path, ["raw/a.json"], batch_size=10)
     (tmp_path / "t.sql").write_text(
         "SELECT {{ ingested_at }} AS _ingested_at FROM read_json_auto({{ files }})",
@@ -565,8 +543,7 @@ def test_sources_do_not_use_duckdb_clock_for_ingested_at() -> None:
         body = path.read_text(encoding="utf-8")
         if "_ingested_at" not in body:
             continue
-        # Bỏ comment: header của chính các file này GIẢI THÍCH vì sao không dùng
-        # CURRENT_TIMESTAMP, nên khớp trên nguyên văn sẽ luôn false-positive.
+        # Ignore comments when checking executable SQL.
         code = "\n".join(
             line for line in body.splitlines() if not line.lstrip().startswith("--")
         )
@@ -581,11 +558,7 @@ def test_repository_has_a_real_discovery_run_lifecycle() -> None:
 
 
 def test_code_native_parameters_reach_the_sql(tmp_path: Path) -> None:
-    """Nhiều nguồn cùng schema phải dùng CHUNG một file SQL.
-
-    era5 và ecmwf_ifs từng là hai file SQL lệch nhau đúng một dòng — dạng trùng
-    lặp chắc chắn sẽ trôi khỏi nhau khi thêm cột.
-    """
+    """Code-native sources share one parameterized SQL template."""
     config = build_config(tmp_path, batch_size=10)
     config = replace(config, parameters={"weather_model": "era5"})
     (tmp_path / "t.sql").write_text(
@@ -627,10 +600,7 @@ def test_parameter_with_a_quote_is_rejected(tmp_path: Path) -> None:
 
 
 def test_shipped_sources_render_without_leftover_placeholders() -> None:
-    """Mọi source definition phải cấp đủ parameter cho SQL của nó.
-
-    Placeholder thiếu chỉ nổ lúc chạy thật trên DuckDB, sau khi đã claim file.
-    """
+    """Shipped source SQL must render without unresolved placeholders."""
     import re
 
     from vn_climate_risk_monitor.load import source_configs

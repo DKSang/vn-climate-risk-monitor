@@ -364,8 +364,7 @@ def hero(
             for index, word in enumerate(rotating_words[:4])
         )
         word_stage = f'<div class="word-stage">{words}</div>'
-    # Không chèn blank line vào raw HTML: CommonMark có thể kết thúc HTML block
-    # và render phần còn lại như code khi hero không có rotating_words.
+    # Keep raw HTML contiguous or CommonMark may render the tail as code.
     markup = (
         '<section class="climate-hero">'
         '<div class="hero-grid" aria-hidden="true"></div>'

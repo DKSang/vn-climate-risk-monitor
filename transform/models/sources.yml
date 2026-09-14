@@ -1,8 +1,7 @@
 version: 2
 
 sources:
-  # Staging do autoloader ghi. dbt CHỈ ĐỌC — không có model nào materialize
-  # vào đây. Ranh giới đó là thứ giữ cho ingest và transform tách bạch.
+  # Autoloader owns staging; dbt reads it via source().
   - name: silver_staging
     database: catalog1
     schema: silver

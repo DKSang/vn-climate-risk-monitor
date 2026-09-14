@@ -1,6 +1,4 @@
--- Shared archive transform for models with the same Open-Meteo payload.
--- {{ ingested_at }} comes from the Postgres control-plane clock used by checkpoints.
--- TRY_CAST preserves bad values in _rescued_data instead of failing the batch.
+-- Archive transform; invalid values go to _rescued_data via TRY_CAST.
 
 WITH raw AS (
     SELECT *

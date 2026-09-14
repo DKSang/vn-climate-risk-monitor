@@ -1,9 +1,4 @@
-"""State machine của incremental processing, test bằng fake — không cần Postgres.
-
-Trọng tâm là ĐƯỜNG MẤT DỮ LIỆU, vì đó là defect của thiết kế watermark cũ:
-`gold_watermark.py` lưu `MAX(_ingested_at)` đọc SAU khi dbt xong, nên row nào
-được autoloader commit trong lúc dbt chạy sẽ bị checkpoint nhảy qua vĩnh viễn.
-"""
+"""Incremental processing state-machine tests with a fake repository."""
 
 from __future__ import annotations
 
@@ -81,12 +76,7 @@ def build_config(
 
 # ── checkpoint là START time ──────────────────────────────────────────────────
 def test_checkpoint_is_run_start_not_run_end() -> None:
-    """Đây là toàn bộ lý do framework này tồn tại.
-
-    Run bắt đầu 10:00, kết thúc 10:10. Row Bronze đến lúc 10:05 CÓ THỂ chưa được
-    run này đọc. Lưu 10:10 (end time) sẽ khiến row đó không bao giờ lọt vào cửa
-    sổ nào nữa. Lưu 10:00 thì lần sau nhặt được.
-    """
+    """Checkpoint successful runs at start time."""
     repository = FakeRepository(clock=[at(10, 0), at(10, 10)])
 
     run_process(
@@ -124,12 +114,7 @@ def test_row_arriving_mid_run_is_picked_up_next_time() -> None:
 
 
 def test_safety_lag_covers_transaction_start_versus_commit_gap() -> None:
-    """`_ingested_at` là transaction START time, row chỉ visible lúc COMMIT.
-
-    Lô ghi bắt đầu 09:59:58 nhưng commit 10:00:40, trong khi run bắt đầu 10:00:00
-    và đọc xong trước đó. Không có safety lag thì 09:59:58 nằm ngoài mọi cửa sổ
-    tương lai vì checkpoint đã là 10:00:00.
-    """
+    """Safety lag covers rows stamped before commit visibility."""
     config = build_config(safety_lag=timedelta(minutes=15))
     stamped_before_commit = at(9, 59, 58)
 
@@ -167,12 +152,7 @@ def test_failed_run_leaves_checkpoint_unchanged() -> None:
 
 
 def test_base_exception_also_marks_the_run_failed() -> None:
-    """SIGTERM/Ctrl-C không phải `Exception`.
-
-    CLI biến SIGTERM thành exception đúng vì lý do này; nếu runner chỉ bắt
-    `Exception` thì tín hiệu vẫn bỏ lại row RUNNING mồ côi, và unique index chặn
-    RUNNING sẽ khóa mọi lần chạy sau cho tới khi có người `abandon` tay.
-    """
+    """Termination must mark a RUNNING process as failed."""
     repository = FakeRepository(
         clock=[at(11, 0), at(11, 2)], checkpoints={"archive_hourly": at(10, 0)}
     )

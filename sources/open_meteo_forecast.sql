@@ -1,6 +1,5 @@
--- Forecast payload transform used by the autoloader.
--- {{ ingested_at }} comes from the Postgres control-plane clock used by checkpoints.
--- TRY_CAST preserves bad values in _rescued_data instead of failing the batch.
+-- Autoloader transform using the control-plane ingestion clock.
+-- TRY_CAST sends invalid source values to _rescued_data.
 
 WITH raw AS (
     SELECT *

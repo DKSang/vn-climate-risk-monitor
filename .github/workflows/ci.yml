@@ -55,10 +55,7 @@ jobs:
         working-directory: transform
         run: uv run dbt parse --profiles-dir . --no-partial-parse
 
-      # dbt compile primes the adapter cache and therefore opens every attachment
-      # before applying node selection. A local empty catalog preserves the
-      # production alias while keeping compilation independent of PostgreSQL and
-      # MinIO. Một catalog kể từ 2026-09-03 (bỏ bronze_store và pg_source).
+      # Use an empty local catalog so dbt compile stays service-free.
       - name: Prepare service-free dbt catalogs
         run: |
           mkdir -p /tmp/vn-climate-dbt-ci
@@ -86,9 +83,7 @@ jobs:
                     alias: catalog1
           YAML
 
-      # Compile validates SQL/Jinja for the full project. Fixture-backed dbt tests
-      # are intentionally not run against these empty catalogs: model execution uses
-      # DuckLake materializations/hooks and belongs to the service-backed build.
+      # Compile SQL/Jinja here; service-backed execution runs elsewhere.
       - name: Compile the complete dbt project
         working-directory: transform
         run: uv run dbt compile --profiles-dir /tmp/vn-climate-dbt-ci --target ci

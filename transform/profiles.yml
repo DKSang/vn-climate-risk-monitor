@@ -23,16 +23,10 @@ transform:
           url_style: path
 
       attach:
-        # MỘT catalog cho mọi bảng. DuckLake suy path là
-        # <data_path>/<schema>/<table>, nên silver.stg_* nằm ở silver/stg_*/.
+        # One DuckLake catalog; schemas determine object paths.
         - path: "ducklake:postgres:dbname={{ env_var('POSTGRES_DB', 'vnclimate') }} host={{ env_var('POSTGRES_HOST', '127.0.0.1') }} port={{ env_var('POSTGRES_PORT', '5432') }} user={{ env_var('POSTGRES_USER', 'vnclimate') }} password={{ env_var('POSTGRES_PASSWORD') }}"
           alias: catalog1
           options:
             data_path: "s3://{{ env_var('MINIO_BUCKET', 'vn-climate') }}"
             metadata_schema: "ducklake"
-
-
-        # KHÔNG còn attach `pg_source`. Danh mục phường/xã chỉ đến từ seed
-        # `ward_coordinates_seed.csv`. Bản cũ đọc song song cả Postgres nguồn
-        # lẫn seed cho CÙNG một thực thể — hai đường, và khi chúng lệch nhau thì
-        # không có quy tắc nào nói bên nào đúng.
+        # Ward references come only from versioned seeds.

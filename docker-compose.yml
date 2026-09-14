@@ -11,9 +11,6 @@ x-project-environment: &project-environment
   MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?Set MINIO_SECRET_KEY in .env}
   MINIO_BUCKET: ${MINIO_BUCKET:-vn-climate}
   MINIO_SECURE: "false"
-  DUCKLAKE_ALIAS: catalog1
-  DUCKLAKE_DATA_PATH: s3://${MINIO_BUCKET:-vn-climate}
-  DUCKLAKE_METADATA_SCHEMA: ducklake
 
 services:
   postgres:
@@ -77,8 +74,6 @@ services:
       context: .
       dockerfile: docker/dashboard.Dockerfile
     image: vn-climate-risk-monitor-dashboard:0.1.0
-    restart: "no"
-    working_dir: /project
     depends_on:
       postgres:
         condition: service_healthy
@@ -116,8 +111,6 @@ services:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: ${AIRFLOW_DAGS_PAUSED_AT_CREATION:-true}
-      AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
-      AIRFLOW__LOGGING__BASE_LOG_FOLDER: /opt/airflow/logs
       AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY:?Set AIRFLOW_FERNET_KEY in .env}
       AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY:?Set AIRFLOW_SECRET_KEY in .env}
       AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "true"
@@ -129,9 +122,6 @@ services:
       OPEN_METEO_LOCATION_BATCH_SIZE: ${OPEN_METEO_LOCATION_BATCH_SIZE:-25}
       PROJECT_DIR: /project
       ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}
-      # Runtime dùng dependency environment đã khóa và bake trong image.
-      UV_PROJECT_ENVIRONMENT: /opt/project_venv
-      VIRTUAL_ENV: /opt/project_venv
     volumes:
       - airflow_logs:/opt/airflow/logs
     command:
@@ -164,7 +154,6 @@ services:
     restart: unless-stopped
     ports:
       - "127.0.0.1:${DASHBOARD_PORT:-8501}:8501"
-    working_dir: /project
     depends_on:
       postgres:
         condition: service_healthy
