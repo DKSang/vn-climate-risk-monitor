@@ -1,9 +1,8 @@
-/* Flood-point dimension. Incremental giữ state soft-delete. */
+/* Flood-point reference dimension. Rebuilt from the versioned seed. */
 
 {{ config(
-    materialized = 'incremental',
-    unique_key = 'point_id',
-    tags = ['dim']
+    materialized = 'table',
+    tags = ['dim', 'forecast', 'archive']
 ) }}
 
 SELECT
@@ -15,6 +14,11 @@ SELECT
     district_name,
     drainage_basin,
     rain_scenario,
+    CASE rain_scenario
+        WHEN 'scenario_50_70mm' THEN 1
+        WHEN 'scenario_70_100mm' THEN 2
+        WHEN 'scenario_over_100mm' THEN 3
+    END AS required_rain_scenario_level,
     typical_depth_cm,
     latitude,
     longitude,
@@ -22,5 +26,5 @@ SELECT
     source_reference,
     TRUE AS is_active,
     CAST(NULL AS TIMESTAMPTZ) AS _deactivated_at,
-    {{ processing_updated_at() }} AS _updated_at
+    CURRENT_TIMESTAMP AS _updated_at
 FROM {{ ref('stg_seed__flood_point') }}

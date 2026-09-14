@@ -1,10 +1,5 @@
 {# Incremental read/write scope derived from processing checkpoints. #}
 
-{% macro processing_lower_bound(source_ref) %}
-    {{- var('processing_bounds', {}).get(source_ref) -}}
-{% endmacro %}
-
-
 {# Cho hop 1:1 không cần mở rộng window. #}
 {% macro incremental_changed_filter(
     source_ref, change_column='_ingested_at', prefix='WHERE'

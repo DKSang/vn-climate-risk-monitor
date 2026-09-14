@@ -34,19 +34,6 @@ SCENARIO_COLORS = {
     "over_100": [239, 68, 68, 240],
 }
 
-SCENARIO_RANK = {
-    "below_50": 0,
-    "from_50_to_under_70": 1,
-    "from_70_to_100": 2,
-    "over_100": 3,
-}
-
-POINT_SCENARIO_RANK = {
-    "scenario_50_70mm": 1,
-    "scenario_70_100mm": 2,
-    "scenario_over_100mm": 3,
-}
-
 POINT_SCENARIO_LABELS = {
     "scenario_50_70mm": "Từ 50 mm/giờ",
     "scenario_70_100mm": "Từ 70 mm/giờ",
@@ -67,6 +54,7 @@ RAIN_INDICATORS: dict[str, dict] = {
     "Mưa tích lũy 24 giờ": {
         "metric": "rain_24h_mm",
         "band": "vn_rain_band_24h",
+        "forecast_band": "forecast_next_24h_band",
         "window_label": "24h",
         "unit": "mm trong 24 giờ",
         "threshold": 50.0,
@@ -100,6 +88,7 @@ RAIN_INDICATORS: dict[str, dict] = {
     "Mưa tích lũy 12 giờ": {
         "metric": "rain_12h_mm",
         "band": "vn_rain_band_12h",
+        "forecast_band": "forecast_next_12h_band",
         "window_label": "12h",
         "unit": "mm trong 12 giờ",
         "threshold": 30.0,
@@ -130,6 +119,7 @@ RAIN_INDICATORS: dict[str, dict] = {
     "Kịch bản QĐ 2280 · mưa 1 giờ": {
         "metric": "rain_1h_mm",
         "band": "hanoi_rain_scenario_band",
+        "forecast_band": "forecast_next_1h_band",
         "window_label": "1h",
         "unit": "mm trong 1 giờ",
         "threshold": 50.0,
@@ -145,43 +135,6 @@ RAIN_INDICATORS: dict[str, dict] = {
         ),
     },
 }
-
-
-def classify_rain_band(value: object, indicator_name: str) -> str:
-    """Phân loại band từ lượng mưa thực tế."""
-    val = number(value)
-    if val <= 0:
-        return ""
-    if indicator_name == "Mưa tích lũy 24 giờ":
-        if val > 300:
-            return "over_300"
-        if val > 200:
-            return "from_200_to_300"
-        if val >= 150:
-            return "from_150_to_under_200"
-        if val >= 100:
-            return "from_100_to_under_150"
-        if val >= 50:
-            return "from_50_to_under_100"
-        return "below_50"
-    if indicator_name == "Mưa tích lũy 12 giờ":
-        if val > 100:
-            return "over_100"
-        if val >= 70:
-            return "from_70_to_100"
-        if val >= 50:
-            return "from_50_to_under_70"
-        if val >= 30:
-            return "from_30_to_under_50"
-        return "below_30"
-    # Kịch bản QĐ 2280 · mưa 1 giờ
-    if val > 100:
-        return "over_100"
-    if val >= 70:
-        return "from_70_to_100"
-    if val >= 50:
-        return "from_50_to_under_70"
-    return "below_50"
 
 
 def number(value: object) -> float:
@@ -321,12 +274,6 @@ def default_hour_index(hours: list[datetime]) -> int:
 def scenario_label(value: object, *, short: bool = False) -> str:
     labels = SCENARIO_SHORT_LABELS if short else SCENARIO_LABELS
     return labels.get(str(value), "Chưa phân loại")
-
-
-def point_is_triggered(point_scenario: object, ward_scenario: object) -> bool:
-    return SCENARIO_RANK.get(str(ward_scenario), -1) >= POINT_SCENARIO_RANK.get(
-        str(point_scenario), 99
-    )
 
 
 def ward_polygon_layer(geojson_data: dict) -> pdk.Layer:

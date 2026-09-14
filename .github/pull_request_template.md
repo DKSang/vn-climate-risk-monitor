@@ -14,7 +14,7 @@ Mô tả vấn đề và outcome; không chỉ liệt kê file đã sửa.
 
 - [ ] Unit tests và Ruff
 - [ ] `dbt parse` và dbt tests theo phạm vi
-- [ ] Source freshness/Provero nếu đổi ingestion hoặc transform
+- [ ] Source freshness và dbt quality tests nếu đổi ingestion hoặc transform
 - [ ] Health `--require-gold` và consumer smoke test nếu đổi serving
 - [ ] Tài liệu/contract/runbook/risk register đã cập nhật
 - [ ] Không có secret, credential hoặc dữ liệu nhạy cảm trong diff/log

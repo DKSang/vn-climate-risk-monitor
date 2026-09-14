@@ -11,6 +11,13 @@ def _sql(relative_path: str) -> str:
     return (MODELS / relative_path).read_text(encoding="utf-8")
 
 
+def _serving_sql() -> str:
+    return "\n".join(
+        (Path("serving/dashboard") / name).read_text(encoding="utf-8")
+        for name in ("common.py", "forecast.py", "archive.py")
+    )
+
+
 def test_forecast_history_keys_include_retrieval_run() -> None:
     intermediate = _sql("intermediate/int_weather_forecast_hourly.sql")
     mart = _sql("marts/fct_rain_forecast_hourly.sql")
@@ -45,10 +52,10 @@ def test_forecast_pressure_alert_uses_forward_windows_and_current_run() -> None:
     assert "incomplete_forecast_coverage" in alert
 
 
-def test_legacy_forecast_risk_serving_models_are_removed() -> None:
+def test_removed_forecast_risk_serving_models_stay_absent() -> None:
     marts = MODELS / "marts"
     schema = _sql("marts/schema.yml")
-    queries = Path("serving/dashboard/queries.py").read_text(encoding="utf-8")
+    queries = _serving_sql()
 
     assert not (marts / "bridge_flood_point_grid.sql").exists()
     assert not (marts / "fct_flood_risk_score.sql").exists()
@@ -75,9 +82,13 @@ def test_unused_gold_research_and_daily_models_are_removed() -> None:
 
 
 def test_serving_uses_successful_processing_publication_not_catalog_head() -> None:
-    queries = Path("serving/dashboard/queries.py").read_text(encoding="utf-8")
-    runner = Path("scripts/run_processing.py").read_text(encoding="utf-8")
-    state = Path("src/processing/state.py").read_text(encoding="utf-8")
+    queries = _serving_sql()
+    runner = Path(
+        "src/vn_climate_risk_monitor/processing/cli.py"
+    ).read_text(encoding="utf-8")
+    state = Path("src/vn_climate_risk_monitor/processing/state.py").read_text(
+        encoding="utf-8"
+    )
 
     assert "published_snapshot_id" in queries
     assert "status = 'SUCCEEDED'" in queries

@@ -3,7 +3,9 @@ from io import BytesIO
 from unittest.mock import patch
 from urllib.error import HTTPError
 
-from fetch import land
+from vn_climate_risk_monitor.ingestion import fetch
+from vn_climate_risk_monitor.ingestion.fetch import land
+from vn_climate_risk_monitor.storage import minio as minio_storage
 
 
 class PutMinio:
@@ -12,6 +14,27 @@ class PutMinio:
 
     def put_object(self, bucket, key, data, length, content_type=""):
         self.objects[key] = data.read()
+
+
+class BucketMinio:
+    def __init__(self, *, exists: bool) -> None:
+        self.exists = exists
+        self.created: list[str] = []
+
+    def bucket_exists(self, bucket: str) -> bool:
+        return self.exists
+
+    def make_bucket(self, bucket: str) -> None:
+        self.created.append(bucket)
+
+
+def test_minio_storage_module_is_strictly_a_client_factory() -> None:
+    assert not hasattr(minio_storage, "ensure_bucket")
+    client = BucketMinio(exists=False)
+
+    fetch.ensure_bucket(client, "vn-climate")
+
+    assert client.created == ["vn-climate"]
 
 
 def _http_error(code: int) -> HTTPError:
@@ -32,31 +55,32 @@ def _ok(body: bytes):
     return Resp()
 
 
-def test_dict_body_is_put_as_one_element_array() -> None:
+def test_exact_http_response_bytes_are_put_without_reserialization() -> None:
+    body = b'{\n  "latitude": 21.0,\r\n  "generationtime_ms": 1.25\n}\n'
     client = PutMinio()
     with patch(
-        "fetch.urlopen",
-        return_value=_ok(b'{"latitude": 21.0}'),
+        "vn_climate_risk_monitor.ingestion.fetch.urlopen",
+        return_value=_ok(body),
     ):
         land(client, "vn-climate", "https://x", "k.json")
-    assert json.loads(client.objects["k.json"]) == [{"latitude": 21.0}]
+    assert client.objects["k.json"] == body
 
 
 def test_array_body_keeps_elements() -> None:
     client = PutMinio()
     with patch(
-        "fetch.urlopen",
+        "vn_climate_risk_monitor.ingestion.fetch.urlopen",
         return_value=_ok(b'[{"latitude": 1}, {"latitude": 2}]'),
     ):
         land(client, "vn-climate", "https://x", "k.json")
     assert json.loads(client.objects["k.json"]) == [{"latitude": 1}, {"latitude": 2}]
 
 
-def test_error_json_does_not_put() -> None:
+def test_error_json_is_detected_before_it_can_poison_an_immutable_key() -> None:
     client = PutMinio()
     try:
         with patch(
-            "fetch.urlopen",
+            "vn_climate_risk_monitor.ingestion.fetch.urlopen",
             return_value=_ok(b'{"error": true, "reason": "Rate limit"}'),
         ):
             land(client, "vn-climate", "https://x", "k.json")
@@ -78,21 +102,21 @@ def test_429_then_200_puts_once() -> None:
         return _ok(b'{"ok": true}')
 
     with (
-        patch("fetch.urlopen", side_effect=urlopen),
-        patch("fetch.time.sleep"),
+        patch("vn_climate_risk_monitor.ingestion.fetch.urlopen", side_effect=urlopen),
+        patch("vn_climate_risk_monitor.ingestion.fetch.time.sleep"),
     ):
         land(client, "vn-climate", "https://x", "k.json")
-    assert json.loads(client.objects["k.json"]) == [{"ok": True}]
+    assert client.objects["k.json"] == b'{"ok": true}'
 
 
 def test_five_429s_do_not_put() -> None:
     client = PutMinio()
     with (
         patch(
-            "fetch.urlopen",
+            "vn_climate_risk_monitor.ingestion.fetch.urlopen",
             side_effect=_http_error(429),
         ),
-        patch("fetch.time.sleep") as slept,
+        patch("vn_climate_risk_monitor.ingestion.fetch.time.sleep") as slept,
     ):
         try:
             land(client, "vn-climate", "https://x", "k.json")
@@ -108,10 +132,10 @@ def test_400_does_not_retry() -> None:
     client = PutMinio()
     with (
         patch(
-            "fetch.urlopen",
+            "vn_climate_risk_monitor.ingestion.fetch.urlopen",
             side_effect=_http_error(400),
         ),
-        patch("fetch.time.sleep") as slept,
+        patch("vn_climate_risk_monitor.ingestion.fetch.time.sleep") as slept,
     ):
         try:
             land(client, "vn-climate", "https://x", "k.json")

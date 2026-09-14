@@ -2,20 +2,10 @@
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
-ROOT_DIR = Path(__file__).resolve().parent.parent.parent
-if str(ROOT_DIR) not in sys.path:
-    sys.path.insert(0, str(ROOT_DIR))
-
 import streamlit as st
 
-from serving.dashboard.queries import (
-    load_all_wards,
-    load_forecast_metadata,
-    load_serving_snapshot,
-)
+from serving.dashboard.common import load_all_wards, load_serving_snapshot
+from serving.dashboard.forecast import load_forecast_metadata
 from serving.dashboard.ui import (
     configure_page,
     hero,

@@ -1,40 +1,32 @@
-# vn-climate-risk-monitor — Infrastructure
-# Postgres: ingestion control plane + DuckLake catalog metadata
-# MinIO:    S3-compatible object storage (Bronze/Silver/Gold Parquet)
+# vn-climate-risk-monitor — local single-node runtime
+
+x-project-environment: &project-environment
+  POSTGRES_HOST: postgres
+  POSTGRES_PORT: 5432
+  POSTGRES_DB: ${POSTGRES_DB:-vnclimate}
+  POSTGRES_USER: ${POSTGRES_USER:-vnclimate}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+  MINIO_ENDPOINT: minio:9000
+  MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:?Set MINIO_ACCESS_KEY in .env}
+  MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?Set MINIO_SECRET_KEY in .env}
+  MINIO_BUCKET: ${MINIO_BUCKET:-vn-climate}
+  MINIO_SECURE: "false"
+  DUCKLAKE_ALIAS: catalog1
+  DUCKLAKE_DATA_PATH: s3://${MINIO_BUCKET:-vn-climate}
+  DUCKLAKE_METADATA_SCHEMA: ducklake
 
 services:
-  secret-init:
-    build:
-      context: .
-      dockerfile: docker/dashboard.Dockerfile
-    image: vn-climate-risk-monitor-dashboard:0.1.0
-    user: "0:0"
-    restart: "no"
-    environment:
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
-      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-}
-      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-}
-      AIRFLOW_SECRET_KEY: ${AIRFLOW_SECRET_KEY:-}
-      AIRFLOW_FERNET_KEY: ${AIRFLOW_FERNET_KEY:-}
-    volumes:
-      - runtime_secrets:/run/secrets
-    command: ["python", "scripts/init_runtime_secrets.py", "/run/secrets"]
-
   postgres:
     image: postgres:17.5@sha256:aadf2c0696f5ef357aa7a68da995137f0cf17bad0bf6e1f17de06ae5c769b302
     restart: unless-stopped
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-vnclimate}
       POSTGRES_USER: ${POSTGRES_USER:-vnclimate}
-      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
-    depends_on:
-      secret-init:
-        condition: service_completed_successfully
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - runtime_secrets:/run/secrets:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-vnclimate} -d ${POSTGRES_DB:-vnclimate}"]
       interval: 5s
@@ -45,21 +37,14 @@ services:
     image: minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
     restart: unless-stopped
     ports:
-      - "${MINIO_API_PORT:-9000}:9000"
-      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+      - "127.0.0.1:${MINIO_API_PORT:-9000}:9000"
+      - "127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001"
     environment:
-      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
-    depends_on:
-      secret-init:
-        condition: service_completed_successfully
-    entrypoint: ["/bin/sh", "-ec"]
-    command:
-      - |
-        export MINIO_ROOT_PASSWORD="$$(cat /run/secrets/minio_secret_key)"
-        exec /usr/bin/docker-entrypoint.sh server --console-address ":9001" /data
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:?Set MINIO_ACCESS_KEY in .env}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:?Set MINIO_SECRET_KEY in .env}
+    command: ["server", "--console-address", ":9001", "/data"]
     volumes:
       - minio_data:/data
-      - runtime_secrets:/run/secrets:ro
     healthcheck:
       test: ["CMD", "mc", "ready", "local"]
       interval: 5s
@@ -69,29 +54,21 @@ services:
 
 
   pgadmin:
+    profiles: ["tools"]
     image: dpage/pgadmin4:9.17@sha256:2f4ce946ddf8360680d7eff4eaba1d91859eb6b4003e6623bad5c63a322c2f4d
     restart: unless-stopped
     ports:
-      - "${PGADMIN_PORT:-5050}:80"
+      - "127.0.0.1:${PGADMIN_PORT:-5050}:80"
     environment:
       PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@vnclimate.org}
-      PGADMIN_DEFAULT_PASSWORD_FILE: /run/secrets/pgadmin_password
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:?Set PGADMIN_DEFAULT_PASSWORD in .env}
       PGADMIN_CONFIG_SERVER_MODE: 'False'
       PGADMIN_SERVER_JSON_FILE: /tmp/servers.json
       PGADMIN_SERVERS_JSON: >-
         {"Servers":{"1":{"Name":"vnclimate (DuckLake Catalog)","Group":"Servers","Host":"postgres","Port":5432,"MaintenanceDB":"${POSTGRES_DB:-vnclimate}","Username":"${POSTGRES_USER:-vnclimate}","SSLMode":"prefer"}}}
-    entrypoint:
-      - /bin/sh
-      - -ec
-      - |
-        printf '%s\n' "$$PGADMIN_SERVERS_JSON" > "$$PGADMIN_SERVER_JSON_FILE"
-        exec /entrypoint.sh
     volumes:
       - pgadmin_data:/var/lib/pgadmin
-      - runtime_secrets:/run/secrets:ro
     depends_on:
-      secret-init:
-        condition: service_completed_successfully
       postgres:
         condition: service_healthy
 
@@ -103,35 +80,19 @@ services:
     restart: "no"
     working_dir: /project
     depends_on:
-      secret-init:
-        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       minio:
         condition: service_healthy
     environment:
-      POSTGRES_HOST: postgres
-      POSTGRES_PORT: 5432
-      POSTGRES_DB: ${POSTGRES_DB:-vnclimate}
-      POSTGRES_USER: ${POSTGRES_USER:-vnclimate}
-      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
-      MINIO_ENDPOINT: minio:9000
-      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
-      MINIO_SECRET_KEY_FILE: /run/secrets/minio_secret_key
-      MINIO_BUCKET: ${MINIO_BUCKET:-vn-climate}
-      MINIO_SECURE: "false"
-      DUCKLAKE_ALIAS: catalog1
-      DUCKLAKE_DATA_PATH: s3://${MINIO_BUCKET:-vn-climate}
-      DUCKLAKE_METADATA_SCHEMA: ducklake
-    volumes:
-      - runtime_secrets:/run/secrets:ro
+      <<: *project-environment
     command:
       - bash
       - -ec
       - |
-        uv run python scripts/bootstrap.py
-        uv run python scripts/run_dbt.py seed --project-dir transform --profiles-dir transform
-        uv run python scripts/run_dbt.py run --project-dir transform --profiles-dir transform --select stg_seed__ward stg_seed__ward_grid stg_seed__flood_point stg_seed__flood_observation dim_ward dim_flood_point fct_flood_event_observation
+        uv run bootstrap-lakehouse
+        uv run dbt seed --project-dir transform --profiles-dir transform
+        uv run dbt build --project-dir transform --profiles-dir transform --indirect-selection cautious --select stg_seed__ward stg_seed__ward_grid stg_seed__flood_point stg_seed__flood_observation dim_ward dim_flood_point fct_flood_event_observation
 
   airflow:
     build:
@@ -140,8 +101,6 @@ services:
     image: vn-climate-risk-monitor-airflow:2.10.5
     restart: unless-stopped
     depends_on:
-      secret-init:
-        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       minio:
@@ -149,8 +108,9 @@ services:
       bootstrap:
         condition: service_completed_successfully
     ports:
-      - "${AIRFLOW_PORT:-8080}:8080"
+      - "127.0.0.1:${AIRFLOW_PORT:-8080}:8080"
     environment:
+      <<: *project-environment
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN_CMD: >-
         python /project/scripts/airflow_sql_alchemy_conn.py
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
@@ -158,29 +118,15 @@ services:
       AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: ${AIRFLOW_DAGS_PAUSED_AT_CREATION:-true}
       AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
       AIRFLOW__LOGGING__BASE_LOG_FOLDER: /opt/airflow/logs
-      AIRFLOW__CORE__FERNET_KEY_CMD: cat /run/secrets/airflow_fernet_key
-      AIRFLOW__WEBSERVER__SECRET_KEY_CMD: cat /run/secrets/airflow_secret_key
+      AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY:?Set AIRFLOW_FERNET_KEY in .env}
+      AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY:?Set AIRFLOW_SECRET_KEY in .env}
       AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "true"
-      # Project environment variables passed to worker
-      POSTGRES_HOST: postgres
-      POSTGRES_PORT: 5432
-      POSTGRES_DB: ${POSTGRES_DB:-vnclimate}
-      POSTGRES_USER: ${POSTGRES_USER:-vnclimate}
-      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
-      MINIO_ENDPOINT: minio:9000
-      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
-      MINIO_SECRET_KEY_FILE: /run/secrets/minio_secret_key
-      MINIO_BUCKET: ${MINIO_BUCKET:-vn-climate}
-      MINIO_SECURE: "false"
       OPEN_METEO_FETCH_WORKERS: ${OPEN_METEO_FETCH_WORKERS:-4}
       OPEN_METEO_FORECAST_URL: ${OPEN_METEO_FORECAST_URL:-https://api.open-meteo.com/v1/forecast}
       OPEN_METEO_ARCHIVE_URL: ${OPEN_METEO_ARCHIVE_URL:-https://archive-api.open-meteo.com/v1/archive}
       OPEN_METEO_FORECAST_MODEL: ${OPEN_METEO_FORECAST_MODEL:-best_match}
       OPEN_METEO_FORECAST_HOURS: ${OPEN_METEO_FORECAST_HOURS:-72}
       OPEN_METEO_LOCATION_BATCH_SIZE: ${OPEN_METEO_LOCATION_BATCH_SIZE:-25}
-      DUCKLAKE_ALIAS: catalog1
-      DUCKLAKE_DATA_PATH: s3://${MINIO_BUCKET:-vn-climate}
-      DUCKLAKE_METADATA_SCHEMA: ducklake
       PROJECT_DIR: /project
       ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}
       # Runtime dùng dependency environment đã khóa và bake trong image.
@@ -188,7 +134,6 @@ services:
       VIRTUAL_ENV: /opt/project_venv
     volumes:
       - airflow_logs:/opt/airflow/logs
-      - runtime_secrets:/run/secrets:ro
     command:
       - bash
       - -ec
@@ -211,18 +156,16 @@ services:
       retries: 5
       start_period: 60s
 
-  dashboard:
+  streamlit:
     build:
       context: .
       dockerfile: docker/dashboard.Dockerfile
     image: vn-climate-risk-monitor-dashboard:0.1.0
     restart: unless-stopped
     ports:
-      - "${DASHBOARD_PORT:-8501}:8501"
+      - "127.0.0.1:${DASHBOARD_PORT:-8501}:8501"
     working_dir: /project
     depends_on:
-      secret-init:
-        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       minio:
@@ -230,25 +173,10 @@ services:
       bootstrap:
         condition: service_completed_successfully
     environment:
-      POSTGRES_HOST: postgres
-      POSTGRES_PORT: 5432
-      POSTGRES_DB: ${POSTGRES_DB:-vnclimate}
-      POSTGRES_USER: ${POSTGRES_USER:-vnclimate}
-      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
-      MINIO_ENDPOINT: minio:9000
-      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
-      MINIO_SECRET_KEY_FILE: /run/secrets/minio_secret_key
-      MINIO_BUCKET: ${MINIO_BUCKET:-vn-climate}
-      MINIO_SECURE: "false"
-      DUCKLAKE_ALIAS: catalog1
-      DUCKLAKE_DATA_PATH: s3://${MINIO_BUCKET:-vn-climate}
-      DUCKLAKE_METADATA_SCHEMA: ducklake
+      <<: *project-environment
       DASHBOARD_PORT: ${DASHBOARD_PORT:-8501}
-    volumes:
-      - runtime_secrets:/run/secrets:ro
 
 volumes:
-  runtime_secrets:
   postgres_data:
   minio_data:
   pgadmin_data:

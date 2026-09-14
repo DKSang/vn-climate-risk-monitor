@@ -1,86 +1,30 @@
-# dbt transform
+# dbt project
 
-Project dbt cho Hanoi Flood & Climate Risk Monitor. DuckDB thực thi SQL; các
-model Silver/Gold được lưu trong DuckLake (Postgres metadata, MinIO Parquet).
+This directory contains the dbt/DuckDB transformation graph. The autoloader
+writes the two physical Silver staging tables; dbt reads them directly and builds
+intermediate and Gold models.
 
-## Rainfall forecast KPI
+## Parse and build
 
-- `silver.int_weather_forecast_hourly`: lịch sử các retrieval run hoàn chỉnh,
-  grain `forecast_run_id × grid_cell_id × valid_time_utc`.
-- `gold.bridge_ward_grid`: centroid phường → returned forecast grid gần nhất.
-- `gold.fct_rain_forecast_hourly`: lịch sử forecast-vintage, rolling
-  trailing 1/3/6/12/24 giờ và forward `forecast_next_*h_mm` để đọc
-  lượng mưa sau timestamp hiện tại về phía trước; band QĐ 2280 và dải mưa QĐ 18.
-- `gold.fct_rain_forecast_current_hourly`: view serving của run mới nhất, chỉ
-  giữ các giờ chưa hết hạn.
-- `gold.fct_rain_pressure_alert`: tín hiệu áp lực mưa theo phường × giờ, gồm
-  mức `UNKNOWN/NORMAL/WATCH/ELEVATED/HIGH`, điểm 0–100 khi có input,
-  lý do kích hoạt, persistence
-  giữa ba forecast run gần nhất và revision 24 giờ. Đây là heuristic vận hành,
-  không phải xác suất ngập hay cảnh báo chính thức.
-
-## Model inventory hiện hành
-
-Nguồn duy nhất cho archive là `silver.int_weather_archive_hourly`; mọi grain và
-window đều giữ `weather_model`, vì ERA5 và ECMWF IFS không phải một chuỗi đồng
-nhất. Tên dưới đây khớp trực tiếp với các file trong `transform/models/`.
-
-| Nhóm | Model | Grain / mục đích |
-|---|---|---|
-| Geography | `gold.dim_grid` | model × sản phẩm × ô lưới |
-| Geography | `gold.dim_ward` | 126 phường/xã, SCD active flag |
-| Geography | `gold.bridge_ward_grid` | phường ↔ ô forecast/archive |
-| Archive | `gold.fct_rain_archive_hourly` | grid × giờ, rolling 1–24h và bands |
-| Forecast | `gold.fct_rain_forecast_hourly` | forecast run × grid × giờ, trailing + forward windows |
-| Forecast | `gold.fct_rain_forecast_current_hourly` | view run mới nhất, horizon chưa hết hạn |
-| Forecast | `gold.fct_rain_pressure_alert` | run × phường × giờ, pressure level/score/revision |
-| Flood reference | `gold.dim_flood_point` | danh mục điểm ngập dùng cho map/replay |
-| Flood observation | `gold.fct_flood_event_observation` | ghi nhận đã xác minh dùng để đối chiếu replay |
-
-### Quy ước completeness
-
-- Rolling hourly chỉ có giá trị khi đủ đúng số giờ có `precipitation_mm`; gap hay
-  `NULL` không được thay bằng 0.
-- Gold chỉ materialize relation có consumer. Dashboard chiếu archive hourly
-  sang phường tại query-time.
-
-### Archive replay
-
-Dashboard chọn ngày/giờ trực tiếp từ `fct_rain_archive_hourly` và có thể đối
-chiếu `fct_flood_event_observation`. Ghi nhận báo chí không phải bộ nhãn đầy đủ
-và không được dùng để phát hành xác suất hay độ sâu ngập.
-
-## Chạy và kiểm tra
-
-Từ thư mục repository:
-
-```bash
-docker compose exec -T airflow uv run python scripts/run_dbt.py seed --project-dir transform --profiles-dir transform
-docker compose exec -T airflow uv run python scripts/run_processing.py run silver_weather
-docker compose exec -T airflow uv run python scripts/run_processing.py run rain_gold
-docker compose exec -T airflow uv run python scripts/run_processing.py run forecast_silver
-docker compose exec -T airflow uv run python scripts/run_processing.py run forecast_gold
+```powershell
+uv run dbt parse --project-dir transform --profiles-dir transform
+uv run dbt build --project-dir transform --profiles-dir transform --select tag:forecast
+uv run dbt build --project-dir transform --profiles-dir transform --select tag:archive
 ```
 
-Khi business rule/schema của model incremental thay đổi, chạy migration
-full-refresh qua processing framework để giữ audit và checkpoint an toàn:
+The `forecast` and `archive` model tags select their shared reference models and
+the corresponding intermediate and mart models. `dbt build` is the quality
+gate: a failed generic or singular test prevents processing publication.
 
-```bash
-docker compose exec -T airflow uv run python scripts/run_processing.py run rain_gold \
-  --full-refresh --reason 'describe archive schema change'
-docker compose exec -T airflow uv run python scripts/run_processing.py run forecast_gold \
-  --full-refresh --reason 'describe forecast schema change'
+## Seeds
+
+Reference seeds are static data products. Bootstrap loads them once; the monthly
+archive DAG does not rerun `dbt seed`. After an intentional seed change, run:
+
+```powershell
+uv run dbt seed --project-dir transform --profiles-dir transform
+uv run dbt build --project-dir transform --profiles-dir transform --select dim_ward dim_grid dim_flood_point bridge_ward_grid
 ```
 
-Khi phát triển trên host và đã cấu hình credential runtime:
-
-```bash
-uv run python scripts/run_dbt.py build --project-dir transform --profiles-dir transform
-```
-
-Chỉ build Gold archive contract:
-
-```bash
-uv run python scripts/run_dbt.py build --project-dir transform --profiles-dir transform \
-  --select fct_rain_archive_hourly
-```
+One-time source scraping, geocoding, and GeoJSON generation live under
+`tools/`; their outputs are reviewed and committed as seeds/reference data.

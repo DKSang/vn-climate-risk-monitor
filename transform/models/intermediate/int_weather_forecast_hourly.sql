@@ -1,10 +1,10 @@
--- depends_on: {{ ref('stg_open_meteo__weather_forecast_hourly') }}
 /* Forecast vintage history; chỉ publish run đủ location × horizon. */
 
 {{ config(
     materialized = 'incremental',
     unique_key = 'weather_forecast_hourly_key',
-    tags = ['intermediate']
+    incremental_strategy = 'delete+insert',
+    tags = ['intermediate', 'forecast']
 ) }}
 
 {% set value_columns = [
@@ -15,9 +15,9 @@
     'weather_code',
 ] %}
 
-WITH staged AS (
+WITH raw_rows AS (
     SELECT
-        weather_model,
+        'ecmwf_ifs_fc' AS weather_model,
         ROUND(grid_latitude, 6) AS grid_latitude,
         ROUND(grid_longitude, 6) AS grid_longitude,
         valid_time_utc,
@@ -26,10 +26,19 @@ WITH staged AS (
         showers_mm,
         precipitation_probability_pct,
         weather_code,
-        forecast_run_id,
+        REGEXP_EXTRACT(
+            _source_file,
+            '/incremental/[0-9]{4}/[0-9]{2}/[0-9]{2}/[0-9]{2}/(run_[0-9]{8}T[0-9]{6})/',
+            1
+        ) AS forecast_run_id,
         _source_file,
         _ingested_at
-    FROM {{ ref('stg_open_meteo__weather_forecast_hourly') }}
+    FROM {{ source('silver_staging', 'stg_weather_forecast') }}
+),
+
+changed_rows AS (
+    SELECT *
+    FROM raw_rows
     {{ incremental_changed_filter(
         source_ref = 'stg_weather_forecast',
         change_column = '_ingested_at',
@@ -37,12 +46,32 @@ WITH staged AS (
     ) }}
 ),
 
+changed_runs AS (
+    SELECT DISTINCT forecast_run_id
+    FROM changed_rows
+    WHERE forecast_run_id <> ''
+),
+
+staged AS (
+    SELECT *
+    FROM raw_rows
+    WHERE forecast_run_id IN (SELECT forecast_run_id FROM changed_runs)
+),
+
+normalized AS (
+    SELECT
+        staged.*,
+        {{ grid_cell_id('weather_model', 'grid_latitude', 'grid_longitude') }}
+            AS grid_cell_id
+    FROM staged
+),
+
 run_hours AS (
     SELECT
         forecast_run_id,
         valid_time_utc,
         COUNT(*) AS locations
-    FROM staged
+    FROM normalized
     WHERE forecast_run_id <> ''
     GROUP BY forecast_run_id, valid_time_utc
 ),
@@ -51,14 +80,15 @@ complete_runs AS (
     SELECT forecast_run_id
     FROM run_hours
     GROUP BY forecast_run_id
-    HAVING COUNT(*) = {{ var('forecast_expected_hours', 72) }}
+    HAVING COUNT(DISTINCT valid_time_utc) = {{ var('forecast_expected_hours', 72) }}
+       AND COUNT(*) = {{ var('forecast_expected_hours', 72) }}
        AND MIN(locations) = {{ var('forecast_expected_locations', 126) }}
        AND MAX(locations) = {{ var('forecast_expected_locations', 126) }}
 ),
 
 deduplicated AS (
     SELECT *
-    FROM staged
+    FROM normalized
     WHERE forecast_run_id IN (SELECT forecast_run_id FROM complete_runs)
     QUALIFY ROW_NUMBER() OVER (
         PARTITION BY
@@ -81,11 +111,10 @@ incoming AS (
         MD5(CONCAT_WS(
             '|',
             forecast_run_id,
-            {{ grid_cell_id('weather_model', 'grid_latitude', 'grid_longitude') }},
+            grid_cell_id,
             CAST(valid_time_utc AS VARCHAR)
         )) AS weather_forecast_hourly_key,
-        {{ grid_cell_id('weather_model', 'grid_latitude', 'grid_longitude') }}
-            AS grid_cell_id,
+        grid_cell_id,
         weather_model,
         grid_latitude,
         grid_longitude,
@@ -104,5 +133,3 @@ SELECT
     TRUE AS is_active,
     {{ processing_updated_at() }} AS _updated_at
 FROM incoming
-
-{{ incremental_new_or_changed('weather_forecast_hourly_key') }}

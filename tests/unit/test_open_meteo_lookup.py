@@ -2,19 +2,27 @@
 
 from __future__ import annotations
 
+import importlib
+import inspect
 from datetime import UTC, date, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from vn_climate_risk_monitor import grid, open_meteo
-from vn_climate_risk_monitor.open_meteo import (
+from vn_climate_risk_monitor.sources import open_meteo as planner
+from vn_climate_risk_monitor.sources.open_meteo import (
+    ARCHIVE_MODELS,
     ERA5,
     IFS,
     Location,
     archive_tasks,
     days_in_month,
+    forecast_run_id,
     forecast_tasks,
     model_for_month,
+    month_params,
 )
 
 LOCATIONS = tuple(Location(f"P{i:03}", 21.0 + i * 0.01, 105.8) for i in range(4))
@@ -25,16 +33,6 @@ SETTINGS = SimpleNamespace(
     forecast_hours=72,
     location_batch_size=2,
 )
-
-
-class FakeMinio:
-    def __init__(self, existing_keys: set[str]) -> None:
-        self.objects = {key: b"old" for key in existing_keys}
-
-    def list_objects(self, bucket: str, prefix: str, recursive: bool = True):
-        for name in sorted(self.objects):
-            if name.startswith(prefix):
-                yield SimpleNamespace(object_name=name)
 
 
 def seed(tmp_path: Path) -> Path:
@@ -70,14 +68,26 @@ def seed(tmp_path: Path) -> Path:
 
 
 def archive_plan(tmp_path: Path, months, *, existing=frozenset(), covered=None):
+    months = list(months)
+    seed_path = seed(tmp_path)
+    prefixes = [month_params(month, model_for_month(month))[0] for month in months]
     return archive_tasks(
-        months=list(months),
+        months=months,
         settings=SETTINGS,  # type: ignore[arg-type]
-        client=FakeMinio(set(existing)),  # type: ignore[arg-type]
-        bucket="vn-climate",
         run="run_test",
         covered=covered or {},
-        seed_path=seed(tmp_path),
+        cells_by_model={
+            model.name: grid.cells_for(model.name, seed_path)
+            for model in ARCHIVE_MODELS
+        },
+        existing={
+            prefix: {
+                key.rsplit("/", 1)[-1]
+                for key in existing
+                if key.startswith(f"{prefix}/")
+            }
+            for prefix in prefixes
+        },
     )
 
 
@@ -121,8 +131,8 @@ def test_units_follow_actual_batch_length_not_nominal(tmp_path: Path) -> None:
     tasks = archive_plan(tmp_path, [date(2018, 6, 1)])
 
     days = days_in_month(date(2018, 6, 1))
-    full = open_meteo.effective_call_units(locations=2, days=days, variables=5)
-    runt = open_meteo.effective_call_units(locations=1, days=days, variables=5)
+    full = planner.effective_call_units(locations=2, days=days, variables=5)
+    runt = planner.effective_call_units(locations=1, days=days, variables=5)
     assert sorted(t.units for t in tasks) == sorted([runt, full])
     assert runt < full
 
@@ -166,9 +176,8 @@ def test_forecast_still_batches_wards(tmp_path: Path) -> None:
         slots=[datetime(2026, 8, 27, 9, tzinfo=UTC)],
         locations=LOCATIONS,
         settings=SETTINGS,  # type: ignore[arg-type]
-        client=FakeMinio(set()),  # type: ignore[arg-type]
-        bucket="vn-climate",
         run="run_fc",
+        existing={},
     )
 
     assert len(tasks) == 2  # 4 phường / batch_size 2
@@ -177,6 +186,14 @@ def test_forecast_still_batches_wards(tmp_path: Path) -> None:
         "bronze/files/open_meteo/forecast/incremental/2026/08/27/09/run_fc/"
     )
     assert "timeformat=unixtime" in tasks[0].url
+
+
+def test_forecast_run_id_is_stable_for_retries_in_the_same_hour() -> None:
+    first = datetime(2026, 8, 27, 9, 1, tzinfo=UTC)
+    retry = datetime(2026, 8, 27, 9, 58, tzinfo=UTC)
+
+    assert forecast_run_id(first) == "run_20260827T090000"
+    assert forecast_run_id(retry) == forecast_run_id(first)
 
 
 def test_archive_model_is_not_an_env_knob_anymore() -> None:
@@ -188,3 +205,18 @@ def test_archive_model_is_not_an_env_knob_anymore() -> None:
 
 def test_fetch_does_not_write_a_lookup_csv() -> None:
     assert not hasattr(open_meteo, "LOOKUP_FILE")
+
+
+def test_source_planner_boundary_has_no_storage_inputs() -> None:
+    try:
+        planner = importlib.import_module("vn_climate_risk_monitor.sources.open_meteo")
+    except ModuleNotFoundError:
+        pytest.fail("source-specific planning module is missing")
+
+    archive_parameters = inspect.signature(planner.archive_tasks).parameters
+    forecast_parameters = inspect.signature(planner.forecast_tasks).parameters
+    assert "client" not in archive_parameters
+    assert "bucket" not in archive_parameters
+    assert "seed_path" not in archive_parameters
+    assert "client" not in forecast_parameters
+    assert "bucket" not in forecast_parameters

@@ -68,6 +68,17 @@
 {% endmacro %}
 
 
+{% macro hanoi_rain_scenario_level(column) %}
+    CASE
+        WHEN {{ column }} IS NULL THEN NULL
+        WHEN {{ column }} > 100 THEN 3
+        WHEN {{ column }} >= 70 THEN 2
+        WHEN {{ column }} >= 50 THEN 1
+        ELSE 0
+    END
+{% endmacro %}
+
+
 {% macro vn_rain_band_12h(column) %}
     CASE
         WHEN {{ column }} IS NULL THEN NULL

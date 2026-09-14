@@ -4,37 +4,32 @@
 from __future__ import annotations
 
 import copy
-import sys
 from datetime import date
-from pathlib import Path
-
-ROOT_DIR = Path(__file__).resolve().parent.parent.parent.parent
-if str(ROOT_DIR) not in sys.path:
-    sys.path.insert(0, str(ROOT_DIR))
 
 import altair as alt
 import pandas as pd
 import pydeck as pdk
 import streamlit as st
 
-from serving.dashboard.geography import load_hanoi_geojson
-from serving.dashboard.queries import (
+from serving.dashboard.archive import (
     load_archive_by_hour,
     load_archive_event_timeseries,
-    load_archive_flood_points_for_hour,
     load_archive_hour_summary,
     load_archive_hours_for_local_date,
     load_archive_models,
     load_archive_peak_hour_for_local_date,
     load_archive_top_events,
-    load_serving_snapshot,
     load_verified_flood_events,
     load_verified_flood_observations_until,
 )
+from serving.dashboard.common import (
+    load_serving_snapshot,
+    load_weather_flood_points_for_hour,
+)
+from serving.dashboard.geography import load_hanoi_geojson
 from serving.dashboard.ui import (
     MAP_STYLES,
     RAIN_INDICATORS,
-    classify_rain_band,
     configure_page,
     flood_point_layer,
     legend_row,
@@ -300,10 +295,8 @@ df_archive = load_archive_by_hour(
     sort_metric=rain_metric,
 )
 summary = load_archive_hour_summary(selected_model, selected_hour, snapshot_version)
-df_points = load_archive_flood_points_for_hour(
-    selected_model,
-    selected_hour,
-    snapshot_version,
+df_points = load_weather_flood_points_for_hour(
+    "archive", selected_model, selected_hour, snapshot_version
 )
 df_event = load_archive_event_timeseries(
     selected_model,
@@ -352,9 +345,7 @@ archive_lookup: dict[str, dict] = {}
 for row in df_archive.to_dict(orient="records"):
     code = str(row.get("ward_code", "")).zfill(5)
     raw_metric_val = row.get(rain_metric)
-    band_val = classify_rain_band(raw_metric_val, selected_indicator) or str(
-        row.get(str(indicator["band"])) or ""
-    )
+    band_val = str(row.get(str(indicator["band"])) or "")
     archive_lookup[code] = {
         # `rain_*h_mm` NULL nghĩa là cửa sổ thiếu giờ, KHÔNG phải mưa 0 mm.
         "metric_label": rain_label(raw_metric_val),

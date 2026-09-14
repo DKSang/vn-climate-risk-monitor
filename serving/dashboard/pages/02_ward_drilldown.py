@@ -3,21 +3,13 @@
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
-ROOT_DIR = Path(__file__).resolve().parent.parent.parent.parent
-if str(ROOT_DIR) not in sys.path:
-    sys.path.insert(0, str(ROOT_DIR))
-
 import altair as alt
 import pydeck as pdk
 import streamlit as st
 
-from serving.dashboard.queries import (
-    load_all_wards,
+from serving.dashboard.common import load_all_wards, load_serving_snapshot
+from serving.dashboard.forecast import (
     load_forecast_metadata,
-    load_serving_snapshot,
     load_ward_flood_context,
     load_ward_forecast_summary,
     load_ward_forecast_timeseries,

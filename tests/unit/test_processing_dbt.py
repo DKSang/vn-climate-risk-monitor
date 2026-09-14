@@ -10,14 +10,14 @@ from typing import Any
 
 import pytest
 
-from processing.dbt import (
+from vn_climate_risk_monitor.processing.dbt import (
     DbtBuildError,
     build_command,
     build_vars,
     run_dbt,
     to_sql_timestamp,
 )
-from processing.runner import Bounds, SourceBounds
+from vn_climate_risk_monitor.processing.runner import Bounds, SourceBounds
 
 
 def at(hour: int, minute: int = 0) -> datetime:
@@ -79,17 +79,17 @@ def test_full_refresh_vars_omit_bounds() -> None:
     assert variables["processing_bounds"] == {}
 
 
-def test_command_passes_vars_as_json_and_select() -> None:
-    command = build_command(bounds(lower=at(9, 45)), select="+tag:historical")
+def test_command_passes_vars_as_json_and_native_selection() -> None:
+    command = build_command(bounds(lower=at(9, 45)), selection="tag:archive")
 
     assert command[1] == "build"
     assert command[command.index("--indirect-selection") + 1] == "cautious"
     payload = json.loads(command[command.index("--vars") + 1])
     assert payload["processing_incremental"] is True
-    assert command[command.index("--select") + 1] == "+tag:historical"
+    assert command[command.index("--select") + 1] == "tag:archive"
 
 
-def test_command_without_select_builds_whole_project() -> None:
+def test_command_without_selection_builds_whole_project() -> None:
     command = build_command(bounds(lower=None))
 
     assert "--select" not in command

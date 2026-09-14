@@ -21,6 +21,8 @@ sources:
           # Pipeline archive chạy hàng tháng; ngưỡng theo giờ sẽ gây alert fatigue.
           warn_after: {count: 35, period: day}
           error_after: {count: 45, period: day}
+        tests:
+          - not_empty
         columns:
           - name: weather_model
             tests:
@@ -34,6 +36,12 @@ sources:
             tests: [not_null]
           - name: grid_longitude
             tests: [not_null]
+          - name: precipitation_mm
+            tests:
+              - accepted_range:
+                  arguments:
+                    min_value: 0
+                    max_value: 500
           - name: _source_file
             tests: [not_null]
           - name: _ingested_at
@@ -46,7 +54,9 @@ sources:
         loaded_at_field: _ingested_at
         freshness:
           warn_after: {count: 12, period: hour}
-          error_after: {count: 26, period: hour}
+          error_after: {count: 24, period: hour}
+        tests:
+          - not_empty
         columns:
           - name: valid_time_utc
             tests: [not_null]
@@ -54,6 +64,12 @@ sources:
             tests: [not_null]
           - name: grid_longitude
             tests: [not_null]
+          - name: precipitation_mm
+            tests:
+              - accepted_range:
+                  arguments:
+                    min_value: 0
+                    max_value: 500
           - name: _source_file
             tests: [not_null]
           - name: _ingested_at

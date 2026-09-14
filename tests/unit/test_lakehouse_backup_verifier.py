@@ -5,7 +5,10 @@ from __future__ import annotations
 import hashlib
 import os
 import subprocess
+import sys
 from pathlib import Path
+
+import pytest
 
 
 def _artifact(tmp_path: Path) -> tuple[Path, Path]:
@@ -56,6 +59,10 @@ def _verify(root: Path, fake_restore: Path) -> subprocess.CompletedProcess[str]:
     )
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="The backup verifier is a Bash utility; execute it in POSIX CI.",
+)
 def test_lakehouse_backup_verifier_accepts_complete_artifact(tmp_path: Path) -> None:
     root, fake_restore = _artifact(tmp_path)
 
@@ -65,6 +72,10 @@ def test_lakehouse_backup_verifier_accepts_complete_artifact(tmp_path: Path) -> 
     assert "Backup lakehouse hợp lệ" in result.stdout
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="The backup verifier is a Bash utility; execute it in POSIX CI.",
+)
 def test_lakehouse_backup_verifier_rejects_corrupt_object(tmp_path: Path) -> None:
     root, fake_restore = _artifact(tmp_path)
     (root / "minio" / "vn-climate" / "gold" / "part.parquet").write_bytes(b"corrupt")

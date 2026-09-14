@@ -3,7 +3,8 @@
 {{ config(
     materialized = 'incremental',
     unique_key = 'observation_id',
-    tags = ['fact', 'flood']
+    incremental_strategy = 'delete+insert',
+    tags = ['fact', 'flood', 'archive']
 ) }}
 
 SELECT

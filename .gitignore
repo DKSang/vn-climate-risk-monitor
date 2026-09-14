@@ -39,8 +39,6 @@ transform/dev.duckdb
 .ipynb_checkpoints/
 .DS_Store
 
-# Provero runtime artifacts (Makefile đang chạy --no-store)
-.provero/
 .claude/
 .vscode/
 .pytest_cache/
