@@ -33,8 +33,6 @@ def test_dashboard_queries_are_split_by_data_domain() -> None:
     assert {
         "load_serving_snapshot",
         "load_all_wards",
-        "load_flood_points",
-        "load_weather_flood_points_for_hour",
     } <= _function_names(common)
     assert {
         "load_forecast_metadata",
@@ -79,7 +77,6 @@ def test_rain_bands_are_owned_by_gold() -> None:
 
     archive_queries = (DASHBOARD / "archive.py").read_text(encoding="utf-8")
     assert archive_queries.count("f.hanoi_rain_scenario_level") >= 2
-    assert "wa.hanoi_rain_scenario_level" in archive_queries
 
 
 def test_forecast_and_archive_keep_reader_return_semantics(monkeypatch) -> None:

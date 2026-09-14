@@ -19,13 +19,68 @@ logger = logging.getLogger(__name__)
 
 FORECAST_MODEL = "ecmwf_ifs_fc"
 
+_CURRENT_FORECAST_CTE = """
+    WITH current_forecast AS (
+        SELECT *
+        FROM gold.fct_rain_forecast_current_hourly
+        QUALIFY ROW_NUMBER() OVER (
+            PARTITION BY forecast_run_id, grid_cell_id, valid_time_utc
+            ORDER BY _updated_at DESC, _ingested_at DESC,
+                     rain_forecast_hourly_key DESC
+        ) = 1
+    )
+"""
+
+_CURRENT_PRESSURE_CTE = """
+    , current_pressure AS (
+        SELECT *
+        FROM gold.fct_rain_pressure_alert
+        QUALIFY ROW_NUMBER() OVER (
+            PARTITION BY forecast_run_id, ward_code, valid_time_utc
+            ORDER BY _updated_at DESC, rain_pressure_alert_key DESC
+        ) = 1
+    )
+"""
+
+_PRESSURE_ONLY_CTE = """
+    WITH current_pressure AS (
+        SELECT *
+        FROM gold.fct_rain_pressure_alert
+        QUALIFY ROW_NUMBER() OVER (
+            PARTITION BY forecast_run_id, ward_code, valid_time_utc
+            ORDER BY _updated_at DESC, rain_pressure_alert_key DESC
+        ) = 1
+    )
+"""
+
+_ACTIVE_FORECAST_BRIDGE_CTE = """
+    , active_forecast_bridge AS (
+        SELECT *
+        FROM gold.bridge_ward_grid
+        WHERE weather_model = $1
+          AND is_active = TRUE
+        QUALIFY ROW_NUMBER() OVER (
+            PARTITION BY weather_model, ward_code
+            ORDER BY grid_cell_id
+        ) = 1
+    )
+"""
+
 _CURRENT_HORIZON_CTE = """
-    WITH current_horizon AS (
+    WITH current_forecast AS (
+        SELECT *
+        FROM gold.fct_rain_forecast_current_hourly
+        QUALIFY ROW_NUMBER() OVER (
+            PARTITION BY forecast_run_id, grid_cell_id, valid_time_utc
+            ORDER BY _updated_at DESC, _ingested_at DESC,
+                     rain_forecast_hourly_key DESC
+        ) = 1
+    ), current_horizon AS (
         SELECT
             MIN(valid_time_utc) AS starts_at_utc,
             MAX(valid_time_utc) AS ends_at_utc,
             MAX(_ingested_at) AS updated_at_utc
-        FROM gold.fct_rain_forecast_current_hourly
+        FROM current_forecast
         WHERE valid_time_utc >= DATE_TRUNC('hour', CURRENT_TIMESTAMP)
     )
 """
@@ -47,14 +102,9 @@ def load_forecast_metadata(
                 DATE_DIFF('minute', h.updated_at_utc, CURRENT_TIMESTAMP)
                     AS freshness_minutes,
                 COUNT(DISTINCT f.grid_cell_id) AS grid_count,
-                COUNT(DISTINCT b.ward_code) AS ward_count,
-                (
-                    SELECT COUNT(*)
-                    FROM gold.dim_flood_point p
-                    WHERE p.is_active = TRUE AND p.status = 'active'
-                ) AS flood_point_count
+                COUNT(DISTINCT b.ward_code) AS ward_count
             FROM current_horizon h
-            LEFT JOIN gold.fct_rain_forecast_current_hourly f
+            LEFT JOIN current_forecast f
                 ON f.valid_time_utc BETWEEN h.starts_at_utc AND h.ends_at_utc
             LEFT JOIN gold.bridge_ward_grid b
                 ON b.grid_cell_id = f.grid_cell_id
@@ -76,7 +126,7 @@ def load_forecast_hours(snapshot_version: int | None = None) -> list[datetime]:
             _CURRENT_HORIZON_CTE
             + """
             SELECT DISTINCT f.valid_time_utc
-            FROM gold.fct_rain_forecast_current_hourly f
+            FROM current_forecast f
             CROSS JOIN current_horizon h
             WHERE f.valid_time_utc BETWEEN h.starts_at_utc AND h.ends_at_utc
             ORDER BY f.valid_time_utc
@@ -98,7 +148,10 @@ def load_forecast_by_hour(
     _validate_rain_metric(sort_metric)
     try:
         return _read_dataframe(
-            """
+            _CURRENT_FORECAST_CTE
+            + _CURRENT_PRESSURE_CTE
+            + _ACTIVE_FORECAST_BRIDGE_CTE
+            + """
             SELECT
                 w.ward_code,
                 w.ward_name,
@@ -132,15 +185,15 @@ def load_forecast_by_hour(
                 pressure.revision_24h_mm,
                 pressure.revision_direction,
                 f.valid_time_utc
-            FROM gold.fct_rain_forecast_current_hourly f
-            JOIN gold.bridge_ward_grid bwg
+            FROM current_forecast f
+            JOIN active_forecast_bridge bwg
               ON bwg.grid_cell_id = f.grid_cell_id
              AND bwg.weather_model = $1
              AND bwg.is_active = TRUE
             JOIN gold.dim_ward w
               ON w.ward_code = bwg.ward_code
              AND w.is_active = TRUE
-            LEFT JOIN gold.fct_rain_pressure_alert pressure
+            LEFT JOIN current_pressure pressure
               ON pressure.forecast_run_id = f.forecast_run_id
              AND pressure.ward_code = w.ward_code
              AND pressure.valid_time_utc = f.valid_time_utc
@@ -172,8 +225,11 @@ def load_forecast_hour_summary(
     """KPI tổng hợp tại một giờ; mọi phép tính chạy trong DuckDB."""
     try:
         return _read_record(
-            """
-            WITH ward_forecast AS (
+            _CURRENT_FORECAST_CTE
+            + _CURRENT_PRESSURE_CTE
+            + _ACTIVE_FORECAST_BRIDGE_CTE
+            + """
+            , ward_forecast AS (
                 SELECT
                     bwg.ward_code,
                     f.grid_cell_id,
@@ -195,28 +251,16 @@ def load_forecast_hour_summary(
                     pressure.pressure_level,
                     pressure.pressure_score,
                     pressure.coverage_status
-                FROM gold.fct_rain_forecast_current_hourly f
-                JOIN gold.bridge_ward_grid bwg
+                FROM current_forecast f
+                JOIN active_forecast_bridge bwg
                   ON bwg.grid_cell_id = f.grid_cell_id
                  AND bwg.weather_model = $1
                  AND bwg.is_active = TRUE
-                LEFT JOIN gold.fct_rain_pressure_alert pressure
+                LEFT JOIN current_pressure pressure
                   ON pressure.forecast_run_id = f.forecast_run_id
                  AND pressure.ward_code = bwg.ward_code
                  AND pressure.valid_time_utc = f.valid_time_utc
                 WHERE f.valid_time_utc = $2
-            ),
-            point_status AS (
-                SELECT
-                    p.point_id,
-                    COALESCE(
-                        wf.hanoi_rain_scenario_level
-                            >= p.required_rain_scenario_level,
-                        FALSE
-                    ) AS is_triggered
-                FROM gold.dim_flood_point p
-                LEFT JOIN ward_forecast wf USING (ward_code)
-                WHERE p.is_active = TRUE AND p.status = 'active'
             )
             SELECT
                 COUNT(DISTINCT ward_code) AS ward_count,
@@ -228,36 +272,34 @@ def load_forecast_hour_summary(
                 MAX(forecast_next_1h_mm) AS max_forecast_next_1h_mm,
                 MAX(forecast_next_12h_mm) AS max_forecast_next_12h_mm,
                 MAX(forecast_next_24h_mm) AS max_forecast_next_24h_mm,
-                COUNT(*) FILTER (
+                COUNT(DISTINCT ward_code) FILTER (
                     WHERE hanoi_rain_scenario_band <> 'below_50'
                 ) AS elevated_ward_count,
-                COUNT(*) FILTER (
+                COUNT(DISTINCT ward_code) FILTER (
                     WHERE vn_rain_band_12h <> 'below_30'
                 ) AS elevated_ward_count_12h,
-                COUNT(*) FILTER (
+                COUNT(DISTINCT ward_code) FILTER (
                     WHERE vn_rain_band_24h <> 'below_50'
                 ) AS elevated_ward_count_24h,
-                COUNT(*) FILTER (
+                COUNT(DISTINCT ward_code) FILTER (
                     WHERE forecast_next_1h_band <> 'below_50'
                 ) AS forecast_elevated_ward_count_1h,
-                COUNT(*) FILTER (
+                COUNT(DISTINCT ward_code) FILTER (
                     WHERE forecast_next_12h_band <> 'below_30'
                 ) AS forecast_elevated_ward_count_12h,
-                COUNT(*) FILTER (
+                COUNT(DISTINCT ward_code) FILTER (
                     WHERE forecast_next_24h_band <> 'below_50'
                 ) AS forecast_elevated_ward_count_24h,
-                COUNT(*) FILTER (
+                COUNT(DISTINCT ward_code) FILTER (
                     WHERE pressure_level IN ('ELEVATED', 'HIGH')
                 ) AS pressure_alert_ward_count,
-                COUNT(*) FILTER (
+                COUNT(DISTINCT ward_code) FILTER (
                     WHERE pressure_level = 'HIGH'
                 ) AS pressure_high_ward_count,
-                COUNT(*) FILTER (
+                COUNT(DISTINCT ward_code) FILTER (
                     WHERE pressure_level = 'UNKNOWN'
                 ) AS pressure_unknown_ward_count,
-                MAX(pressure_score) AS max_pressure_score,
-                (SELECT COUNT(*) FROM point_status WHERE is_triggered)
-                    AS triggered_point_count
+                MAX(pressure_score) AS max_pressure_score
             FROM ward_forecast
             """,
             [FORECAST_MODEL, valid_time_utc],
@@ -275,7 +317,8 @@ def load_forecast_pressure_ranking(
     """Xếp hạng áp lực mưa theo tín hiệu rule-based; không phải cảnh báo chính thức."""
     try:
         return _read_dataframe(
-            """
+            _PRESSURE_ONLY_CTE
+            + """
             SELECT
                 alert.ward_code,
                 ward.ward_name,
@@ -288,7 +331,7 @@ def load_forecast_pressure_ranking(
                 alert.persistence_runs,
                 alert.revision_direction,
                 alert.revision_24h_mm
-            FROM gold.fct_rain_pressure_alert alert
+            FROM current_pressure alert
             JOIN gold.dim_ward ward
               ON ward.ward_code = alert.ward_code AND ward.is_active = TRUE
             WHERE alert.valid_time_utc = $1
@@ -319,6 +362,7 @@ def load_ward_forecast_timeseries(
     try:
         return _read_dataframe(
             _CURRENT_HORIZON_CTE
+            + _ACTIVE_FORECAST_BRIDGE_CTE
             + """
             SELECT
                 f.valid_time_utc,
@@ -335,8 +379,8 @@ def load_ward_forecast_timeseries(
                 f.forecast_next_12h_mm,
                 f.forecast_next_24h_mm,
                 f.hanoi_rain_scenario_band
-            FROM gold.fct_rain_forecast_current_hourly f
-            JOIN gold.bridge_ward_grid bwg
+            FROM current_forecast f
+            JOIN active_forecast_bridge bwg
               ON bwg.grid_cell_id = f.grid_cell_id
              AND bwg.weather_model = $1
              AND bwg.is_active = TRUE
@@ -360,13 +404,15 @@ def load_ward_forecast_summary(
     try:
         return _read_record(
             _CURRENT_HORIZON_CTE
+            + _ACTIVE_FORECAST_BRIDGE_CTE
+            + _CURRENT_PRESSURE_CTE
             + """
             , series AS (
                 SELECT
                     f.*,
                     ROW_NUMBER() OVER (ORDER BY f.valid_time_utc) AS hour_number
-                FROM gold.fct_rain_forecast_current_hourly f
-                JOIN gold.bridge_ward_grid bwg
+                FROM current_forecast f
+                JOIN active_forecast_bridge bwg
                   ON bwg.grid_cell_id = f.grid_cell_id
                  AND bwg.weather_model = $1
                  AND bwg.is_active = TRUE
@@ -377,38 +423,26 @@ def load_ward_forecast_summary(
             , aggregated AS (
                 SELECT
                     COUNT(*) AS available_hours,
-                    SUM(precipitation_mm) FILTER (WHERE hour_number > 1)
-                        AS horizon_rain_mm,
+                    SUM(precipitation_mm) AS horizon_rain_mm,
                     MAX(forecast_next_24h_mm) FILTER (WHERE hour_number = 1)
                         AS next_24h_rain_mm,
                     MAX(forecast_next_6h_mm) FILTER (WHERE hour_number = 1)
                         AS forecast_next_6h_mm,
                     MAX(forecast_next_24h_mm) FILTER (WHERE hour_number = 1)
                         AS forecast_next_24h_mm,
-                    MAX(rain_1h_mm) FILTER (WHERE hour_number > 1) AS peak_1h_mm,
-                    MAX(hanoi_rain_scenario_level) FILTER (WHERE hour_number > 1)
-                        AS peak_rain_scenario_level,
-                    ARG_MAX(valid_time_utc, rain_1h_mm) FILTER (WHERE hour_number > 1)
+                    MAX(rain_1h_mm) AS peak_1h_mm,
+                    ARG_MAX(valid_time_utc, rain_1h_mm)
                         AS peak_time_utc,
-                    MAX(rain_6h_mm) FILTER (WHERE hour_number > 1) AS peak_6h_mm,
-                    MAX(precipitation_probability_pct) FILTER (WHERE hour_number > 1)
+                    MAX(rain_6h_mm) AS peak_6h_mm,
+                    MAX(precipitation_probability_pct)
                         AS max_probability_pct
                 FROM series
             )
             SELECT
-                aggregated.*,
-                (
-                    SELECT COUNT(*)
-                    FROM gold.dim_flood_point p
-                    WHERE p.ward_code = $2
-                      AND p.is_active = TRUE
-                      AND p.status = 'active'
-                      AND aggregated.peak_rain_scenario_level
-                            >= p.required_rain_scenario_level
-                ) AS triggered_point_count
+                aggregated.*
                 , (
                     SELECT a.pressure_level
-                    FROM gold.fct_rain_pressure_alert a
+                    FROM current_pressure a
                     CROSS JOIN current_horizon h
                     WHERE a.ward_code = $2
                       AND a.valid_time_utc BETWEEN h.starts_at_utc AND h.ends_at_utc
@@ -417,7 +451,7 @@ def load_ward_forecast_summary(
                 ) AS pressure_level
                 , (
                     SELECT a.pressure_score
-                    FROM gold.fct_rain_pressure_alert a
+                    FROM current_pressure a
                     CROSS JOIN current_horizon h
                     WHERE a.ward_code = $2
                       AND a.valid_time_utc BETWEEN h.starts_at_utc AND h.ends_at_utc
@@ -426,7 +460,7 @@ def load_ward_forecast_summary(
                 ) AS pressure_score
                 , (
                     SELECT a.trigger_reasons
-                    FROM gold.fct_rain_pressure_alert a
+                    FROM current_pressure a
                     CROSS JOIN current_horizon h
                     WHERE a.ward_code = $2
                       AND a.valid_time_utc BETWEEN h.starts_at_utc AND h.ends_at_utc
@@ -441,51 +475,3 @@ def load_ward_forecast_summary(
     except Exception as exc:  # noqa: BLE001
         logger.warning("Không thể tổng hợp forecast phường %s: %s", ward_code, exc)
         return {}
-
-def load_ward_flood_context(
-    ward_code: str,
-    snapshot_version: int | None = None,
-) -> pd.DataFrame:
-    """Điểm ngập của phường và việc ngưỡng có bị vượt trong horizon hay không."""
-    try:
-        return _read_dataframe(
-            _CURRENT_HORIZON_CTE
-            + """
-            , peak AS (
-                SELECT
-                    MAX(f.rain_1h_mm) AS peak_1h_mm,
-                    MAX(f.hanoi_rain_scenario_level) AS peak_rain_scenario_level
-                FROM gold.fct_rain_forecast_current_hourly f
-                JOIN gold.bridge_ward_grid bwg
-                  ON bwg.grid_cell_id = f.grid_cell_id
-                 AND bwg.weather_model = $1
-                 AND bwg.is_active = TRUE
-                CROSS JOIN current_horizon h
-                WHERE bwg.ward_code = $2
-                  AND f.valid_time_utc BETWEEN h.starts_at_utc AND h.ends_at_utc
-            )
-            SELECT
-                p.point_id,
-                p.point_name,
-                p.rain_scenario,
-                p.latitude,
-                p.longitude,
-                peak.peak_1h_mm,
-                COALESCE(
-                    peak.peak_rain_scenario_level
-                        >= p.required_rain_scenario_level,
-                    FALSE
-                ) AS threshold_reached
-            FROM gold.dim_flood_point p
-            CROSS JOIN peak
-            WHERE p.ward_code = $2
-              AND p.is_active = TRUE
-              AND p.status = 'active'
-            ORDER BY threshold_reached DESC, p.point_id
-            """,
-            [FORECAST_MODEL, ward_code],
-            snapshot_version=snapshot_version,
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("Không thể đọc ngữ cảnh điểm ngập phường %s: %s", ward_code, exc)
-        return pd.DataFrame()

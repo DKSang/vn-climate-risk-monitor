@@ -34,15 +34,6 @@ SCENARIO_COLORS = {
     "over_100": [239, 68, 68, 240],
 }
 
-POINT_SCENARIO_LABELS = {
-    "scenario_50_70mm": "Từ 50 mm/giờ",
-    "scenario_70_100mm": "Từ 70 mm/giờ",
-    "scenario_over_100mm": "Trên 100 mm/giờ",
-}
-
-POINT_TRIGGERED_COLOR = [6, 182, 212, 255]
-POINT_INACTIVE_COLOR = [100, 116, 139, 140]
-
 MAP_STYLES: dict[str, str] = {
     "Tối (Dark Matter)": "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json",
     "Sáng chi tiết (Positron)": "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
@@ -289,65 +280,6 @@ def ward_polygon_layer(geojson_data: dict) -> pdk.Layer:
         pickable=True,
         auto_highlight=True,
         highlight_color=[255, 255, 255, 70],
-    )
-
-
-def flood_point_layer(
-    points: pd.DataFrame,
-    mode: str,
-    *,
-    pressure_by_ward: Mapping[str, str] | None = None,
-) -> pdk.Layer | None:
-    if mode == "Chỉ điểm đạt ngưỡng 1h":
-        points = points.loc[points["is_triggered"].fillna(False)]
-    elif mode == "Không hiển thị":
-        return None
-    if points.empty:
-        return None
-
-    points = points.copy()
-    points["color"] = [
-        POINT_TRIGGERED_COLOR if bool(value) else POINT_INACTIVE_COLOR
-        for value in points["is_triggered"]
-    ]
-    points["line_color"] = [
-        [255, 255, 255, 240] if bool(value) else [20, 21, 26, 200]
-        for value in points["is_triggered"]
-    ]
-    points["threshold_label"] = [
-        POINT_SCENARIO_LABELS.get(str(value), "Không rõ")
-        for value in points["rain_scenario"]
-    ]
-    points["tooltip_name"] = points["point_name"]
-    points["tooltip_rain_1h"] = [rain_label(value) for value in points["rain_1h_mm"]]
-    points["tooltip_primary_label"] = "Kịch bản danh mục"
-    points["tooltip_primary_value"] = points["threshold_label"]
-    points["tooltip_status"] = [
-        "Đã đạt ngưỡng" if bool(value) else f"Chưa đạt · {label}"
-        for value, label in zip(
-            points["is_triggered"], points["threshold_label"], strict=True
-        )
-    ]
-    if pressure_by_ward is not None:
-        points["tooltip_pressure"] = [
-            pressure_by_ward.get(str(code).zfill(5), "Chưa có")
-            for code in points["ward_code"]
-        ]
-        points["tooltip_pressure_reason"] = "Xem trên polygon phường"
-
-    return pdk.Layer(
-        "ScatterplotLayer",
-        points,
-        id="catalogue-flood-points",
-        get_position=["longitude", "latitude"],
-        get_fill_color="color",
-        get_line_color="line_color",
-        stroked=True,
-        line_width_min_pixels=1.5,
-        get_radius=160,
-        radius_min_pixels=6,
-        radius_max_pixels=12,
-        pickable=True,
     )
 
 

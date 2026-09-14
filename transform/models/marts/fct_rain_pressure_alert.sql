@@ -164,7 +164,9 @@ classified AS (
 )
 
 SELECT
-    MD5(CONCAT_WS('|', forecast_run_id, ward_code, CAST(valid_time_utc AS VARCHAR)))
+    MD5(CONCAT_WS(
+        '|', forecast_run_id, ward_code, {{ stable_timestamp('valid_time_utc') }}
+    ))
         AS rain_pressure_alert_key,
     forecast_run_id,
     ward_code,

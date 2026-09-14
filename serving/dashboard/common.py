@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
 from typing import Any
 
 import pandas as pd
@@ -18,11 +17,6 @@ logger = logging.getLogger(__name__)
 _PUBLICATION_PROCESS = {
     config.target.rsplit(".", 1)[-1]: process_key
     for process_key, config in PROCESS_CONFIGS.items()
-}
-
-_WEATHER_FACTS = {
-    "forecast": "gold.fct_rain_forecast_current_hourly",
-    "archive": "gold.fct_rain_archive_hourly",
 }
 
 RAIN_METRICS = frozenset(
@@ -224,87 +218,3 @@ def load_all_wards(
     except Exception as exc:  # noqa: BLE001
         logger.warning("Không thể đọc danh sách phường: %s", exc)
         return []
-
-def load_flood_points(
-    ward_code: str | None = None,
-    snapshot_version: int | None = None,
-) -> pd.DataFrame:
-    """Các điểm đang hoạt động trong danh mục nguồn, tùy chọn theo phường."""
-    params: list[Any] = []
-    ward_filter = ""
-    if ward_code:
-        ward_filter = "AND ward_code = $1"
-        params.append(ward_code)
-    try:
-        return _read_dataframe(
-            f"""
-            SELECT
-                point_id,
-                point_name,
-                ward_name,
-                ward_code,
-                rain_scenario,
-                typical_depth_cm,
-                latitude,
-                longitude,
-                status
-            FROM gold.dim_flood_point
-            WHERE is_active = TRUE
-              AND status = 'active'
-              {ward_filter}
-            ORDER BY point_id
-            """,
-            params,
-            snapshot_version=snapshot_version,
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("Không thể đọc điểm ngập: %s", exc)
-        return pd.DataFrame()
-
-
-def load_weather_flood_points_for_hour(
-    process_key: str,
-    weather_model: str,
-    valid_time_utc: datetime | str,
-    snapshot_version: int | None = None,
-) -> pd.DataFrame:
-    """Compare Gold rain levels with each flood point's required Gold level."""
-    try:
-        fact = _WEATHER_FACTS[process_key]
-    except KeyError as error:
-        raise ValueError(f"Unknown weather process: {process_key}") from error
-    try:
-        return _read_dataframe(
-            f"""
-            SELECT
-                p.point_id,
-                p.point_name,
-                p.ward_name,
-                p.ward_code,
-                p.rain_scenario,
-                p.latitude,
-                p.longitude,
-                f.rain_1h_mm,
-                f.hanoi_rain_scenario_band,
-                COALESCE(
-                    f.hanoi_rain_scenario_level
-                        >= p.required_rain_scenario_level,
-                    FALSE
-                ) AS is_triggered
-            FROM gold.dim_flood_point AS p
-            LEFT JOIN gold.bridge_ward_grid AS bwg
-              ON bwg.ward_code = p.ward_code
-             AND bwg.weather_model = $1
-             AND bwg.is_active = TRUE
-            LEFT JOIN {fact} AS f
-              ON f.grid_cell_id = bwg.grid_cell_id
-             AND f.valid_time_utc = $2
-            WHERE p.is_active = TRUE AND p.status = 'active'
-            ORDER BY is_triggered DESC, p.point_id
-            """,
-            [weather_model, valid_time_utc],
-            snapshot_version=snapshot_version,
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("Không thể đối chiếu điểm ngập tại %s: %s", valid_time_utc, exc)
-        return pd.DataFrame()

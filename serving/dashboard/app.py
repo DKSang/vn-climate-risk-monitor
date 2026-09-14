@@ -30,8 +30,8 @@ wards = load_all_wards(snapshot_version)
 hero(
     "Hanoi Climate Intelligence",
     "Hà Nội. <em>Trong một nhịp.</em>",
-    "Theo dõi áp lực mưa tối đa 72 giờ trên 126 phường/xã, đối chiếu ngưỡng vận hành "
-    "và danh mục điểm úng ngập trong một giao diện thống nhất.",
+    "Theo dõi áp lực mưa tối đa 72 giờ trên 126 phường/xã và đối chiếu ngưỡng vận hành "
+    "trong một giao diện thống nhất.",
     rotating_words=(
         "Đúng snapshot.",
         "72 giờ tới.",
@@ -56,11 +56,6 @@ metric_strip(
         ("Phường/xã hiện hành", f"{len(wards):,}", "Hà Nội"),
         ("Phường có dự báo", f"{ward_count:,}", f"{grid_count} ô lưới"),
         ("Horizon còn hiệu lực", f"{horizon} giờ", "Snapshot mới nhất"),
-        (
-            "Điểm trong danh mục",
-            f"{int(metadata.get('flood_point_count') or 0):,}",
-            "Có nguồn và tọa độ",
-        ),
     ]
 )
 
@@ -82,16 +77,16 @@ left, middle, right = st.columns(3)
 with left, st.container(border=True):
     st.markdown("### Bản đồ dự báo")
     st.write(
-        "Xem phân bố mưa theo giờ, độ phủ dữ liệu, các dải ngưỡng và điểm "
-        "úng ngập thực sự đạt điều kiện kích hoạt."
+        "Xem phân bố mưa theo giờ, độ phủ dữ liệu, các dải ngưỡng và áp lực "
+        "mưa theo từng phường/xã."
     )
     st.page_link("pages/01_forecast_map.py", label="Mở bản đồ  →", icon="🗺️")
 
 with middle, st.container(border=True):
     st.markdown("### Phát lại quá khứ")
     st.write(
-        "Mở các giờ mưa lớn trong archive hoặc chọn ngày/giờ để kiểm tra màu ngưỡng, "
-        "ranh giới và điểm úng ngập."
+        "Mở các giờ mưa lớn trong archive hoặc chọn ngày/giờ để kiểm tra màu ngưỡng "
+        "và ranh giới."
     )
     st.page_link(
         "pages/03_archive_replay.py",
@@ -102,8 +97,8 @@ with middle, st.container(border=True):
 with right, st.container(border=True):
     st.markdown("### Chi tiết phường/xã")
     st.write(
-        "Phân tích mưa từng giờ, tổng mưa trong horizon, đỉnh mưa và danh "
-        "mục điểm úng ngập của một địa bàn."
+        "Phân tích mưa từng giờ, tổng mưa trong horizon, đỉnh mưa và áp lực "
+        "mưa của một địa bàn."
     )
     st.page_link(
         "pages/02_ward_drilldown.py",

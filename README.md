@@ -168,13 +168,13 @@ Dashboard Streamlit gồm ba luồng khám phá chính:
 ### Bản đồ dự báo
 
 Hiển thị horizon dự báo mới nhất trên bản đồ phường/xã, cho phép đổi mốc giờ,
-chỉ báo, lớp điểm và cách thể hiện. Bảng xếp hạng giúp so sánh áp lực mưa và
-lượng mưa dự kiến giữa các khu vực.
+chỉ báo và cách thể hiện. Bảng xếp hạng giúp so sánh áp lực mưa và lượng mưa
+dự kiến giữa các khu vực.
 
 ### Chi tiết phường/xã
 
 Đi sâu vào chuỗi thời gian của một địa bàn: lượng mưa theo cửa sổ, pressure
-signal, độ dai dẳng và các điểm ngập tham chiếu lân cận.
+signal và độ dai dẳng.
 
 ### Phát lại quá khứ
 
