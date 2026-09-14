@@ -10,7 +10,8 @@ WORKDIR /project
 
 ENV UV_PROJECT_ENVIRONMENT=/opt/project_venv \
     VIRTUAL_ENV=/opt/project_venv \
-    UV_NO_SYNC=1
+    UV_NO_SYNC=1 \
+    PYTHONPATH=/project
 
 # Cache locked third-party dependencies independently from application code.
 COPY --chown=app:app pyproject.toml uv.lock .python-version /project/
