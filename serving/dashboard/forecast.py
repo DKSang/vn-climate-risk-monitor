@@ -225,6 +225,9 @@ def load_forecast_hour_summary(
                 MAX(rain_6h_mm) AS max_rain_6h_mm,
                 MAX(rain_12h_mm) AS max_rain_12h_mm,
                 MAX(rain_24h_mm) AS max_rain_24h_mm,
+                MAX(forecast_next_1h_mm) AS max_forecast_next_1h_mm,
+                MAX(forecast_next_12h_mm) AS max_forecast_next_12h_mm,
+                MAX(forecast_next_24h_mm) AS max_forecast_next_24h_mm,
                 COUNT(*) FILTER (
                     WHERE hanoi_rain_scenario_band <> 'below_50'
                 ) AS elevated_ward_count,
