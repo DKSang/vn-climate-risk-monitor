@@ -87,7 +87,7 @@ services:
       - |
         uv run bootstrap-lakehouse
         uv run dbt seed --project-dir transform --profiles-dir transform
-        uv run dbt build --project-dir transform --profiles-dir transform --indirect-selection cautious --select stg_seed__ward stg_seed__ward_grid stg_seed__flood_point stg_seed__flood_observation dim_ward dim_flood_point fct_flood_event_observation
+        uv run dbt build --project-dir transform --profiles-dir transform --indirect-selection cautious --select stg_seed__ward stg_seed__ward_grid stg_seed__flood_observation dim_ward fct_flood_event_observation
 
   airflow:
     build:

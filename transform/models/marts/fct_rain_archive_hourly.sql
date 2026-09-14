@@ -43,7 +43,7 @@ windowed AS (
 
 published AS (
     SELECT
-        MD5(CONCAT_WS('|', grid_cell_id, CAST(valid_time_utc AS VARCHAR)))
+        MD5(CONCAT_WS('|', grid_cell_id, {{ stable_timestamp('valid_time_utc') }}))
             AS rain_archive_hourly_key,
         grid_cell_id,
         valid_time_utc,

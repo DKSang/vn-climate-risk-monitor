@@ -36,48 +36,6 @@ models:
       - name: _updated_at
         tests: [not_null]
 
-  - name: dim_flood_point
-    description: "Static dimension các điểm úng ngập Hà Nội từ QĐ 2280"
-    columns:
-      - name: point_id
-        tests: [unique, not_null]
-      - name: point_name
-        tests: [not_null]
-      - name: ward_name
-        tests: [not_null]
-      - name: ward_code
-        tests:
-          - not_null
-          - relationships:
-              arguments:
-                to: ref('dim_ward')
-                field: ward_code
-      - name: rain_scenario
-        tests:
-          - not_null
-          - accepted_values:
-              arguments:
-                values: ['scenario_50_70mm', 'scenario_70_100mm', 'scenario_over_100mm']
-      - name: required_rain_scenario_level
-        description: "Gold severity required for this point: 1=50mm, 2=70mm, 3=>100mm"
-        tests: [not_null]
-      - name: latitude
-        tests: [not_null]
-      - name: longitude
-        tests: [not_null]
-      - name: status
-        tests:
-          - not_null
-          - accepted_values:
-              arguments:
-                values: ['active', 'inactive']
-      - name: is_active
-        tests: [not_null]
-      - name: _deactivated_at
-        description: "Giữ contract lịch sử; static reference hiện không soft-delete"
-      - name: _updated_at
-        tests: [not_null]
-
   - name: bridge_ward_grid
     description: >
       Static phường ↔ ô lưới theo model, gồm cả mesh forecast hiện hành.
@@ -228,15 +186,15 @@ models:
       - name: _updated_at
         tests: [not_null]
       - name: forecast_next_24h_mm
-        description: "Tổng forecast trong (valid_time, valid_time + 24h]; NULL nếu thiếu horizon"
+        description: "Tổng forecast từ valid_time, gồm 24 giờ liên tiếp; NULL nếu thiếu horizon"
       - name: forecast_next_1h_mm
-        description: "Tổng forecast của giờ kế tiếp sau valid_time"
+        description: "Tổng forecast từ valid_time, gồm 1 giờ"
       - name: forecast_next_3h_mm
-        description: "Tổng forecast 3 giờ kế tiếp sau valid_time"
+        description: "Tổng forecast từ valid_time, gồm 3 giờ liên tiếp"
       - name: forecast_next_6h_mm
-        description: "Tổng forecast 6 giờ kế tiếp sau valid_time"
+        description: "Tổng forecast từ valid_time, gồm 6 giờ liên tiếp"
       - name: forecast_next_12h_mm
-        description: "Tổng forecast 12 giờ kế tiếp sau valid_time"
+        description: "Tổng forecast từ valid_time, gồm 12 giờ liên tiếp"
       - name: hanoi_rain_scenario_band
         tests:
           - accepted_values:

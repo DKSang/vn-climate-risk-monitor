@@ -24,14 +24,12 @@ from serving.dashboard.archive import (
 )
 from serving.dashboard.common import (
     load_serving_snapshot,
-    load_weather_flood_points_for_hour,
 )
 from serving.dashboard.geography import load_hanoi_geojson
 from serving.dashboard.ui import (
     MAP_STYLES,
     RAIN_INDICATORS,
     configure_page,
-    flood_point_layer,
     legend_row,
     local_time,
     metric_strip,
@@ -125,7 +123,7 @@ page_header(
     "Historical weather replay",
     "Phát lại mưa quá khứ",
     "Dùng các giờ mưa đã có trong weather_archive để kiểm tra ranh giới, màu ngưỡng "
-    "và logic điểm úng ngập trước khi forecast xuất hiện mưa lớn.",
+    "và logic ngưỡng mưa trước khi forecast xuất hiện mưa lớn.",
     f"Archive S{table_snapshot_version}",
 )
 
@@ -143,7 +141,7 @@ default_model_index = (
 selected_verified_event_id: str | None = None
 
 with st.container(border=True):
-    model_col, indicator_col, point_col, style_col = st.columns([1.1, 1.3, 1.2, 1.1])
+    model_col, indicator_col, observed_col, style_col = st.columns([1.1, 1.3, 1.2, 1.1])
     with model_col:
         selected_model = st.selectbox(
             "Nguồn archive",
@@ -163,15 +161,7 @@ with st.container(border=True):
                 "Kịch bản QĐ 2280 theo 1 giờ vẫn được giữ để đối chiếu đúng nguồn."
             ),
         )
-    with point_col:
-        point_mode = st.selectbox(
-            "Điểm QĐ 2280 · theo mưa 1h",
-            ("Toàn bộ danh mục", "Chỉ điểm đạt ngưỡng 1h", "Không hiển thị"),
-            help=(
-                "Điểm QĐ 2280 chỉ được đối chiếu với kịch bản mưa 1 giờ; "
-                "không suy trạng thái điểm từ tổng mưa 12/24 giờ."
-            ),
-        )
+    with observed_col:
         show_observed = st.toggle(
             "Ngập thực tế đã xác minh",
             value=True,
@@ -295,9 +285,6 @@ df_archive = load_archive_by_hour(
     sort_metric=rain_metric,
 )
 summary = load_archive_hour_summary(selected_model, selected_hour, snapshot_version)
-df_points = load_weather_flood_points_for_hour(
-    "archive", selected_model, selected_hour, snapshot_version
-)
 df_event = load_archive_event_timeseries(
     selected_model,
     selected_hour,
@@ -327,11 +314,6 @@ metric_strip(
             "Phường vượt dải nền",
             f"{elevated_count}",
             f"Độ phủ {ward_count}/126",
-        ),
-        (
-            "Điểm đạt ngưỡng 1h",
-            f"{int(summary.get('triggered_point_count') or 0)}",
-            "Độc lập với lớp tích lũy",
         ),
     ]
 )
@@ -386,10 +368,6 @@ if len(boundary_codes) != 126:
     st.stop()
 
 layers: list[pdk.Layer] = [ward_polygon_layer(geojson_data)]
-point_layer = flood_point_layer(df_points, point_mode)
-if point_layer is not None:
-    layers.append(point_layer)
-
 if show_observed and not df_observed.empty:
     observed_points = df_observed.copy()
     observed_points["color"] = [
@@ -430,8 +408,6 @@ if show_observed and not df_observed.empty:
     )
 
 map_legend = tuple(indicator["legend"])
-if point_mode != "Không hiển thị":
-    map_legend += (("#06B6D4", "Điểm ngập đạt ngưỡng", "QĐ 2280 · mưa 1h"),)
 if show_observed:
     map_legend += (("#FF3B30", "Ngập thực tế ghi nhận", "nguồn B · anchor high"),)
 legend_row(map_legend)

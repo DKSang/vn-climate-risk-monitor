@@ -23,7 +23,7 @@ archive DAG does not rerun `dbt seed`. After an intentional seed change, run:
 
 ```powershell
 uv run dbt seed --project-dir transform --profiles-dir transform
-uv run dbt build --project-dir transform --profiles-dir transform --select dim_ward dim_grid dim_flood_point bridge_ward_grid
+uv run dbt build --project-dir transform --profiles-dir transform --select dim_ward dim_grid bridge_ward_grid
 ```
 
 One-time source scraping, geocoding, and GeoJSON generation live under

@@ -112,7 +112,7 @@ incoming AS (
             '|',
             forecast_run_id,
             grid_cell_id,
-            CAST(valid_time_utc AS VARCHAR)
+            {{ stable_timestamp('valid_time_utc') }}
         )) AS weather_forecast_hourly_key,
         grid_cell_id,
         weather_model,

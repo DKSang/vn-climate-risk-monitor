@@ -249,18 +249,6 @@ def load_archive_hour_summary(
                  AND bwg.weather_model = $1
                  AND bwg.is_active = TRUE
                 WHERE f.valid_time_utc = $2
-            ),
-            point_status AS (
-                SELECT
-                    p.point_id,
-                    COALESCE(
-                        wa.hanoi_rain_scenario_level
-                            >= p.required_rain_scenario_level,
-                        FALSE
-                    ) AS is_triggered
-                FROM gold.dim_flood_point AS p
-                LEFT JOIN ward_archive AS wa USING (ward_code)
-                WHERE p.is_active = TRUE AND p.status = 'active'
             )
             SELECT
                 COUNT(DISTINCT ward_code) AS ward_count,
@@ -277,9 +265,7 @@ def load_archive_hour_summary(
                 ) AS elevated_ward_count_12h,
                 COUNT(*) FILTER (
                     WHERE vn_rain_band_24h <> 'below_50'
-                ) AS elevated_ward_count_24h,
-                (SELECT COUNT(*) FROM point_status WHERE is_triggered)
-                    AS triggered_point_count
+                ) AS elevated_ward_count_24h
             FROM ward_archive
             """,
             [weather_model, valid_time_utc],

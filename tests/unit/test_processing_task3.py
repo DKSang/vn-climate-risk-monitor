@@ -350,7 +350,7 @@ def test_forecast_completeness_counts_source_locations_before_grid_dedup() -> No
     assert "MAX(locations) = {{ var('forecast_expected_locations', 126) }}" in sql
 
 
-@pytest.mark.parametrize("model", ["dim_ward", "dim_flood_point", "bridge_ward_grid"])
+@pytest.mark.parametrize("model", ["dim_ward", "bridge_ward_grid"])
 def test_static_reference_dimensions_and_bridge_are_tables_without_soft_delete(
     model: str,
 ) -> None:

@@ -30,18 +30,18 @@
 {% endmacro %}
 
 
-{# Forward window bắt đầu từ t+1h, không gồm current row. #}
+{# Forward window gồm current hour và H-1 giờ kế tiếp. #}
 {% macro forward_rain_sums(windows, partition_by, order_by='valid_time_utc') %}
     {%- for hours in windows %}
     SUM(precipitation_mm) OVER (
         PARTITION BY {{ partition_by }}
         ORDER BY {{ order_by }}
-        RANGE BETWEEN INTERVAL '1 hour' FOLLOWING AND INTERVAL '{{ hours }} hours' FOLLOWING
+        RANGE BETWEEN CURRENT ROW AND INTERVAL '{{ hours - 1 }} hours' FOLLOWING
     ) AS forecast_next_{{ hours }}h_sum_raw,
     COUNT(precipitation_mm) OVER (
         PARTITION BY {{ partition_by }}
         ORDER BY {{ order_by }}
-        RANGE BETWEEN INTERVAL '1 hour' FOLLOWING AND INTERVAL '{{ hours }} hours' FOLLOWING
+        RANGE BETWEEN CURRENT ROW AND INTERVAL '{{ hours - 1 }} hours' FOLLOWING
     ) AS forecast_next_{{ hours }}h_hours{{ "," if not loop.last }}
     {%- endfor %}
 {% endmacro %}

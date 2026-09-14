@@ -57,7 +57,7 @@ incoming AS (
         MD5(CONCAT_WS(
             '|',
             {{ grid_cell_id('weather_model', 'grid_latitude', 'grid_longitude') }},
-            CAST(valid_time_utc AS VARCHAR)
+            {{ stable_timestamp('valid_time_utc') }}
         )) AS weather_archive_hourly_key,
         {{ grid_cell_id('weather_model', 'grid_latitude', 'grid_longitude') }}
             AS grid_cell_id,

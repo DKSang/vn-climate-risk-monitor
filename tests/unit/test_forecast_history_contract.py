@@ -40,9 +40,11 @@ def test_current_view_is_separate_from_history_table() -> None:
 def test_forecast_pressure_alert_uses_forward_windows_and_current_run() -> None:
     forecast = _sql("marts/fct_rain_forecast_hourly.sql")
     alert = _sql("marts/fct_rain_pressure_alert.sql")
+    rainfall = Path("transform/macros/rainfall.sql").read_text(encoding="utf-8")
 
     assert "forward_rain_sums" in forecast
     assert "forward_rain_columns" in forecast
+    assert "RANGE BETWEEN CURRENT ROW AND INTERVAL '{{ hours - 1 }} hours' FOLLOWING" in rainfall
     assert "fct_rain_forecast_current_hourly" in alert
     assert "persistence_runs" in alert
     assert "pressure_level" in alert
@@ -52,16 +54,27 @@ def test_forecast_pressure_alert_uses_forward_windows_and_current_run() -> None:
     assert "incomplete_forecast_coverage" in alert
 
 
+def test_forecast_serving_aggregations_guard_against_join_multiplication() -> None:
+    forecast = Path("serving/dashboard/forecast.py").read_text(encoding="utf-8")
+
+    assert "PARTITION BY forecast_run_id, grid_cell_id, valid_time_utc" in forecast
+    assert "PARTITION BY forecast_run_id, ward_code, valid_time_utc" in forecast
+    assert "COUNT(DISTINCT ward_code) FILTER" in forecast
+    assert Path("transform/tests/assert_forecast_current_grain.sql").is_file()
+    assert Path("transform/tests/assert_pressure_alert_grain.sql").is_file()
+
+
 def test_removed_forecast_risk_serving_models_stay_absent() -> None:
     marts = MODELS / "marts"
     schema = _sql("marts/schema.yml")
     queries = _serving_sql()
 
-    assert not (marts / "bridge_flood_point_grid.sql").exists()
+    assert not (marts / "dim_flood_point.sql").exists()
     assert not (marts / "fct_flood_risk_score.sql").exists()
-    assert "name: bridge_flood_point_grid" not in schema
+    assert "name: dim_flood_point" not in schema
     assert "name: fct_flood_risk_score" not in schema
     assert "gold.fct_flood_risk_score" not in queries
+    assert "gold.dim_flood_point" not in queries
     assert "def load_forecast_risk_ranking" not in queries
 
 

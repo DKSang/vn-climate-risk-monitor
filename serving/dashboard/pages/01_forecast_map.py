@@ -8,12 +8,8 @@ import copy
 import pydeck as pdk
 import streamlit as st
 
-from serving.dashboard.common import (
-    load_serving_snapshot,
-    load_weather_flood_points_for_hour,
-)
+from serving.dashboard.common import load_serving_snapshot
 from serving.dashboard.forecast import (
-    FORECAST_MODEL,
     load_forecast_by_hour,
     load_forecast_hour_summary,
     load_forecast_hours,
@@ -26,7 +22,6 @@ from serving.dashboard.ui import (
     RAIN_INDICATORS,
     configure_page,
     default_hour_index,
-    flood_point_layer,
     legend_row,
     local_time,
     metric_strip,
@@ -68,9 +63,7 @@ page_header(
 warn_if_stale(metadata)
 
 with st.container(border=True):
-    control_left, indicator_col, control_right, style_col = st.columns(
-        [2.0, 1.4, 1.2, 1.1]
-    )
+    control_left, indicator_col, style_col = st.columns([2.0, 1.4, 1.1])
     with control_left:
         selected_index = st.select_slider(
             "Thời điểm dự báo · giờ Hà Nội (UTC+7)",
@@ -86,15 +79,6 @@ with st.container(border=True):
             help=(
                 "Mặc định dùng tích lũy 24 giờ để không bỏ sót mưa dai nhiều giờ. "
                 "Kịch bản QĐ 2280 theo 1 giờ vẫn được giữ để đối chiếu đúng nguồn."
-            ),
-        )
-    with control_right:
-        point_mode = st.selectbox(
-            "Điểm úng ngập",
-            ("Chỉ điểm đạt ngưỡng 1h", "Toàn bộ danh mục", "Không hiển thị"),
-            help=(
-                "Điểm QĐ 2280 chỉ được đối chiếu với kịch bản mưa 1 giờ; "
-                "không suy trạng thái điểm từ tổng mưa 12/24 giờ."
             ),
         )
     with style_col:
@@ -131,9 +115,6 @@ df_forecast = load_forecast_by_hour(
     sort_metric=forecast_metric,
 )
 summary = load_forecast_hour_summary(selected_hour, snapshot_version)
-df_points = load_weather_flood_points_for_hour(
-    "forecast", FORECAST_MODEL, selected_hour, snapshot_version
-)
 df_pressure = load_forecast_pressure_ranking(selected_hour, snapshot_version)
 
 ward_count = int(summary.get("ward_count") or 0)
@@ -231,23 +212,7 @@ if len(boundary_codes) != 126:
     st.stop()
 
 layers: list[pdk.Layer] = [ward_polygon_layer(geojson_data)]
-pressure_by_ward = {
-    str(row["ward_code"]).zfill(5): (
-        f"{row.get('pressure_level') or 'Chưa có'} · "
-        f"{pressure_score_label(row.get('pressure_score'), digits=1)}"
-    )
-    for row in df_forecast.to_dict(orient="records")
-}
-point_layer = flood_point_layer(
-    df_points, point_mode, pressure_by_ward=pressure_by_ward
-)
-if point_layer is not None:
-    layers.append(point_layer)
-
-map_legend = tuple(indicator["legend"])
-if point_mode != "Không hiển thị":
-    map_legend += (("#06B6D4", "Điểm ngập đạt ngưỡng", "QĐ 2280 · mưa 1h"),)
-legend_row(map_legend)
+legend_row(tuple(indicator["legend"]))
 
 map_col, rank_col = st.columns([3.2, 1])
 with map_col:
@@ -348,5 +313,6 @@ with rank_col, st.container(border=True):
 st.caption(
     f"Horizon: {local_time(metadata.get('starts_at_utc'))} → "
     f"{local_time(metadata.get('ends_at_utc'))}. Dải màu là lượng mưa dự kiến "
-    "từ mốc đang chọn về phía trước; điểm áp lực là heuristic có thể giải thích."
+    "từ mốc đang chọn, gồm các giờ liên tiếp trong cửa sổ; điểm áp lực là "
+    "heuristic có thể giải thích."
 )

@@ -50,7 +50,6 @@ Public dimensions and bridges:
 
 - `gold.dim_ward`: active Hanoi ward/commune identity and coordinates.
 - `gold.dim_grid`: weather-model grid-cell identity.
-- `gold.dim_flood_point`: curated flood-point reference and rainfall scenario.
 - `gold.bridge_ward_grid`: deterministic ward-to-grid mapping by model.
 
 Public facts:

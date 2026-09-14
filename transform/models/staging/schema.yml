@@ -34,37 +34,6 @@ models:
       - name: grid_cell_id
         tests: [not_null]
 
-  - name: stg_seed__flood_point
-    description: >
-      View mỏng cho điểm úng ngập từ seed. Canonicalize toạ độ 6 số và ánh xạ
-      lấy ward_code từ stg_seed__ward.
-    columns:
-      - name: point_id
-        tests: [unique, not_null]
-      - name: point_name
-        tests: [not_null]
-      - name: ward_name
-        tests: [not_null]
-      - name: ward_code
-        description: "Mã phường 5 ký tự sau sắp xếp 2025"
-        tests: [not_null]
-      - name: rain_scenario
-        tests:
-          - not_null
-          - accepted_values:
-              arguments:
-                values: ['scenario_50_70mm', 'scenario_70_100mm', 'scenario_over_100mm']
-      - name: latitude
-        tests: [not_null]
-      - name: longitude
-        tests: [not_null]
-      - name: status
-        tests:
-          - not_null
-          - accepted_values:
-              arguments:
-                values: ['active', 'inactive']
-
   - name: stg_seed__flood_observation
     description: >
       View mỏng cho quan sát ngập từ seed Flourish/VnExpress. Giữ nguyên các cột
