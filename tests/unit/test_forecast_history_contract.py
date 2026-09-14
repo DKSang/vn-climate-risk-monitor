@@ -84,9 +84,9 @@ def test_unused_gold_research_and_daily_models_are_removed() -> None:
 def test_serving_uses_successful_processing_publication_not_catalog_head() -> None:
     queries = _serving_sql()
     runner = Path(
-        "src/vn_climate_risk_monitor/processing/cli.py"
+        "src/vn_climate_risk_monitor/auto_process/cli.py"
     ).read_text(encoding="utf-8")
-    state = Path("src/vn_climate_risk_monitor/processing/state.py").read_text(
+    state = Path("src/vn_climate_risk_monitor/auto_process/state.py").read_text(
         encoding="utf-8"
     )
 

@@ -8,8 +8,8 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from vn_climate_risk_monitor.processing.config import ProcessConfig
-from vn_climate_risk_monitor.processing.state import ensure_active_process_key
+from vn_climate_risk_monitor.auto_process.config import ProcessConfig
+from vn_climate_risk_monitor.auto_process.state import ensure_active_process_key
 
 
 @dataclass(frozen=True)
@@ -33,7 +33,7 @@ class SourceBounds:
 
 @dataclass(frozen=True)
 class Bounds:
-    """Use lower bounds only; safety overlap covers late row visibility."""
+    """Incremental source bounds captured for one processing run."""
 
     run_started_at: datetime
     sources: tuple[SourceBounds, ...]
@@ -64,8 +64,7 @@ def compute_bounds(
     *,
     force_full_refresh: bool = False,
 ) -> Bounds:
-    """Build lower bounds from checkpoints and the configured safety lag."""
-    lag = config.safety_lag
+    """Build lower bounds directly from successful checkpoints."""
     return Bounds(
         run_started_at=run_started_at,
         sources=tuple(
@@ -74,7 +73,7 @@ def compute_bounds(
                 change_column=source.change_column,
                 checkpoint_before=checkpoints.get(source.ref),
                 lower_bound=(
-                    checkpoints[source.ref] - lag
+                    checkpoints[source.ref]
                     if (
                         not force_full_refresh
                         and checkpoints.get(source.ref) is not None

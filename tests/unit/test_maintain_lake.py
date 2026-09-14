@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from vn_climate_risk_monitor.maintenance import build_statements
+from vn_climate_risk_monitor.operations.maintenance import build_statements
 
 
 def test_maintenance_keeps_snapshot_and_file_grace_periods() -> None:

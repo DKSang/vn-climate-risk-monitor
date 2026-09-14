@@ -3,10 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import timedelta
-
-# Bù khoảng trễ giữa ingest timestamp và lúc row visible.
-DEFAULT_SAFETY_LAG = timedelta(minutes=15)
 
 
 @dataclass(frozen=True)
@@ -27,15 +23,12 @@ class ProcessConfig:
     target: str
     sources: tuple[SourceBinding, ...]
     scope: str = "production"
-    safety_lag: timedelta = DEFAULT_SAFETY_LAG
 
     def __post_init__(self) -> None:
         if not self.process_key.strip() or not self.target.strip():
             raise ValueError("process_key and target must not be empty")
         if not self.sources:
             raise ValueError(f"{self.process_key}: cần ít nhất một source")
-        if self.safety_lag < timedelta(0):
-            raise ValueError("safety_lag must not be negative")
         refs = [source.ref for source in self.sources]
         if len(set(refs)) != len(refs):
             raise ValueError(f"{self.process_key}: source.ref bị trùng: {refs}")

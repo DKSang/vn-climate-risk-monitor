@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from minio import Minio
 
-from vn_climate_risk_monitor.config import MinioSettings
+from vn_climate_risk_monitor.platform.settings import MinioSettings
 
 
 def get_minio_client(settings: MinioSettings) -> Minio:

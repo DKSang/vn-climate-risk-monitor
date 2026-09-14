@@ -8,9 +8,9 @@ kind of state:
 | Layer | Owner | Responsibility |
 |---|---|---|
 | Source planning | `sources.open_meteo` | Forecast/archive request windows and parameters |
-| Bronze | `ingestion.fetch` + MinIO | Immutable HTTP response bytes at existing object paths |
+| Bronze | `sources.open_meteo.fetch` + MinIO | Immutable HTTP response bytes at existing object paths |
 | Ingestion control | PostgreSQL `ingestion` | Discovery runs, file status, leases, retries, parser metadata, errors |
-| Silver staging | `ingestion.loader` + DuckLake | File-to-row parsing with `_source_file` lineage |
+| Silver staging | `auto_loader` + DuckLake | File-to-row parsing with `_source_file` lineage |
 | Processing control | PostgreSQL `processing` | Checkpoints, run audit, rewind/abandon, published snapshot |
 | Intermediate and marts | dbt + DuckDB/DuckLake | Types, deduplication, business logic, Gold contract |
 | Orchestration | Airflow | Schedule, task dependency, task retry, single-writer pool |
@@ -41,9 +41,10 @@ gap, the lease expires and a retry replaces that file's rows rather than appendi
 duplicates.
 
 Processing has two active flow keys, `forecast` and `archive`. Each executes one
-dbt build from intermediate through marts using a selector. A 15-minute overlap
-protects late-arriving rows. The checkpoint advances only after the complete build
-and tests succeed, and `published_snapshot_id` is written with the successful run.
+dbt build from intermediate through marts using a selector. The previous successful
+run start is the next incremental lower bound. The checkpoint advances only after
+the complete build and tests succeed, and `published_snapshot_id` is written with
+the successful run.
 
 ## Trade-offs
 

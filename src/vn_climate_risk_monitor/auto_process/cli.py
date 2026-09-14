@@ -10,20 +10,20 @@ from datetime import UTC, datetime
 from pathlib import Path
 from types import FrameType
 
-from vn_climate_risk_monitor.config import load_settings
-from vn_climate_risk_monitor.lakehouse import PRIMARY_CATALOG, get_connection
-from vn_climate_risk_monitor.processing.config import (
+from vn_climate_risk_monitor.auto_process.config import (
     ACTIVE_PROCESS_KEYS,
     ProcessConfig,
     load_active_config,
 )
-from vn_climate_risk_monitor.processing.dbt import run_dbt
-from vn_climate_risk_monitor.processing.runner import Bounds, run_process
-from vn_climate_risk_monitor.processing.schema import ensure_processing_state
-from vn_climate_risk_monitor.processing.state import (
+from vn_climate_risk_monitor.auto_process.dbt import run_dbt
+from vn_climate_risk_monitor.auto_process.runner import Bounds, run_process
+from vn_climate_risk_monitor.auto_process.schema import ensure_processing_state
+from vn_climate_risk_monitor.auto_process.state import (
     ProcessingRepository,
     connect_control_plane,
 )
+from vn_climate_risk_monitor.platform.lakehouse import PRIMARY_CATALOG, get_connection
+from vn_climate_risk_monitor.platform.settings import load_settings
 
 TRANSFORM_DIR = Path("transform")
 
@@ -147,7 +147,6 @@ def cmd_status(args: argparse.Namespace) -> int:
 
     print(f"{config.process_key} [{config.scope}] → {config.target}")
     print(f"  selection: tag:{config.process_key}")
-    print(f"  safety_lag: {config.safety_lag}")
     for source_ref, checkpoint in checkpoints.items():
         print(f"  {source_ref}: {checkpoint or '(chưa có — full refresh)'}")
     print("  runs:")

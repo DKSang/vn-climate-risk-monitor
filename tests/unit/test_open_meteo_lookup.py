@@ -10,9 +10,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from vn_climate_risk_monitor import grid, open_meteo
-from vn_climate_risk_monitor.sources import open_meteo as planner
-from vn_climate_risk_monitor.sources.open_meteo import (
+from vn_climate_risk_monitor.sources.open_meteo import cli as open_meteo
+from vn_climate_risk_monitor.sources.open_meteo import grid, planner
+from vn_climate_risk_monitor.sources.open_meteo.planner import (
     ARCHIVE_MODELS,
     ERA5,
     IFS,
@@ -193,7 +193,7 @@ def test_forecast_run_id_is_stable_for_retries_in_the_same_hour() -> None:
 
 def test_archive_model_is_not_an_env_knob_anymore() -> None:
     """Model chọn theo thời kỳ; một biến môi trường sẽ âm thầm ghi đè logic đó."""
-    from vn_climate_risk_monitor.config import OpenMeteoSettings
+    from vn_climate_risk_monitor.platform.settings import OpenMeteoSettings
 
     assert "archive_model" not in OpenMeteoSettings.__dataclass_fields__
 
@@ -204,7 +204,9 @@ def test_fetch_does_not_write_a_lookup_csv() -> None:
 
 def test_source_planner_boundary_has_no_storage_inputs() -> None:
     try:
-        planner = importlib.import_module("vn_climate_risk_monitor.sources.open_meteo")
+        planner = importlib.import_module(
+            "vn_climate_risk_monitor.sources.open_meteo.planner"
+        )
     except ModuleNotFoundError:
         pytest.fail("source-specific planning module is missing")
 

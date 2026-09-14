@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from vn_climate_risk_monitor.processing.runner import Bounds
+from vn_climate_risk_monitor.auto_process.runner import Bounds
 
 FILE_BACKED_DBT_SETTINGS = ("POSTGRES_PASSWORD", "MINIO_SECRET_KEY")
 

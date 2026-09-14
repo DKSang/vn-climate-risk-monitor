@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from vn_climate_risk_monitor import load
-from vn_climate_risk_monitor.ingestion import loader as loader_module
-from vn_climate_risk_monitor.ingestion import state as state_module
-from vn_climate_risk_monitor.ingestion.loader import SourceConfig
+from vn_climate_risk_monitor.auto_loader import config as load
+from vn_climate_risk_monitor.auto_loader import loader as loader_module
+from vn_climate_risk_monitor.auto_loader import state as state_module
+from vn_climate_risk_monitor.auto_loader.loader import SourceConfig
 
 
 def test_source_groups_are_code_native() -> None:

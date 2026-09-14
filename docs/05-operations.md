@@ -71,7 +71,7 @@ the loader replaces rows for that `_source_file`. Bronze is never overwritten or
 deleted by retry.
 
 `processing.processing_state` and `processing.processing_runs` record flow status,
-source checkpoints, overlap, row counts, rewind/abandon reasons, and
+source checkpoints, row counts, rewind/abandon reasons, and
 `published_snapshot_id`. A failed dbt build leaves the checkpoint unchanged.
 
 ## Status, rewind, and abandon
@@ -85,7 +85,7 @@ pipeline-health --scope all --require-gold
 
 The first run of active `forecast` or `archive` performs a controlled full refresh.
 Rewind creates an audit record and causes the next run to reprocess from the
-requested point with the 15-minute safety overlap. Abandon is an explicit terminal
+requested point. Abandon is an explicit terminal
 audit action; it does not delete Bronze or old run history.
 
 ## Maintenance and reset

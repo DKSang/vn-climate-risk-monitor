@@ -35,16 +35,16 @@ dev = [
 ]
 
 [project.scripts]
-fetch-open-meteo = "vn_climate_risk_monitor.open_meteo:main"
-auto-loader = "vn_climate_risk_monitor.load:main"
-auto-process = "vn_climate_risk_monitor.processing.cli:main"
-pipeline-health = "vn_climate_risk_monitor.health:main"
-maintain-lakehouse = "vn_climate_risk_monitor.maintenance:main"
-bootstrap-lakehouse = "vn_climate_risk_monitor.bootstrap:main"
-reset-lakehouse = "vn_climate_risk_monitor.reset:main"
+fetch-open-meteo = "vn_climate_risk_monitor.sources.open_meteo.cli:main"
+auto-loader = "vn_climate_risk_monitor.auto_loader.cli:main"
+auto-process = "vn_climate_risk_monitor.auto_process.cli:main"
+pipeline-health = "vn_climate_risk_monitor.quality.health:main"
+maintain-lakehouse = "vn_climate_risk_monitor.operations.maintenance:main"
+bootstrap-lakehouse = "vn_climate_risk_monitor.operations.bootstrap:main"
+reset-lakehouse = "vn_climate_risk_monitor.operations.reset:main"
 
 [tool.uv.build-backend]
-# One product package; ingestion and processing are internal capabilities.
+# One product package; lifecycle stages are internal capabilities.
 module-name = ["vn_climate_risk_monitor"]
 
 [build-system]

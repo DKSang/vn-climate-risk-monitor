@@ -6,15 +6,18 @@ import socket
 import sys
 import time
 
-from vn_climate_risk_monitor.config import Settings, load_settings
-from vn_climate_risk_monitor.ingestion.fetch import ensure_bucket
-from vn_climate_risk_monitor.ingestion.state import (
+from vn_climate_risk_monitor.auto_loader.state import (
     connect_control_plane,
     ensure_ingestion_state,
 )
-from vn_climate_risk_monitor.lakehouse import PRIMARY_CATALOG, PRIMARY_METADATA_SCHEMA
-from vn_climate_risk_monitor.processing.schema import ensure_processing_state
-from vn_climate_risk_monitor.storage.minio import get_minio_client
+from vn_climate_risk_monitor.auto_process.schema import ensure_processing_state
+from vn_climate_risk_monitor.platform.lakehouse import (
+    PRIMARY_CATALOG,
+    PRIMARY_METADATA_SCHEMA,
+)
+from vn_climate_risk_monitor.platform.minio import get_minio_client
+from vn_climate_risk_monitor.platform.settings import Settings, load_settings
+from vn_climate_risk_monitor.sources.open_meteo.fetch import ensure_bucket
 
 
 def _wait_for_service(host: str, port: int, name: str, timeout: int = 30) -> None:

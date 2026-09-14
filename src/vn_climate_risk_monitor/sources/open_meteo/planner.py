@@ -11,7 +11,7 @@ from datetime import date, datetime, timedelta
 from itertools import batched
 from urllib.parse import urlencode, urlparse, urlunparse
 
-from vn_climate_risk_monitor.config import OpenMeteoSettings
+from vn_climate_risk_monitor.platform.settings import OpenMeteoSettings
 
 FORECAST_PREFIX = "bronze/files/open_meteo/forecast/incremental"
 FORECAST_FIELDS = "precipitation,rain,showers,precipitation_probability,weather_code"

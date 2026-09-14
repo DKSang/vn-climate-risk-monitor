@@ -11,16 +11,17 @@ import duckdb
 from minio import Minio
 from minio.error import S3Error
 
-from vn_climate_risk_monitor import grid
-from vn_climate_risk_monitor.config import OpenMeteoSettings, load_settings
-from vn_climate_risk_monitor.ingestion.fetch import (
+from vn_climate_risk_monitor.platform.lakehouse import get_connection
+from vn_climate_risk_monitor.platform.minio import get_minio_client
+from vn_climate_risk_monitor.platform.settings import OpenMeteoSettings, load_settings
+from vn_climate_risk_monitor.sources.open_meteo import grid
+from vn_climate_risk_monitor.sources.open_meteo.fetch import (
     FetchTask,
     ensure_bucket,
     land,
     run_fetch_pool,
 )
-from vn_climate_risk_monitor.lakehouse import get_connection
-from vn_climate_risk_monitor.sources.open_meteo import (
+from vn_climate_risk_monitor.sources.open_meteo.planner import (
     ARCHIVE_MODELS,
     STAGING_HOURLY,
     Location,
@@ -33,7 +34,6 @@ from vn_climate_risk_monitor.sources.open_meteo import (
     months_between,
     slot_params,
 )
-from vn_climate_risk_monitor.storage.minio import get_minio_client
 
 
 def load_locations(connection: duckdb.DuckDBPyConnection) -> tuple[Location, ...]:

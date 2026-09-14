@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 
-from vn_climate_risk_monitor.lakehouse import PRIMARY_CATALOG, get_connection
+from vn_climate_risk_monitor.platform.lakehouse import PRIMARY_CATALOG, get_connection
 
 
 def build_statements(

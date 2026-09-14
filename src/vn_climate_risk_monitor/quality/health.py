@@ -12,10 +12,10 @@ from pathlib import Path
 from typing import Any, Literal
 from urllib.request import Request, urlopen
 
-from vn_climate_risk_monitor.config import load_settings
-from vn_climate_risk_monitor.ingestion.state import connect_control_plane
-from vn_climate_risk_monitor.lakehouse import get_connection
-from vn_climate_risk_monitor.load import SOURCE_GROUPS
+from vn_climate_risk_monitor.auto_loader.config import SOURCE_GROUPS
+from vn_climate_risk_monitor.auto_loader.state import connect_control_plane
+from vn_climate_risk_monitor.platform.lakehouse import get_connection
+from vn_climate_risk_monitor.platform.settings import load_settings
 
 Status = Literal["PASS", "WARN", "FAIL"]
 HealthScope = Literal["forecast", "archive", "all"]

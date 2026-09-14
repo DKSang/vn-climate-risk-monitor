@@ -6,7 +6,7 @@ import os
 
 import duckdb
 
-from vn_climate_risk_monitor.config import load_settings
+from vn_climate_risk_monitor.platform.settings import load_settings
 
 PRIMARY_CATALOG = "catalog1"
 PRIMARY_METADATA_SCHEMA = "ducklake"
