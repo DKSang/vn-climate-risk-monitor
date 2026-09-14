@@ -8,10 +8,10 @@ from typing import Any
 
 import pandas as pd
 
-from vn_climate_risk_monitor.config import load_settings
-from vn_climate_risk_monitor.ingestion.state import connect_control_plane
-from vn_climate_risk_monitor.lakehouse import get_connection
-from vn_climate_risk_monitor.processing.config import PROCESS_CONFIGS
+from vn_climate_risk_monitor.auto_loader.state import connect_control_plane
+from vn_climate_risk_monitor.auto_process.config import PROCESS_CONFIGS
+from vn_climate_risk_monitor.platform.lakehouse import get_connection
+from vn_climate_risk_monitor.platform.settings import load_settings
 
 logger = logging.getLogger(__name__)
 

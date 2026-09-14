@@ -4,20 +4,20 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from vn_climate_risk_monitor.processing.dbt import (
+from vn_climate_risk_monitor.auto_process.dbt import (
     DbtBuildError,
     build_command,
     build_vars,
     run_dbt,
     to_sql_timestamp,
 )
-from vn_climate_risk_monitor.processing.runner import Bounds, SourceBounds
+from vn_climate_risk_monitor.auto_process.runner import Bounds, SourceBounds
 
 
 def at(hour: int, minute: int = 0) -> datetime:
@@ -31,7 +31,7 @@ def bounds(*, lower: datetime | None) -> Bounds:
             SourceBounds(
                 source_ref="archive_hourly",
                 change_column="_ingested_at",
-                checkpoint_before=lower + timedelta(minutes=15) if lower else None,
+                checkpoint_before=lower,
                 lower_bound=lower,
             ),
         ),

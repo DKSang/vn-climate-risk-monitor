@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from vn_climate_risk_monitor.config import load_settings
+from vn_climate_risk_monitor.platform.settings import load_settings
 
 
 @pytest.fixture(autouse=True)

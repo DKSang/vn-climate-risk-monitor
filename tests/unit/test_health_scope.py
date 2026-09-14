@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from vn_climate_risk_monitor import health
+from vn_climate_risk_monitor.quality import health
 
 
 class _Result:

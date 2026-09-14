@@ -11,8 +11,8 @@ from uuid import UUID, uuid4
 import duckdb
 import pytest
 
-from vn_climate_risk_monitor.ingestion.loader import AutoLoader, SourceConfig
-from vn_climate_risk_monitor.ingestion.state import PostgresIngestionRepository
+from vn_climate_risk_monitor.auto_loader.loader import AutoLoader, SourceConfig
+from vn_climate_risk_monitor.auto_loader.state import PostgresIngestionRepository
 
 
 @dataclass
@@ -603,7 +603,7 @@ def test_shipped_sources_render_without_leftover_placeholders() -> None:
     """Shipped source SQL must render without unresolved placeholders."""
     import re
 
-    from vn_climate_risk_monitor.load import source_configs
+    from vn_climate_risk_monitor.auto_loader.config import source_configs
 
     for config in source_configs():
         rendered = config.sql

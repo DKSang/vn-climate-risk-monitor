@@ -153,7 +153,7 @@ class _HealthConnection:
 
 
 def test_health_delegates_row_level_quality_to_dbt() -> None:
-    from vn_climate_risk_monitor import health
+    from vn_climate_risk_monitor.quality import health
 
     checks = health._check_weather_table(
         _HealthConnection(),
@@ -166,7 +166,7 @@ def test_health_delegates_row_level_quality_to_dbt() -> None:
 
 
 def test_health_has_no_row_level_duplicate_or_contract_checks() -> None:
-    from vn_climate_risk_monitor import health
+    from vn_climate_risk_monitor.quality import health
 
     assert not hasattr(health, "_check_archive_duplicates")
     assert not hasattr(health, "_check_mapping")
@@ -177,12 +177,19 @@ def test_approved_operational_console_entry_points_are_package_owned() -> None:
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     scripts = project["project"]["scripts"]
 
-    assert scripts["pipeline-health"] == "vn_climate_risk_monitor.health:main"
-    assert scripts["auto-loader"] == "vn_climate_risk_monitor.load:main"
-    assert scripts["auto-process"] == "vn_climate_risk_monitor.processing.cli:main"
-    assert scripts["maintain-lakehouse"] == "vn_climate_risk_monitor.maintenance:main"
-    assert scripts["bootstrap-lakehouse"] == "vn_climate_risk_monitor.bootstrap:main"
-    assert scripts["reset-lakehouse"] == "vn_climate_risk_monitor.reset:main"
+    assert scripts["fetch-open-meteo"] == (
+        "vn_climate_risk_monitor.sources.open_meteo.cli:main"
+    )
+    assert scripts["auto-loader"] == "vn_climate_risk_monitor.auto_loader.cli:main"
+    assert scripts["auto-process"] == "vn_climate_risk_monitor.auto_process.cli:main"
+    assert scripts["pipeline-health"] == "vn_climate_risk_monitor.quality.health:main"
+    assert scripts["maintain-lakehouse"] == (
+        "vn_climate_risk_monitor.operations.maintenance:main"
+    )
+    assert scripts["bootstrap-lakehouse"] == (
+        "vn_climate_risk_monitor.operations.bootstrap:main"
+    )
+    assert scripts["reset-lakehouse"] == "vn_climate_risk_monitor.operations.reset:main"
     assert not (ROOT / "scripts/healthcheck.py").exists()
     assert not (ROOT / "scripts/maintain_lake.py").exists()
     assert not (ROOT / "scripts/bootstrap.py").exists()
@@ -190,7 +197,7 @@ def test_approved_operational_console_entry_points_are_package_owned() -> None:
 
 
 def test_reset_scope_is_confirmation_protected_and_never_bronze() -> None:
-    module_path = ROOT / "src/vn_climate_risk_monitor/reset.py"
+    module_path = ROOT / "src/vn_climate_risk_monitor/operations/reset.py"
     spec = importlib.util.spec_from_file_location("runtime_reset", module_path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)

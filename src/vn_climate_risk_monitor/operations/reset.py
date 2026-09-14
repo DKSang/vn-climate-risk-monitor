@@ -7,9 +7,9 @@ import sys
 from collections.abc import Sequence
 from typing import Any
 
-from vn_climate_risk_monitor.config import load_settings
-from vn_climate_risk_monitor.ingestion.state import connect_control_plane
-from vn_climate_risk_monitor.lakehouse import get_connection
+from vn_climate_risk_monitor.auto_loader.state import connect_control_plane
+from vn_climate_risk_monitor.platform.lakehouse import get_connection
+from vn_climate_risk_monitor.platform.settings import load_settings
 
 PRIMARY_CATALOG = "catalog1"
 PROTECTED_PREFIX = "bronze/files/"
@@ -56,7 +56,7 @@ def drop_objects(duck: Any, objects: Sequence[tuple[str, str, str, str]]) -> int
 
 def ingestion_gap(control: Any) -> tuple[int, int]:
     settings = load_settings()
-    from vn_climate_risk_monitor.storage.minio import get_minio_client
+    from vn_climate_risk_monitor.platform.minio import get_minio_client
 
     client = get_minio_client(settings.minio)
     live = {

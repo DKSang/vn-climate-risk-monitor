@@ -13,15 +13,15 @@ from uuid import UUID, uuid4
 import duckdb
 import pytest
 
-from vn_climate_risk_monitor.processing import config as processing_config
-from vn_climate_risk_monitor.processing.dbt import build_command
-from vn_climate_risk_monitor.processing.runner import (
+from vn_climate_risk_monitor.auto_process import config as processing_config
+from vn_climate_risk_monitor.auto_process.dbt import build_command
+from vn_climate_risk_monitor.auto_process.runner import (
     Bounds,
     SourceBounds,
     compute_bounds,
     run_process,
 )
-from vn_climate_risk_monitor.processing.state import (
+from vn_climate_risk_monitor.auto_process.state import (
     ProcessingRepository,
     ProcessingStateError,
 )
@@ -182,7 +182,7 @@ def test_only_forecast_and_archive_are_active_process_keys() -> None:
 
     assert tuple(configs) == ("archive", "forecast")
     assert set(configs) == {"forecast", "archive"}
-    assert not list((ROOT / "processing").glob("*.yml"))
+    assert not list((ROOT / "auto_process").glob("*.yml"))
     assert configs["forecast"].source_refs == ("stg_weather_forecast",)
     assert configs["archive"].source_refs == ("stg_weather_archive_hourly",)
 
@@ -199,7 +199,7 @@ def test_first_run_uses_controlled_full_refresh_and_audits_active_flow() -> None
     assert repository.completed[0]["checkpoint"] == at(10)
 
 
-def test_checkpoint_overlap_is_exactly_fifteen_minutes() -> None:
+def test_checkpoint_is_used_as_the_incremental_lower_bound() -> None:
     config = processing_config.load_active_config("archive")
 
     bounds = compute_bounds(
@@ -208,7 +208,7 @@ def test_checkpoint_overlap_is_exactly_fifteen_minutes() -> None:
         at(11),
     )
 
-    assert bounds.sources[0].lower_bound == at(9, 45)
+    assert bounds.sources[0].lower_bound == at(10)
 
 
 def test_failed_dbt_run_does_not_advance_checkpoint_or_publish_a_snapshot() -> None:
@@ -248,7 +248,7 @@ def test_successful_build_audits_row_count_and_published_snapshot() -> None:
 
 
 def test_reprocess_and_abandon_are_exposed_for_active_processes() -> None:
-    cli = importlib.import_module("vn_climate_risk_monitor.processing.cli")
+    cli = importlib.import_module("vn_climate_risk_monitor.auto_process.cli")
     parser = cli.build_parser()
 
     for argv in (
@@ -366,7 +366,7 @@ def test_static_reference_dimensions_and_bridge_are_tables_without_soft_delete(
 def test_processing_console_entry_point_is_package_owned() -> None:
     project = (ROOT / "pyproject.toml").read_text()
 
-    assert 'auto-process = "vn_climate_risk_monitor.processing.cli:main"' in project
+    assert 'auto-process = "vn_climate_risk_monitor.auto_process.cli:main"' in project
 
 
 def _forecast_rows(

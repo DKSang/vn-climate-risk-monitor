@@ -2,17 +2,17 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
 
-from vn_climate_risk_monitor.processing.config import (
+from vn_climate_risk_monitor.auto_process.config import (
     ProcessConfig,
     SourceBinding,
 )
-from vn_climate_risk_monitor.processing.runner import compute_bounds, run_process
+from vn_climate_risk_monitor.auto_process.runner import compute_bounds, run_process
 
 
 def at(hour: int, minute: int = 0, second: int = 0) -> datetime:
@@ -62,7 +62,6 @@ class FakeRepository:
 
 def build_config(
     *,
-    safety_lag: timedelta = timedelta(minutes=15),
     sources: tuple[str, ...] = ("archive_hourly",),
 ) -> ProcessConfig:
     return ProcessConfig(
@@ -70,7 +69,6 @@ def build_config(
         target="gold.fct_rainfall_historical_hourly",
         sources=tuple(SourceBinding(ref=ref) for ref in sources),
         scope="test",
-        safety_lag=safety_lag,
     )
 
 
@@ -111,27 +109,6 @@ def test_row_arriving_mid_run_is_picked_up_next_time() -> None:
     lower = next_bounds.sources[0].lower_bound
     assert lower is not None
     assert row_ingested_at > lower, "row giữa run phải nằm trong cửa sổ kế tiếp"
-
-
-def test_safety_lag_covers_transaction_start_versus_commit_gap() -> None:
-    """Safety lag covers rows stamped before commit visibility."""
-    config = build_config(safety_lag=timedelta(minutes=15))
-    stamped_before_commit = at(9, 59, 58)
-
-    bounds = compute_bounds(config, {"archive_hourly": at(10, 0)}, at(11, 0))
-
-    lower = bounds.sources[0].lower_bound
-    assert lower == at(9, 45)
-    assert stamped_before_commit > lower
-
-
-def test_zero_safety_lag_would_lose_the_row() -> None:
-    """Chứng minh ngược lại: bỏ safety lag là mất đúng row ở test trên."""
-    config = build_config(safety_lag=timedelta(0))
-
-    bounds = compute_bounds(config, {"archive_hourly": at(10, 0)}, at(11, 0))
-
-    assert at(9, 59, 58) < bounds.sources[0].lower_bound  # type: ignore[operator]
 
 
 # ── chỉ advance khi thành công ────────────────────────────────────────────────
@@ -220,8 +197,8 @@ def test_all_checkpoints_present_is_incremental() -> None:
 
     assert bounds.is_incremental is True
     assert {s.source_ref: s.lower_bound for s in bounds.sources} == {
-        "archive_hourly": at(9, 45),
-        "ifs_hourly": at(8, 45),
+        "archive_hourly": at(10, 0),
+        "ifs_hourly": at(9, 0),
     }
 
 
@@ -292,7 +269,7 @@ def test_run_records_bounds_for_audit() -> None:
     assert recorded["bounds"]["archive_hourly"]["checkpoint_before"] == (
         at(10, 0).isoformat()
     )
-    assert recorded["bounds"]["archive_hourly"]["lower_bound"] == at(9, 45).isoformat()
+    assert recorded["bounds"]["archive_hourly"]["lower_bound"] == at(10, 0).isoformat()
 
 
 def test_metrics_from_execute_are_recorded_with_the_run() -> None:

@@ -3,7 +3,7 @@
 ## Sources
 
 Source groups are immutable `SourceConfig` values in
-`vn_climate_risk_monitor.load`; no runtime YAML parser is involved. Forecast and
+`vn_climate_risk_monitor.auto_loader.config`; no runtime YAML parser is involved. Forecast and
 archive use separate parser SQL files because their API payloads and grains differ.
 
 Open-Meteo forecast covers the current 72-hour horizon. Archive uses ERA5 before

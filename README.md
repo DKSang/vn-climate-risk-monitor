@@ -68,7 +68,13 @@ table names and UI semantics remain stable.
 ## Repository map
 
 ```text
-src/vn_climate_risk_monitor/  sources, ingestion, processing, storage, lakehouse
+src/vn_climate_risk_monitor/
+  sources/open_meteo/          source planning and fetch → Bronze
+  auto_loader/                 Bronze → Silver staging
+  auto_process/                Silver staging → Gold marts
+  quality/                     health and readiness checks
+  operations/                  bootstrap, maintenance, and reset
+  platform/                    settings and storage adapters
 sources/                       two parser SQL files; source definitions live in Python
 transform/                     dbt models, macros, tests, and reference seeds
 orchestration/                 two explicit data DAGs and one maintenance DAG

@@ -14,7 +14,7 @@ from urllib.request import Request, urlopen
 
 from minio import Minio
 
-from vn_climate_risk_monitor.sources.open_meteo import FetchTask
+from vn_climate_risk_monitor.sources.open_meteo.planner import FetchTask
 
 RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
 RETRIES = 5

@@ -10,7 +10,7 @@ from uuid import UUID, uuid4
 import psycopg
 from psycopg.types.json import Jsonb
 
-from vn_climate_risk_monitor.processing.config import ACTIVE_PROCESS_KEYS
+from vn_climate_risk_monitor.auto_process.config import ACTIVE_PROCESS_KEYS
 
 
 class ProcessingStateError(RuntimeError):
