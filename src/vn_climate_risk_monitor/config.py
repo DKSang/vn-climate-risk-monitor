@@ -122,8 +122,7 @@ def load_settings() -> Settings:
                 "OPEN_METEO_ARCHIVE_URL",
                 "https://archive-api.open-meteo.com/v1/archive",
             ),
-            # Model archive KHÔNG cấu hình được: nó chọn theo thời kỳ, xem
-            # open_meteo.py::model_for_month (era5 trước 2017, ecmwf_ifs từ 2017).
+            # Archive model is period-based; see model_for_month().
             forecast_model=os.getenv("OPEN_METEO_FORECAST_MODEL", "best_match"),
             forecast_hours=_as_int(
                 "OPEN_METEO_FORECAST_HOURS",

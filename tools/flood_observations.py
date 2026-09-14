@@ -1,9 +1,4 @@
-"""Fetch and normalize versioned historical flood observations.
-
-The first supported source is the Flourish table embedded in the VnExpress
-live report for 2025-10-07.  The raw wording is deliberately retained: news
-absence is not a negative flood label, and normalization must remain auditable.
-"""
+"""Fetch and normalize versioned flood observations with source provenance."""
 
 from __future__ import annotations
 

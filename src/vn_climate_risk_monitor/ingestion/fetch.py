@@ -65,9 +65,7 @@ def bronze_bytes(body: bytes) -> bytes:
 
 def land(client: Minio, bucket: str, url: str, key: str) -> None:
     body = get_body(url)
-    # Parse only to reject Open-Meteo error payloads. Successful responses are
-    # still written byte-for-byte; an error must not poison an immutable Bronze
-    # key that a retry would then treat as already landed.
+    # Reject API error payloads before writing immutable Bronze bytes.
     bronze_bytes(body)
     client.put_object(
         bucket, key, BytesIO(body), len(body), content_type="application/json"

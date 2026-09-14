@@ -358,8 +358,7 @@ def test_static_reference_dimensions_and_bridge_are_tables_without_soft_delete(
 
     assert "materialized = 'table'" in sql
     assert "materialized = 'incremental'" not in sql
-    # Keep the public Gold columns for compatibility, but do not run the old
-    # soft-delete implementation against static seed/reference data.
+    # Keep public Gold columns without soft-deleting static references.
     assert "_deactivated_at" in sql
     assert "soft_delete" not in sql.lower()
 

@@ -1,23 +1,4 @@
-"""Geocode nháp cho quan sát ngập, kèm gán phường bằng point-in-polygon.
-
-Script này KHÔNG sinh ra dữ liệu đáng tin. Nó chỉ đề xuất toạ độ để người soát.
-
-── Vì sao là seed RIÊNG, không thêm cột vào seed quan sát ────────────────────
-`flood_event_observations_seed.csv` do `flood_observations.py` sinh ra và bị
-GHI ĐÈ mỗi lần fetch lại. Thêm cột toạ độ vào đó nghĩa là mọi công sức soát tay
-biến mất ở lần fetch kế tiếp. Tách làm hai file: một file máy sinh, một file
-người sửa, nối với nhau bằng `observation_id`.
-
-── Vì sao mọi dòng mặc định geocode_verified = false ─────────────────────────
-Gán sai phường = sai ô lưới = sai lượng mưa = nhãn hỏng, và nhãn hỏng tệ hơn
-thiếu nhãn. Nominatim với địa chỉ dạng cột mốc đường ("ĐLTL đoạn Km 8+200")
-rất dễ trả về một kết quả TRÔNG hợp lý nhưng sai. `is_replay_eligible` vì vậy
-chỉ nhận dòng đã được người xác nhận.
-
-Chạy lại script là AN TOÀN: mặc định mọi dòng đã có đều được giữ nguyên để
-không xoá review đang làm dở. Chỉ `--refresh-unverified` mới hỏi lại các dòng
-chưa xác nhận; dòng `geocode_verified = true` luôn được giữ nguyên.
-"""
+"""Draft flood-observation geocodes for manual review."""
 
 from __future__ import annotations
 
@@ -42,8 +23,7 @@ NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 NOMINATIM_MIN_INTERVAL_SECONDS = 1.1
 USER_AGENT = "vn-climate-risk-monitor/0.1 (flood observation geocoding)"
 
-# Khung Hà Nội sau sắp xếp 2025. `bounded=1` để Nominatim không trả về một phố
-# trùng tên ở tỉnh khác — lỗi im lặng nguy hiểm nhất của geocoding tiếng Việt.
+# Restrict matches to Hanoi.
 HANOI_VIEWBOX = "105.28,21.39,106.03,20.53"
 
 CSV_FIELDS = (
@@ -73,9 +53,7 @@ CSV_FIELDS = (
 )
 
 
-# Viết tắt trong báo cáo thoát nước Hà Nội. Nominatim không hiểu chúng, và
-# "ĐLTL" trả về 0 kết quả trong khi "Đại lộ Thăng Long" trả về đúng tuyến.
-# Thứ tự quan trọng: cụm dài phải đứng trước để không bị cụm ngắn ăn mất.
+# Expand source abbreviations; keep specific rules before broad ones.
 ROAD_ABBREVIATIONS = (
     (r"\bĐLTL\b", "Đại lộ Thăng Long"),
     (r"\bĐCT\b", "Đường cao tốc"),
@@ -105,11 +83,7 @@ def expand_abbreviations(name: str) -> str:
 
 
 def road_prefix(name: str) -> str:
-    """Bỏ phần mô tả đoạn để thử lại ở mức tuyến đường.
-
-    "Phố Triều Khúc (đoạn ngõ 66 đến đình làng)" -> "Phố Triều Khúc"
-    Nominatim gần như không bao giờ biết một đoạn cụ thể, nhưng thường biết tuyến.
-    """
+    """Drop segment details for a route-level fallback query."""
     trimmed = re.split(r"\s*\(|\s+đoạn\s+|:\s*|,\s*", name)[0]
     trimmed = re.sub(r"\s*Km\s*\d+.*$", "", trimmed, flags=re.IGNORECASE)
     return trimmed.strip()
@@ -137,12 +111,7 @@ def query_nominatim(query: str) -> tuple[float, float] | None:
 
 
 def geocode(name: str) -> GeocodeResult:
-    """Thử tên đầy đủ trước, rồi lùi về tên tuyến đường.
-
-    `road_prefix` có ĐỘ CHÍNH XÁC THẤP và phải soát kỹ hơn: nó trả về điểm đại
-    diện của cả tuyến, không phải cột mốc. Đo được: Km14+500 và Km17+700 của
-    Quốc lộ 32 — cách nhau ~3 km ngoài thực địa — nhận cùng một toạ độ.
-    """
+    """Try the full location, then a low-confidence route fallback."""
     expanded = expand_abbreviations(name)
     attempts = [(expanded, "full_name")]
     prefix = road_prefix(expanded)

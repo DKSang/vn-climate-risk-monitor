@@ -1,6 +1,4 @@
--- Cửa sổ rộng hơn phải chứa cửa sổ hẹp hơn, nên tổng của nó không thể nhỏ hơn.
--- Kiểm tra fct_rain_forecast_hourly tương tự như fct_rain_archive_hourly, và
--- cũng sinh cặp so sánh từ `rain_windows()` thay vì liệt kê tay.
+-- Wider rainfall windows must not total less than narrower ones.
 {% set windows = rain_windows() %}
 
 SELECT

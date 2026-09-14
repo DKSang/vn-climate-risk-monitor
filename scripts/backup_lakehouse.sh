@@ -38,9 +38,7 @@ mc mirror --preserve "$MC_SOURCE_ALIAS/$MINIO_BUCKET" "$temporary/minio/$MINIO_B
 mc ls --recursive --json "$MC_SOURCE_ALIAS/$MINIO_BUCKET" >"$temporary/minio-manifest.jsonl"
 BACKUP_DIR="$temporary/postgres" "$script_dir/backup_metadata.sh"
 
-# PostgreSQL dump đã có checksum riêng. Danh sách này bảo vệ nội dung từng object
-# sau khi mirror; đường dẫn tương đối nên vẫn hợp lệ sau khi thư mục tạm được
-# publish bằng rename nguyên tử.
+# Checksum mirrored MinIO objects before publishing the backup.
 (
   cd "$temporary"
   find minio -type f -print0 | sort -z | xargs -0 -r sha256sum \

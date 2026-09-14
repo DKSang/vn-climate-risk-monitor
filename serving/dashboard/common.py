@@ -1,9 +1,4 @@
-"""Shared snapshot resolution and small lookup queries for the Streamlit dashboard.
-
-The common layer owns the read-only connection helpers and queries shared by
-the three dashboard experiences. Domain-specific SQL lives in the forecast and
-archive modules.
-"""
+"""Shared read-only dashboard queries and snapshot resolution."""
 
 from __future__ import annotations
 
@@ -54,14 +49,7 @@ def load_serving_snapshot(
     table_schema: str = "gold",
     table_name: str = "fct_rain_forecast_hourly",
 ) -> dict[str, Any]:
-    """Resolve snapshot của Gold run thành công gần nhất từ PostgreSQL.
-
-    Không pin vào HEAD của catalog: HEAD có thể đang ở giữa một dbt build nhiều
-    model. Processing chỉ publish ``published_snapshot_id`` cùng transaction
-    đánh run ``SUCCEEDED``, nên fact, dimension và bridge đều đến từ một graph
-    đã qua test. ``table_snapshot_id`` vẫn cho biết snapshot gần nhất thực sự
-    đổi bảng đích. Tên bảng được bind như metadata, không nội suy vào SQL.
-    """
+    """Resolve the latest successfully published Gold snapshot."""
     process_key = _PUBLICATION_PROCESS.get(table_name)
     if process_key is None:
         raise ValueError(f"Không có publication process cho {table_name!r}")

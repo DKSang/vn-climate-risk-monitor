@@ -1,24 +1,4 @@
-"""Nguồn Open-Meteo: việc còn thiếu → ``fetch.land`` lên MinIO, chạy song song.
-
-CLI: ``uv run fetch-open-meteo forecast|archive|map-grid``. Load: ``uv run auto-loader``.
-
-── ARCHIVE FETCH THEO Ô LƯỚI, KHÔNG THEO PHƯỜNG ────────────────────────────────
-Đo 2026-08-28: 126 phường Hà Nội chỉ rơi vào 12 ô ERA5, và mọi bản sao trong cùng
-ô có giá trị GIỐNG HỆT (0 cặp (ô, giờ) nào lệch). Fetch theo phường tiêu quota
-gấp ~9,7 lần mà không thêm một bit thông tin nào. Ánh xạ phường→ô nằm ở
-:mod:`vn_climate_risk_monitor.grid`, phép chiếu ngược làm ở Silver.
-
-── HAI MODEL THEO THỜI KỲ ──────────────────────────────────────────────────────
-``era5``     0,25° (12 ô), 1940→nay. Thô, nhưng là chuỗi lịch sử sâu duy nhất
-             (IFS không có dữ liệu trước 2017).
-``ecmwf_ifs`` ~9km (48 ô), **2017→nay**. Cho tín hiệu khác nhau THẬT giữa các
-             phường: cùng ngày mưa, ba phường mà ERA5 gộp thành một chuỗi 9,3mm
-             thì IFS trả 105,0 / 137,9 / 116,2 mm.
-
-Không dùng ``era5_land`` (không có biến mưa nào) và ``era5_seamless`` (toạ độ mịn
-0,1° nhưng giá trị mưa vẫn là ERA5 0,25° dán lại — trùng lặp bị GIẤU đi thay vì
-lộ ra, làm hỏng dedup theo ô ở Silver).
-"""
+"""Plan and land Open-Meteo forecast/archive data into Bronze."""
 
 from __future__ import annotations
 
@@ -73,17 +53,9 @@ def covered_months(
     *,
     weather_model: str | None = None,
 ) -> frozenset[date]:
-    """Tháng đã ĐỦ giờ trong staging — bỏ qua khi lập kế hoạch.
-
-    Cố ý hỏi bảng staging chứ không đếm object trên MinIO. Cách fetch đã đổi từ
-    theo-phường (6 file/tháng) sang theo-ô (1–2 file/tháng), nên so khớp
-    ``response_NNN.json`` sẽ hiểu sai: một tháng ward-based đủ 6 file trông giống
-    một tháng grid-based đã xong, và ngược lại một tháng grid-based đủ dữ liệu
-    lại trông như thiếu file. Số giờ có thật trong bảng thì không mơ hồ.
-    """
+    """Return months with complete hourly staging coverage."""
     try:
-        # Lọc theo model là BẮT BUỘC từ khi hai model dùng chung một bảng:
-        # không lọc thì tháng của era5 làm ecmwf_ifs trông như đã phủ đủ.
+        # Coverage is model-specific in the shared staging table.
         predicate = "" if weather_model is None else "WHERE weather_model = ?"
         parameters = [] if weather_model is None else [weather_model]
         rows = connection.execute(
