@@ -6,7 +6,7 @@ from pathlib import Path
 
 from vn_climate_risk_monitor.auto_loader.loader import SourceConfig
 
-SOURCE_DIR = Path("sources")
+SOURCE_DIR = Path(__file__).with_name("sql")
 
 SOURCE_GROUPS = {
     "forecast": (
