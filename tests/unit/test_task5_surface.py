@@ -97,6 +97,25 @@ def test_forecast_and_archive_keep_reader_return_semantics(monkeypatch) -> None:
     assert archive.load_archive_models(11) is archive_models
 
 
+def test_forecast_hour_summary_returns_forward_rain_maxima(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT))
+    from serving.dashboard import forecast
+
+    captured: dict[str, str] = {}
+
+    def read_record(query, *args, **kwargs):
+        captured["query"] = query
+        return {}
+
+    monkeypatch.setattr(forecast, "_read_record", read_record)
+
+    forecast.load_forecast_hour_summary("2026-09-14T09:00:00Z", 2366)
+
+    assert "MAX(forecast_next_1h_mm) AS max_forecast_next_1h_mm" in captured["query"]
+    assert "MAX(forecast_next_12h_mm) AS max_forecast_next_12h_mm" in captured["query"]
+    assert "MAX(forecast_next_24h_mm) AS max_forecast_next_24h_mm" in captured["query"]
+
+
 def test_query_fallbacks_keep_dashboard_component_types(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT))
     from serving.dashboard import archive, forecast
