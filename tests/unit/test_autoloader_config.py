@@ -17,7 +17,7 @@ def test_source_groups_are_code_native() -> None:
         "open_meteo_archive",
         "open_meteo_ifs",
     ]
-    assert not list(Path("sources").glob("*.yml"))
+    assert not list(load.SOURCE_DIR.glob("*.yml"))
 
 
 def test_source_definitions_preserve_physical_targets() -> None:
@@ -48,6 +48,15 @@ def test_source_sql_is_read_from_its_explicit_base_dir(tmp_path: Path) -> None:
         base_dir=tmp_path,
     )
     assert "{{ files }}" in config.sql
+
+
+def test_source_sql_does_not_depend_on_working_directory(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    for config in load.source_configs():
+        assert "read_json_auto" in config.sql
 
 
 def test_ingestion_modules_own_their_boundaries_without_barrel_exports() -> None:

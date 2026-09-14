@@ -11,6 +11,7 @@ from uuid import UUID, uuid4
 import duckdb
 import pytest
 
+from vn_climate_risk_monitor.auto_loader.config import source_configs
 from vn_climate_risk_monitor.auto_loader.loader import AutoLoader, SourceConfig
 from vn_climate_risk_monitor.auto_loader.state import PostgresIngestionRepository
 
@@ -538,8 +539,9 @@ def test_ingested_at_literal_is_timestamptz(tmp_path: Path) -> None:
 
 
 def test_sources_do_not_use_duckdb_clock_for_ingested_at() -> None:
-    """Bảo vệ 3 file SQL nguồn thật khỏi việc lặng lẽ quay lại CURRENT_TIMESTAMP."""
-    for path in sorted(Path("sources").glob("*.sql")):
+    """Bảo vệ parser SQL thật khỏi việc lặng lẽ quay lại CURRENT_TIMESTAMP."""
+    paths = {config.base_dir / config.sql_file for config in source_configs()}
+    for path in sorted(paths):
         body = path.read_text(encoding="utf-8")
         if "_ingested_at" not in body:
             continue
