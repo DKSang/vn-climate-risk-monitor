@@ -32,27 +32,13 @@ nguyên bản phản hồi nguồn, xử lý dữ liệu theo kiến trúc medal
 
 ## Kiến trúc hệ thống
 
-```mermaid
-flowchart LR
-    A[Open-Meteo APIs] --> B[MinIO<br/>Bronze]
-    B --> C[Auto Loader]
-    C --> D[DuckLake<br/>Silver]
-    D --> E[dbt + DuckDB]
-    E --> F[DuckLake<br/>Gold]
-    F --> G[Streamlit Dashboard]
-
-    H[(PostgreSQL)] -. Catalog, checkpoint<br/>và audit state .-> C
-    H -. Published snapshot .-> G
-    I[Apache Airflow] -. Schedule, retry<br/>và dependency .-> A
-    I -. Orchestration .-> C
-    I -. Orchestration .-> E
-```
+![Kiến trúc VN Climate Risk Monitor](docs/vn-climate-risk-monitor-architecture.png)
 
 | Lớp | Thành phần | Trách nhiệm |
 |---|---|---|
-| Source | Open-Meteo Forecast & Archive APIs | Cung cấp dự báo và dữ liệu thời tiết lịch sử theo giờ |
+| Source | Open-Meteo Forecast & Archive APIs, PostgreSQL ward data và CSV reference data | Cung cấp dữ liệu thời tiết, địa giới và dữ liệu tham chiếu |
 | Bronze | MinIO | Lưu nguyên byte phản hồi HTTP bằng object key bất biến |
-| Control plane | PostgreSQL | Lưu catalog DuckLake, lease, checkpoint, retry và audit state |
+| Control plane | PostgreSQL | Lưu DuckLake catalog, lease, checkpoint, retry và audit state |
 | Silver | Auto Loader + DuckLake | Parse file nguồn, nạp staging và giữ `_source_file` lineage |
 | Transform | dbt + DuckDB | Chuẩn hóa, loại trùng, kiểm thử và xây dựng Gold marts |
 | Orchestration | Apache Airflow | Lập lịch, quản lý dependency, retry và single-writer pool |
@@ -81,6 +67,7 @@ Chi tiết về ownership, publication và các đánh đổi kỹ thuật nằm
 ![Apache Airflow](https://img.shields.io/badge/Apache_Airflow-017CEE?style=for-the-badge&logo=apacheairflow&logoColor=white)
 ![Python](https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white)
 ![SQL](https://img.shields.io/badge/SQL-4479A1?style=for-the-badge&logo=postgresql&logoColor=white)
+![uv](https://img.shields.io/badge/uv-Package_Manager-DE5FE9?style=for-the-badge&logo=uv&logoColor=white)
 
 ### Dashboard
 
