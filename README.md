@@ -97,6 +97,7 @@ Chi tiết về ownership, publication và các đánh đổi kỹ thuật nằm
 ### Data Engineering
 
 ![dbt](https://img.shields.io/badge/dbt-FF694B?style=for-the-badge&logo=dbt&logoColor=white)
+![Provero](https://img.shields.io/badge/Provero-Data_Quality-00A88F?style=for-the-badge)
 ![Apache Airflow](https://img.shields.io/badge/Apache_Airflow-017CEE?style=for-the-badge&logo=apacheairflow&logoColor=white)
 ![Python](https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white)
 ![SQL](https://img.shields.io/badge/SQL-4479A1?style=for-the-badge&logo=postgresql&logoColor=white)
@@ -121,6 +122,7 @@ Chi tiết về ownership, publication và các đánh đổi kỹ thuật nằm
 | `minio` | Đọc/ghi dữ liệu Bronze trên object storage |
 | `psycopg` | Truy cập PostgreSQL control plane |
 | `dbt-duckdb` | Transformation, data tests và publication |
+| `provero` | Quality gate fail-closed cho Raw và Silver intermediate |
 | `streamlit` | Xây dựng giao diện dashboard |
 | `pydeck` | Hiển thị bản đồ tương tác |
 | `pandas` và `altair` | Xử lý và trực quan hóa dữ liệu trên dashboard |
