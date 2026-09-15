@@ -10,7 +10,11 @@ from typing import Any
 
 import pytest
 
-from vn_climate_risk_monitor.auto_process.cli import run_processing_phases
+from vn_climate_risk_monitor.auto_process.cli import (
+    build_parser,
+    execution_run_id,
+    run_silver_phase,
+)
 from vn_climate_risk_monitor.auto_process.config import load_active_config
 from vn_climate_risk_monitor.auto_process.dbt import (
     DbtBuildError,
@@ -153,36 +157,39 @@ def test_file_backed_secrets_are_forwarded_only_to_dbt_child(
     assert os.environ["POSTGRES_PASSWORD"] == "stale-environment-value"
 
 
-def test_processing_phases_gate_silver_before_gold() -> None:
-    events: list[str] = []
-    config = load_active_config("forecast")
+def test_auto_process_cli_separates_silver_vars_and_finalize() -> None:
+    parser = build_parser()
+    run_id = "6ef16f47-20f2-4d60-b3b7-d63e057da379"
 
-    metrics = run_processing_phases(
-        config,
-        bounds(lower=at(9, 45)),
-        dbt_runner=lambda *a, selection, **k: events.append(f"dbt:{selection}"),
-        silver_gate=lambda process_key: events.append(f"gate:{process_key}"),
-        metrics_reader=lambda _: {"target_row_count": 9_072},
+    assert parser.parse_args(["silver", "forecast"]).command == "silver"
+    assert parser.parse_args(["state", "forecast", "--run-id", run_id]).command == "state"
+    assert parser.parse_args(["vars", "forecast", "--run-id", run_id]).command == "vars"
+    assert (
+        parser.parse_args(["refresh-flag", "forecast", "--run-id", run_id]).command
+        == "refresh-flag"
+    )
+    assert (
+        parser.parse_args(["finalize", "forecast", "--run-id", run_id]).command
+        == "finalize"
     )
 
-    assert events == [
-        "dbt:int_weather_forecast_hourly",
-        "gate:forecast",
-        "dbt:tag:marts,tag:forecast",
-    ]
-    assert metrics == {"target_row_count": 9_072}
+
+def test_airflow_execution_key_maps_to_stable_processing_uuid() -> None:
+    first = execution_run_id("forecast", "scheduled__2026-09-15T01:15:00+00:00")
+    retry = execution_run_id("forecast", "scheduled__2026-09-15T01:15:00+00:00")
+
+    assert first == retry
+    assert first != execution_run_id("archive", "scheduled__2026-09-15T01:15:00+00:00")
 
 
-def test_failed_silver_gate_never_builds_gold() -> None:
+def test_auto_process_silver_phase_only_builds_intermediate() -> None:
     selections: list[str] = []
+    config = load_active_config("forecast")
 
-    with pytest.raises(RuntimeError, match="silver failed"):
-        run_processing_phases(
-            load_active_config("archive"),
-            bounds(lower=at(9, 45)),
-            dbt_runner=lambda *a, selection, **k: selections.append(selection),
-            silver_gate=lambda _: (_ for _ in ()).throw(RuntimeError("silver failed")),
-            metrics_reader=lambda _: {},
-        )
+    run_silver_phase(
+        config,
+        bounds(lower=at(9, 45)),
+        dbt_runner=lambda *a, selection, **k: selections.append(selection),
+    )
 
-    assert selections == ["int_weather_archive_hourly"]
+    assert selections == ["int_weather_forecast_hourly"]

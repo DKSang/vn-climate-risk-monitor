@@ -211,7 +211,9 @@ def _cmd_forecast(args, settings) -> int:
         connection.close()
     if args.limit:
         locations = locations[: args.limit]
-    slot = datetime.now(UTC).replace(minute=0, second=0, microsecond=0)
+    slot = (args.slot or datetime.now(UTC)).astimezone(UTC).replace(
+        minute=0, second=0, microsecond=0
+    )
     client = get_minio_client(settings.minio)
     prefixes = [slot_params(slot, open_meteo)[0]]
     tasks = forecast_tasks(
@@ -242,6 +244,7 @@ def main() -> None:
 
     p_fc = sub.add_parser("forecast", help="Land dự báo cho slot giờ hiện tại")
     p_fc.add_argument("--limit", type=int, help="Chỉ N phường đầu (canary)")
+    p_fc.add_argument("--slot", type=datetime.fromisoformat, help="Slot UTC do scheduler truyền")
 
     p_ar = sub.add_parser("archive", help="Land lịch sử theo khoảng tháng")
     p_ar.add_argument("--start", type=date.fromisoformat, default=date(2000, 1, 1))

@@ -40,48 +40,96 @@ def _dag_tasks(path: Path) -> tuple[dict[str, str], str]:
     return tasks, source
 
 
-def test_forecast_dag_places_ingest_quality_after_autoload() -> None:
+def test_forecast_dag_exposes_each_production_phase() -> None:
     tasks, source = _dag_tasks(ROOT / "orchestration/dags/forecast_hourly_dag.py")
 
     assert list(tasks) == [
-        "copy_raw",
-        "autoload_staging",
-        "quality_ingest",
-        "process_dbt",
-        "health",
+        "ingest_bronze",
+        "validate_bronze",
+        "load_silver_staging",
+        "build_silver_intermediate",
+        "validate_silver_intermediate",
+        "publish_gold",
+        "check_pipeline_health",
     ]
     assert (
-        "copy_raw >> autoload_staging >> quality_ingest >> process_dbt >> health"
+        "ingest_bronze >> validate_bronze >> load_silver_staging"
+        " >> build_silver_intermediate >> validate_silver_intermediate"
+        " >> publish_gold >> check_pipeline_health"
         in source
     )
-    assert "fetch-open-meteo forecast --execute" in tasks["copy_raw"]
-    assert "auto-loader forecast" in tasks["autoload_staging"]
-    assert "quality-gate ingest forecast" in tasks["quality_ingest"]
-    assert "auto-process run forecast" in tasks["process_dbt"]
-    assert "pipeline-health --scope forecast --require-gold" in tasks["health"]
+    assert "fetch-open-meteo forecast --slot $SLOT --execute" in tasks["ingest_bronze"]
+    assert "quality-gate raw forecast --slot $SLOT" in tasks["validate_bronze"]
+    assert "auto-loader forecast" in tasks["load_silver_staging"]
+    assert "auto-process silver forecast" in tasks["build_silver_intermediate"]
+    assert "--execution-key '{{ run_id }}'" in tasks["build_silver_intermediate"]
+    assert "quality-gate silver-int forecast" in tasks["validate_silver_intermediate"]
+    assert "xcom_pull(task_ids='build_silver_intermediate')" in tasks[
+        "validate_silver_intermediate"
+    ]
+    assert "dbt build" in tasks["publish_gold"]
+    assert "tag:marts,tag:forecast" in tasks["publish_gold"]
+    assert "auto-process refresh-flag forecast --run-id" in tasks["publish_gold"]
+    assert "auto-process state forecast --run-id" in tasks["publish_gold"]
+    assert "on_failure_callback=on_processing_failure" in source
+    assert tasks["publish_gold"].index("dbt build") < tasks["publish_gold"].index(
+        "auto-process finalize forecast"
+    )
+    assert "pipeline-health --scope forecast --require-gold" in tasks[
+        "check_pipeline_health"
+    ]
 
 
-def test_archive_dag_places_ingest_quality_after_autoload() -> None:
+def test_archive_dag_exposes_each_production_phase() -> None:
     tasks, source = _dag_tasks(ROOT / "orchestration/dags/archive_monthly_dag.py")
 
     assert list(tasks) == [
-        "copy_raw",
-        "autoload_staging",
-        "quality_ingest",
-        "process_dbt",
-        "health",
+        "ingest_bronze",
+        "validate_bronze",
+        "load_silver_staging",
+        "build_silver_intermediate",
+        "validate_silver_intermediate",
+        "publish_gold",
+        "check_pipeline_health",
     ]
     assert (
-        "copy_raw >> autoload_staging >> quality_ingest >> process_dbt >> health"
+        "ingest_bronze >> validate_bronze >> load_silver_staging"
+        " >> build_silver_intermediate >> validate_silver_intermediate"
+        " >> publish_gold >> check_pipeline_health"
         in source
     )
-    assert "fetch-open-meteo archive" in tasks["copy_raw"]
-    assert "--start $MONTH --end $MONTH" in tasks["copy_raw"]
-    assert "auto-loader archive" in tasks["autoload_staging"]
-    assert "quality-gate ingest archive" in tasks["quality_ingest"]
-    assert "auto-process run archive" in tasks["process_dbt"]
-    assert "pipeline-health --scope archive --require-gold" in tasks["health"]
+    assert "fetch-open-meteo archive" in tasks["ingest_bronze"]
+    assert "--start $MONTH --end $MONTH" in tasks["ingest_bronze"]
+    assert " - 1 month" not in tasks["ingest_bronze"]
+    assert "quality-gate raw archive --month $MONTH" in tasks["validate_bronze"]
+    assert "auto-loader archive" in tasks["load_silver_staging"]
+    assert "auto-process silver archive" in tasks["build_silver_intermediate"]
+    assert "--execution-key '{{ run_id }}'" in tasks["build_silver_intermediate"]
+    assert "quality-gate silver-int archive" in tasks["validate_silver_intermediate"]
+    assert "xcom_pull(task_ids='build_silver_intermediate')" in tasks[
+        "validate_silver_intermediate"
+    ]
+    assert "dbt build" in tasks["publish_gold"]
+    assert "tag:marts,tag:archive" in tasks["publish_gold"]
+    assert "auto-process refresh-flag archive --run-id" in tasks["publish_gold"]
+    assert "auto-process state archive --run-id" in tasks["publish_gold"]
+    assert tasks["publish_gold"].index("dbt build") < tasks["publish_gold"].index(
+        "auto-process finalize archive"
+    )
+    assert "pipeline-health --scope archive --require-gold" in tasks[
+        "check_pipeline_health"
+    ]
     assert "dbt seed" not in source.lower()
+
+
+def test_processing_failure_callback_closes_only_the_xcom_run() -> None:
+    source = (ROOT / "orchestration/dags/common.py").read_text(encoding="utf-8")
+
+    assert "def on_processing_failure" in source
+    assert "xcom_pull(task_ids=\"build_silver_intermediate\")" in source
+    assert '"auto-process"' in source and '"fail"' in source
+    assert '"--run-id"' in source and "str(run_id)" in source
+    assert 'context.get("run_id")' in source
 
 
 def test_maintenance_dag_has_one_task_for_retention_and_cleanup() -> None:

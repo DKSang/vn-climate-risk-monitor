@@ -62,7 +62,7 @@ class FakeRepository:
         return {source_ref: self.checkpoints.get(source_ref) for source_ref in source_refs}
 
     def begin_run(self, **kwargs: Any) -> UUID:
-        run_id = uuid4()
+        run_id = kwargs.pop("run_id", None) or uuid4()
         self.begun.append({"run_id": run_id, **kwargs})
         return run_id
 
@@ -92,6 +92,21 @@ class ReadOnlyConnection:
 
     def fetchall(self) -> list[Any]:
         return []
+
+
+class RunningConnection:
+    def __init__(self, row: tuple[Any, ...]) -> None:
+        self.row = row
+        self.query = ""
+        self.params: tuple[Any, ...] | None = None
+
+    def execute(self, query: str, params: tuple[Any, ...]) -> RunningConnection:
+        self.query = query
+        self.params = params
+        return self
+
+    def fetchone(self) -> tuple[Any, ...]:
+        return self.row
 
 
 def test_retired_process_keys_are_rejected_by_runner_before_mutation() -> None:
@@ -175,6 +190,33 @@ def test_retired_rows_remain_available_to_read_only_audit_queries() -> None:
         source_refs=("stg_weather_archive_hourly",),
     ) == {"stg_weather_archive_hourly": None}
     assert repository.recent_runs(process_key="rain_gold", scope="vn") == []
+
+
+def test_running_process_context_is_read_for_later_airflow_phases() -> None:
+    run_id = uuid4()
+    connection = RunningConnection((run_id, at(10), {"archive_hourly": {}}))
+    repository = ProcessingRepository(connection)  # type: ignore[arg-type]
+
+    assert repository.read_running_run(
+        run_id=run_id, process_key="archive", scope="production"
+    ) == (
+        run_id,
+        at(10),
+        {"archive_hourly": {}},
+    )
+    assert "status = 'RUNNING'" in connection.query
+    assert connection.params == (run_id, "archive", "production")
+
+
+def test_exact_processing_run_status_supports_idempotent_publish_retry() -> None:
+    run_id = uuid4()
+    connection = RunningConnection(("SUCCEEDED",))
+    repository = ProcessingRepository(connection)  # type: ignore[arg-type]
+
+    assert repository.read_run_status(
+        run_id=run_id, process_key="forecast", scope="production"
+    ) == "SUCCEEDED"
+    assert connection.params == (run_id, "forecast", "production")
 
 
 def test_only_forecast_and_archive_are_active_process_keys() -> None:

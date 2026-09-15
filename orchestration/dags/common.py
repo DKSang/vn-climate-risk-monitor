@@ -22,6 +22,39 @@ def on_failure_alert(context: dict[str, Any]) -> None:
     )
 
 
+def on_processing_failure(context: dict[str, Any]) -> None:
+    """Close the exact split processing run after downstream retries exhaust."""
+    task_instance = context.get("task_instance")
+    run_id = (
+        task_instance.xcom_pull(task_ids="build_silver_intermediate")
+        if task_instance
+        else None
+    )
+    process_key = context.get("params", {}).get("process_key")
+    execution_key = context.get("run_id")
+    if process_key and (run_id or execution_key):
+        run_selector = (
+            ["--run-id", str(run_id)]
+            if run_id
+            else ["--execution-key", str(execution_key)]
+        )
+        subprocess.run(
+            [
+                "uv",
+                "run",
+                "auto-process",
+                "fail",
+                process_key,
+                *run_selector,
+                "--reason",
+                f"Airflow task {task_instance.task_id} failed",
+            ],
+            cwd=os.getenv("PROJECT_DIR", "/project"),
+            check=False,
+        )
+    on_failure_alert(context)
+
+
 PROJECT_DIR = os.getenv("PROJECT_DIR", "/project")
 
 # Serialize lakehouse writes and API-heavy tasks.

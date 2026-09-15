@@ -57,6 +57,27 @@ class ProcessingResult:
     bounds: Bounds
 
 
+def restore_bounds(
+    run_started_at: datetime, saved: Mapping[str, Any]
+) -> Bounds:
+    """Restore bounds persisted in PostgreSQL for a later Airflow task."""
+    def moment(value: str | None) -> datetime | None:
+        return datetime.fromisoformat(value) if value else None
+
+    return Bounds(
+        run_started_at=run_started_at,
+        sources=tuple(
+            SourceBounds(
+                source_ref=source_ref,
+                change_column=values["change_column"],
+                checkpoint_before=moment(values.get("checkpoint_before")),
+                lower_bound=moment(values.get("lower_bound")),
+            )
+            for source_ref, values in saved.items()
+        ),
+    )
+
+
 def compute_bounds(
     config: ProcessConfig,
     checkpoints: dict[str, datetime | None],
@@ -86,6 +107,66 @@ def compute_bounds(
     )
 
 
+def begin_process(
+    *,
+    config: ProcessConfig,
+    repository: Any,
+    force_full_refresh: bool = False,
+    actor: str = "runner",
+    reason: str | None = None,
+    run_id: UUID | None = None,
+) -> ProcessingResult:
+    """Open one durable processing run without advancing checkpoints."""
+    ensure_active_process_key(config.process_key)
+    if force_full_refresh and not (reason and reason.strip()):
+        raise ValueError("full refresh cần reason để audit")
+
+    started_at = repository.control_now()
+    checkpoints = repository.read_checkpoints(
+        process_key=config.process_key,
+        scope=config.scope,
+        source_refs=config.source_refs,
+    )
+    first_run = all(checkpoints.get(ref) is None for ref in config.source_refs)
+    bounds = compute_bounds(
+        config,
+        checkpoints,
+        started_at,
+        force_full_refresh=force_full_refresh,
+    )
+    created_run_id = repository.begin_run(
+        process_key=config.process_key,
+        scope=config.scope,
+        target_ref=config.target,
+        started_at=started_at,
+        bounds=bounds.as_json(),
+        actor=actor,
+        reason=(reason.strip() if reason else "controlled first run" if first_run else None),
+        **({"run_id": run_id} if run_id else {}),
+    )
+    return ProcessingResult(created_run_id, config.process_key, "RUNNING", bounds)
+
+
+def complete_process(
+    *,
+    config: ProcessConfig,
+    repository: Any,
+    run: ProcessingResult,
+    metrics: Mapping[str, int | None] | None = None,
+) -> ProcessingResult:
+    """Publish metrics and checkpoint only after every external phase passed."""
+    repository.complete_run(
+        run.run_id,
+        process_key=config.process_key,
+        scope=config.scope,
+        source_refs=config.source_refs,
+        checkpoint=run.bounds.run_started_at,
+        completed_at=repository.control_now(),
+        metrics=metrics,
+    )
+    return ProcessingResult(run.run_id, config.process_key, "SUCCEEDED", run.bounds)
+
+
 def run_process(
     *,
     config: ProcessConfig,
@@ -96,64 +177,26 @@ def run_process(
     reason: str | None = None,
 ) -> ProcessingResult:
     """Run one transform and advance checkpoints only after success."""
-    ensure_active_process_key(config.process_key)
-
-    if force_full_refresh and not (reason and reason.strip()):
-        raise ValueError("full refresh cần reason để audit")
-
-    run_started_at = repository.control_now()
-    checkpoints = repository.read_checkpoints(
-        process_key=config.process_key,
-        scope=config.scope,
-        source_refs=config.source_refs,
-    )
-    first_run = all(checkpoints.get(source_ref) is None for source_ref in config.source_refs)
-    bounds = compute_bounds(
-        config,
-        checkpoints,
-        run_started_at,
+    run = begin_process(
+        config=config,
+        repository=repository,
         force_full_refresh=force_full_refresh,
-    )
-
-    run_id = repository.begin_run(
-        process_key=config.process_key,
-        scope=config.scope,
-        target_ref=config.target,
-        started_at=run_started_at,
-        bounds=bounds.as_json(),
         actor=actor,
-        reason=(
-            reason.strip()
-            if reason
-            else "controlled first run"
-            if first_run
-            else None
-        ),
+        reason=reason,
     )
     try:
-        metrics = execute(bounds)
+        metrics = execute(run.bounds)
     except BaseException as error:
         repository.fail_run(
-            run_id,
+            run.run_id,
             process_key=config.process_key,
             error=error,
             completed_at=repository.control_now(),
         )
         raise
-
-    repository.complete_run(
-        run_id,
-        process_key=config.process_key,
-        scope=config.scope,
-        source_refs=config.source_refs,
-        # Checkpoint at run start so mid-run arrivals stay eligible next run.
-        checkpoint=run_started_at,
-        completed_at=repository.control_now(),
+    return complete_process(
+        config=config,
+        repository=repository,
+        run=run,
         metrics=metrics,
-    )
-    return ProcessingResult(
-        run_id=run_id,
-        process_key=config.process_key,
-        status="SUCCEEDED",
-        bounds=bounds,
     )

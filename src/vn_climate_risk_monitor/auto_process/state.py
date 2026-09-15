@@ -61,6 +61,38 @@ class ProcessingRepository:
         known = {source_ref: value for source_ref, value in rows}
         return {ref: known.get(ref) for ref in source_refs}
 
+    def read_running_run(
+        self, *, run_id: UUID, process_key: str, scope: str
+    ) -> tuple[UUID, datetime, Mapping[str, Any]]:
+        """Return the durable context shared by split Airflow phases."""
+        row = self.connection.execute(
+            """
+            SELECT processing_run_id, checkpoint_candidate, bounds
+            FROM processing.processing_runs
+            WHERE processing_run_id = %s
+              AND process_key = %s AND scope = %s AND status = 'RUNNING'
+            """,
+            (run_id, process_key, scope),
+        ).fetchone()
+        if row is None:
+            raise ProcessingStateError(
+                f"{process_key}/{scope}: không có processing run RUNNING"
+            )
+        return row
+
+    def read_run_status(
+        self, *, run_id: UUID, process_key: str, scope: str
+    ) -> str | None:
+        row = self.connection.execute(
+            """
+            SELECT status
+            FROM processing.processing_runs
+            WHERE processing_run_id = %s AND process_key = %s AND scope = %s
+            """,
+            (run_id, process_key, scope),
+        ).fetchone()
+        return None if row is None else str(row[0])
+
     def _upsert_checkpoints(
         self,
         *,
@@ -96,10 +128,11 @@ class ProcessingRepository:
         bounds: Mapping[str, object],
         actor: str = "runner",
         reason: str | None = None,
+        run_id: UUID | None = None,
     ) -> UUID:
         """Mở một run RUNNING. Chỉ cho phép một run/process cùng lúc."""
         ensure_active_process_key(process_key)
-        run_id = uuid4()
+        run_id = run_id or uuid4()
         try:
             with self.connection.transaction():
                 self.connection.execute(

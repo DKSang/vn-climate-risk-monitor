@@ -3,20 +3,28 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import signal
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from types import FrameType
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 from vn_climate_risk_monitor.auto_process.config import (
     ACTIVE_PROCESS_KEYS,
     ProcessConfig,
     load_active_config,
 )
-from vn_climate_risk_monitor.auto_process.dbt import run_dbt
-from vn_climate_risk_monitor.auto_process.runner import Bounds, run_process
+from vn_climate_risk_monitor.auto_process.dbt import build_vars, run_dbt
+from vn_climate_risk_monitor.auto_process.runner import (
+    Bounds,
+    ProcessingResult,
+    begin_process,
+    complete_process,
+    restore_bounds,
+)
 from vn_climate_risk_monitor.auto_process.schema import ensure_processing_state
 from vn_climate_risk_monitor.auto_process.state import (
     ProcessingRepository,
@@ -24,9 +32,13 @@ from vn_climate_risk_monitor.auto_process.state import (
 )
 from vn_climate_risk_monitor.platform.lakehouse import PRIMARY_CATALOG, get_connection
 from vn_climate_risk_monitor.platform.settings import load_settings
-from vn_climate_risk_monitor.quality.gates import run_silver_gate
 
 TRANSFORM_DIR = Path("transform")
+
+
+def execution_run_id(process_key: str, execution_key: str) -> UUID:
+    """Map an Airflow DAG run to the same processing UUID on every retry."""
+    return uuid5(NAMESPACE_URL, f"vn-climate-risk-monitor:{process_key}:{execution_key}")
 
 
 class Terminated(RuntimeError):
@@ -87,62 +99,160 @@ def _publication_metrics(config: ProcessConfig) -> dict[str, int | None]:
     }
 
 
-def run_processing_phases(
+def run_silver_phase(
     config: ProcessConfig,
     bounds: Bounds,
     *,
     dbt_runner=run_dbt,
-    silver_gate=run_silver_gate,
-    metrics_reader=_publication_metrics,
-) -> dict[str, int | None]:
-    """Build Silver, gate it, then build and publish tested Gold."""
+) -> None:
+    """Build only the staging-to-intermediate Silver model."""
     dbt_runner(
         bounds,
         project_dir=TRANSFORM_DIR,
         selection=f"int_weather_{config.process_key}_hourly",
     )
-    silver_gate(config.process_key)
-    dbt_runner(
-        bounds,
-        project_dir=TRANSFORM_DIR,
-        selection=f"tag:marts,tag:{config.process_key}",
+
+
+def _running_process(
+    config: ProcessConfig, repository: ProcessingRepository, run_id: UUID
+) -> ProcessingResult:
+    run_id, started_at, saved_bounds = repository.read_running_run(
+        run_id=run_id, process_key=config.process_key, scope=config.scope
     )
-    return metrics_reader(config)
+    return ProcessingResult(
+        run_id,
+        config.process_key,
+        "RUNNING",
+        restore_bounds(started_at, saved_bounds),
+    )
 
 
-def _run_one(config: ProcessConfig, args: argparse.Namespace) -> None:
+def cmd_silver(args: argparse.Namespace) -> int:
+    install_signal_handlers()
+    config = load_config(args.process_key)
     if args.full_refresh and not (args.reason and args.reason.strip()):
         raise SystemExit("--full-refresh cần --reason để audit")
 
     repository, connection = open_repository()
-
-    def execute(bounds: Bounds) -> dict[str, int | None]:
-        return run_processing_phases(config, bounds)
-
     try:
-        result = run_process(
-            config=config,
-            repository=repository,
-            execute=execute,
-            force_full_refresh=args.full_refresh,
-            actor=current_actor(),
-            reason=args.reason,
+        stable_id = (
+            execution_run_id(config.process_key, args.execution_key)
+            if args.execution_key
+            else None
         )
+        status = (
+            repository.read_run_status(
+                run_id=stable_id,
+                process_key=config.process_key,
+                scope=config.scope,
+            )
+            if stable_id
+            else None
+        )
+        if status == "SUCCEEDED":
+            print(stable_id)
+            return 0
+        if status == "RUNNING":
+            result = _running_process(config, repository, stable_id)  # type: ignore[arg-type]
+        elif status is None:
+            result = begin_process(
+                config=config,
+                repository=repository,
+                force_full_refresh=args.full_refresh,
+                actor=current_actor(),
+                reason=args.reason,
+                run_id=stable_id,
+            )
+        else:
+            raise RuntimeError(f"processing run {stable_id} is {status}")
+        try:
+            run_silver_phase(config, result.bounds)
+        except BaseException as error:
+            if not args.execution_key:
+                repository.fail_run(
+                    result.run_id,
+                    process_key=config.process_key,
+                    error=error,
+                    completed_at=repository.control_now(),
+                )
+            raise
     finally:
         connection.close()  # type: ignore[attr-defined]
 
-    mode = "incremental" if result.bounds.is_incremental else "full refresh"
-    print(f"{result.process_key}: {result.status} ({mode}) run={result.run_id}")
-    for source in result.bounds.sources:
-        print(f"  {source.source_ref}: lower_bound={source.lower_bound}")
-    print(f"  checkpoint → {result.bounds.run_started_at} (run start, not end)")
+    print(result.run_id)
+    return 0
 
 
-def cmd_run(args: argparse.Namespace) -> int:
-    install_signal_handlers()
-    process_keys = (args.process_key,) if args.process_key else ACTIVE_PROCESS_KEYS
-    for process_key in process_keys:
-        _run_one(load_config(process_key), args)
+def cmd_vars(args: argparse.Namespace) -> int:
+    config = load_config(args.process_key)
+    repository, connection = open_repository()
+    try:
+        run = _running_process(config, repository, args.run_id)
+    finally:
+        connection.close()  # type: ignore[attr-defined]
+    print(json.dumps(build_vars(run.bounds)))
+    return 0
+
+
+def cmd_finalize(args: argparse.Namespace) -> int:
+    config = load_config(args.process_key)
+    repository, connection = open_repository()
+    try:
+        run = _running_process(config, repository, args.run_id)
+        result = complete_process(
+            config=config,
+            repository=repository,
+            run=run,
+            metrics=_publication_metrics(config),
+        )
+    finally:
+        connection.close()  # type: ignore[attr-defined]
+    print(f"{result.process_key}: SUCCEEDED run={result.run_id}")
+    return 0
+
+
+def cmd_refresh_flag(args: argparse.Namespace) -> int:
+    config = load_config(args.process_key)
+    repository, connection = open_repository()
+    try:
+        run = _running_process(config, repository, args.run_id)
+    finally:
+        connection.close()  # type: ignore[attr-defined]
+    print("" if run.bounds.is_incremental else "--full-refresh")
+    return 0
+
+
+def cmd_fail(args: argparse.Namespace) -> int:
+    config = load_config(args.process_key)
+    run_id = args.run_id or execution_run_id(config.process_key, args.execution_key)
+    repository, connection = open_repository()
+    try:
+        run = _running_process(config, repository, run_id)
+        repository.fail_run(
+            run.run_id,
+            process_key=config.process_key,
+            error=RuntimeError(args.reason),
+            completed_at=repository.control_now(),
+        )
+    finally:
+        connection.close()  # type: ignore[attr-defined]
+    return 0
+
+
+def cmd_state(args: argparse.Namespace) -> int:
+    config = load_config(args.process_key)
+    repository, connection = open_repository()
+    try:
+        status = repository.read_run_status(
+            run_id=args.run_id,
+            process_key=config.process_key,
+            scope=config.scope,
+        )
+    finally:
+        connection.close()  # type: ignore[attr-defined]
+    if status is None:
+        raise RuntimeError(f"processing run {args.run_id} does not exist")
+    print(status)
     return 0
 
 
@@ -244,20 +354,44 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
 
-    run = sub.add_parser("run", help="chạy một graph dbt + advance checkpoint")
-    run.add_argument(
-        "process_key",
-        nargs="?",
-        choices=ACTIVE_PROCESS_KEYS,
-        help="Bỏ trống = tự chạy tất cả process.",
-    )
-    run.add_argument(
+    silver = sub.add_parser("silver", help="build Silver intermediate, chưa checkpoint")
+    silver.add_argument("process_key", choices=ACTIVE_PROCESS_KEYS)
+    silver.add_argument(
         "--full-refresh",
         action="store_true",
-        help="rebuild toàn bộ graph đã chọn; không xóa checkpoint",
+        help="rebuild Silver; không xóa checkpoint",
     )
-    run.add_argument("--reason", help="lý do audit; bắt buộc khi dùng --full-refresh")
-    run.set_defaults(func=cmd_run)
+    silver.add_argument("--reason", help="bắt buộc khi dùng --full-refresh")
+    silver.add_argument("--execution-key", help="khóa Airflow ổn định qua retry")
+    silver.set_defaults(func=cmd_silver)
+
+    state = sub.add_parser("state", help="in trạng thái của đúng processing run")
+    state.add_argument("process_key", choices=ACTIVE_PROCESS_KEYS)
+    state.add_argument("--run-id", type=UUID, required=True)
+    state.set_defaults(func=cmd_state)
+
+    variables = sub.add_parser("vars", help="in dbt vars của run đang mở")
+    variables.add_argument("process_key", choices=ACTIVE_PROCESS_KEYS)
+    variables.add_argument("--run-id", type=UUID, required=True)
+    variables.set_defaults(func=cmd_vars)
+
+    refresh = sub.add_parser("refresh-flag", help="in --full-refresh khi cần")
+    refresh.add_argument("process_key", choices=ACTIVE_PROCESS_KEYS)
+    refresh.add_argument("--run-id", type=UUID, required=True)
+    refresh.set_defaults(func=cmd_refresh_flag)
+
+    finalize = sub.add_parser("finalize", help="publish metrics và advance checkpoint")
+    finalize.add_argument("process_key", choices=ACTIVE_PROCESS_KEYS)
+    finalize.add_argument("--run-id", type=UUID, required=True)
+    finalize.set_defaults(func=cmd_finalize)
+
+    fail = sub.add_parser("fail", help="đóng processing run lỗi, không đổi checkpoint")
+    fail.add_argument("process_key", choices=ACTIVE_PROCESS_KEYS)
+    fail_id = fail.add_mutually_exclusive_group(required=True)
+    fail_id.add_argument("--run-id", type=UUID)
+    fail_id.add_argument("--execution-key")
+    fail.add_argument("--reason", required=True)
+    fail.set_defaults(func=cmd_fail)
 
     status = sub.add_parser("status", help="checkpoint + run gần nhất")
     status.add_argument("process_key", choices=ACTIVE_PROCESS_KEYS)
