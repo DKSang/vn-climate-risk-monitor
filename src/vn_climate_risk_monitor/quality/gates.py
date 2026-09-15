@@ -152,12 +152,16 @@ def build_raw_suite(
         _custom(
             "raw_hourly_contract",
             f"""
-            WITH exploded AS (
-                SELECT filename, latitude, longitude, elevation, timezone,
+            WITH raw AS (
+                SELECT *, ROW_NUMBER() OVER (PARTITION BY filename) AS location_index
+                FROM {source}
+            ),
+            exploded AS (
+                SELECT filename, location_index, latitude, longitude, elevation, timezone,
                        utc_offset_seconds, hourly_units,
                        UNNEST(hourly.time) AS time,
                        {unnested}
-                FROM {source}
+                FROM raw
             )
             SELECT COUNT(*) > 0
                AND COUNT(DISTINCT filename) = {len(files)}
@@ -172,7 +176,7 @@ def build_raw_suite(
                    OR hourly_units IS NULL
                ) = 0
                AND COUNT_IF(COALESCE(NOT ({' AND '.join(valid)}), TRUE)) = 0
-               AND COUNT(*) = COUNT(DISTINCT (filename, latitude, longitude, time))
+               AND COUNT(*) = COUNT(DISTINCT (filename, location_index, time))
             FROM exploded
             """,
         ),
@@ -203,7 +207,7 @@ def build_silver_suite(process_key: str) -> SuiteConfig:
                     columns=("forecast_run_id", "grid_cell_id", "valid_time_utc"),
                 ),
                 _custom(
-                    "forecast_complete_126x72",
+                    "forecast_complete_grid_horizons",
                     """
                     WITH staged AS (
                         SELECT DISTINCT REGEXP_EXTRACT(
@@ -213,18 +217,25 @@ def build_silver_suite(process_key: str) -> SuiteConfig:
                         ) AS forecast_run_id
                         FROM catalog1.silver.stg_weather_forecast
                     ),
-                    curated AS (
-                        SELECT forecast_run_id, COUNT(*) AS rows,
-                               COUNT(DISTINCT grid_cell_id) AS cells,
+                    curated_cells AS (
+                        SELECT forecast_run_id, grid_cell_id, COUNT(*) AS rows,
                                COUNT(DISTINCT valid_time_utc) AS hours
                         FROM catalog1.silver.int_weather_forecast_hourly
-                        GROUP BY forecast_run_id
+                        GROUP BY forecast_run_id, grid_cell_id
                     )
                     SELECT COUNT(*) = 0
-                    FROM staged
-                    LEFT JOIN curated USING (forecast_run_id)
-                    WHERE curated.forecast_run_id IS NULL
-                       OR rows <> 126 * 72 OR cells <> 126 OR hours <> 72
+                    FROM (
+                        SELECT staged.forecast_run_id
+                        FROM staged
+                        LEFT JOIN curated_cells USING (forecast_run_id)
+                        WHERE curated_cells.forecast_run_id IS NULL
+
+                        UNION ALL
+
+                        SELECT forecast_run_id
+                        FROM curated_cells
+                        WHERE rows <> 72 OR hours <> 72
+                    ) AS invalid
                     """,
                 ),
             )
