@@ -13,12 +13,6 @@ docker compose ps
 The one-shot `bootstrap` service creates the MinIO bucket, attaches DuckLake to
 PostgreSQL, creates control-plane tables, seeds static references, and builds the
 small static Gold dependencies. It is safe to rerun against an existing volume.
-Start optional pgAdmin only when needed:
-
-```powershell
-docker compose --profile tools up -d pgadmin
-```
-
 When running dbt directly from Windows PowerShell, force Python UTF-8 mode so
 Vietnamese place names in models and seeds are decoded consistently:
 

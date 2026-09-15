@@ -48,27 +48,6 @@ services:
       timeout: 5s
       retries: 10
 
-
-
-  pgadmin:
-    profiles: ["tools"]
-    image: dpage/pgadmin4:9.17@sha256:2f4ce946ddf8360680d7eff4eaba1d91859eb6b4003e6623bad5c63a322c2f4d
-    restart: unless-stopped
-    ports:
-      - "127.0.0.1:${PGADMIN_PORT:-5050}:80"
-    environment:
-      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@vnclimate.org}
-      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:?Set PGADMIN_DEFAULT_PASSWORD in .env}
-      PGADMIN_CONFIG_SERVER_MODE: 'False'
-      PGADMIN_SERVER_JSON_FILE: /tmp/servers.json
-      PGADMIN_SERVERS_JSON: >-
-        {"Servers":{"1":{"Name":"vnclimate (DuckLake Catalog)","Group":"Servers","Host":"postgres","Port":5432,"MaintenanceDB":"${POSTGRES_DB:-vnclimate}","Username":"${POSTGRES_USER:-vnclimate}","SSLMode":"prefer"}}}
-    volumes:
-      - pgadmin_data:/var/lib/pgadmin
-    depends_on:
-      postgres:
-        condition: service_healthy
-
   bootstrap:
     build:
       context: .
@@ -95,6 +74,9 @@ services:
       dockerfile: docker/airflow.Dockerfile
     image: vn-climate-risk-monitor-airflow:2.10.5
     restart: unless-stopped
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
     depends_on:
       postgres:
         condition: service_healthy
@@ -111,9 +93,10 @@ services:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: ${AIRFLOW_DAGS_PAUSED_AT_CREATION:-true}
-      AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY:?Set AIRFLOW_FERNET_KEY in .env}
-      AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY:?Set AIRFLOW_SECRET_KEY in .env}
-      AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "true"
+      AIRFLOW_USERNAME: ${AIRFLOW_USERNAME:-admin}
+      AIRFLOW_PASSWORD: ${AIRFLOW_PASSWORD:?Set AIRFLOW_PASSWORD in .env}
+      AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_PASSWORD:?Set AIRFLOW_PASSWORD in .env}
+      AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "false"
       OPEN_METEO_FETCH_WORKERS: ${OPEN_METEO_FETCH_WORKERS:-4}
       OPEN_METEO_FORECAST_URL: ${OPEN_METEO_FORECAST_URL:-https://api.open-meteo.com/v1/forecast}
       OPEN_METEO_ARCHIVE_URL: ${OPEN_METEO_ARCHIVE_URL:-https://archive-api.open-meteo.com/v1/archive}
@@ -128,7 +111,16 @@ services:
       - bash
       - -ec
       - |
+        export AIRFLOW__CORE__FERNET_KEY="$$(python -c 'import base64, hashlib, os; print(base64.urlsafe_b64encode(hashlib.sha256(os.environ["AIRFLOW_PASSWORD"].encode()).digest()).decode())')"
         airflow db migrate
+        airflow users create \
+          --username "$${AIRFLOW_USERNAME}" \
+          --password "$${AIRFLOW_PASSWORD}" \
+          --firstname "VN" --lastname "Climate" --role Admin \
+          --email "$${AIRFLOW_USERNAME}@localhost" || true
+        airflow users reset-password \
+          --username "$${AIRFLOW_USERNAME}" \
+          --password "$${AIRFLOW_PASSWORD}"
         airflow pools set lakehouse_single_writer_pool 1 \
           "Single-writer lock for DuckLake and Open-Meteo quota"
         # Docker/host shutdown can leave this runtime-only file behind in the
@@ -139,6 +131,8 @@ services:
       test:
         - CMD-SHELL
         - >-
+          export AIRFLOW__CORE__FERNET_KEY="$$(python -c 'import base64, hashlib, os; print(base64.urlsafe_b64encode(hashlib.sha256(os.environ["AIRFLOW_PASSWORD"].encode()).digest()).decode())')"
+          &&
           airflow jobs check --job-type SchedulerJob --allow-multiple --limit 100
           && curl --fail --silent http://localhost:8080/health >/dev/null
       interval: 30s
@@ -168,5 +162,4 @@ services:
 volumes:
   postgres_data:
   minio_data:
-  pgadmin_data:
   airflow_logs:

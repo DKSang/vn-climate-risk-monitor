@@ -16,12 +16,12 @@ jobs:
   checks:
     runs-on: ubuntu-latest
     env:
-      AIRFLOW_FERNET_KEY: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
-      AIRFLOW_SECRET_KEY: ci-airflow-secret-not-for-production
-      MINIO_ACCESS_KEY: ci-minio-access-not-for-production
-      MINIO_SECRET_KEY: ci-minio-secret-not-for-production
-      PGADMIN_DEFAULT_PASSWORD: ci-pgadmin-password-not-for-production
-      POSTGRES_PASSWORD: ci-postgres-password-not-for-production
+      POSTGRES_USER: vnclimate
+      POSTGRES_PASSWORD: ci-postgres
+      MINIO_ACCESS_KEY: ci-minio
+      MINIO_SECRET_KEY: ci-minio-password
+      AIRFLOW_USERNAME: admin
+      AIRFLOW_PASSWORD: ci-airflow
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 

@@ -202,6 +202,15 @@ def test_dbt_quality_macros_are_project_owned() -> None:
     assert "{% test accepted_range" in macro
 
 
+def test_dim_grid_accepts_forecast_first_or_archive_first_startup() -> None:
+    source = (TRANSFORM / "models/marts/dim_grid.sql").read_text(encoding="utf-8")
+
+    assert source.count("adapter.get_relation(") == 2
+    assert "{% if archive_exists %}" in source
+    assert "{% if forecast_exists %}" in source
+    assert "{% if archive_exists and forecast_exists %}" in source
+
+
 class _Result:
     def __init__(self, row: tuple[Any, ...]) -> None:
         self.row = row
@@ -290,7 +299,7 @@ def test_reset_scope_is_confirmation_protected_and_never_bronze() -> None:
     assert all('"silver"' in statement or '"gold"' in statement for statement in duck.statements)
 
 
-def test_compose_has_lean_default_services_and_tools_profile() -> None:
+def test_compose_has_only_runtime_services() -> None:
     compose_text = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
     compose = yaml.safe_load(compose_text)
 
@@ -300,15 +309,20 @@ def test_compose_has_lean_default_services_and_tools_profile() -> None:
         "bootstrap",
         "airflow",
         "streamlit",
-        "pgadmin",
     }
-    assert compose["services"]["pgadmin"]["profiles"] == ["tools"]
+    assert "pgadmin" not in compose_text
     assert "secret-init" not in compose_text
     assert "x-project-environment:" in compose_text
     assert "<<: *project-environment" in compose_text
     assert "minioadmin" not in compose_text
     assert "${POSTGRES_PASSWORD:-" not in compose_text
     assert "${MINIO_SECRET_KEY:-" not in compose_text
+
+
+def test_dashboard_image_exposes_project_package_to_streamlit() -> None:
+    dockerfile = (ROOT / "docker/dashboard.Dockerfile").read_text(encoding="utf-8")
+
+    assert "PYTHONPATH=/project/src:/project" in dockerfile
 
 
 def test_bootstrap_partial_dbt_build_only_selects_tests_with_complete_parents() -> None:
@@ -330,25 +344,45 @@ def test_compose_credentials_are_explicit_placeholders_and_images_are_pinned() -
     compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
 
     for name in (
+        "POSTGRES_USER",
         "POSTGRES_PASSWORD",
         "MINIO_ACCESS_KEY",
         "MINIO_SECRET_KEY",
-        "AIRFLOW_SECRET_KEY",
-        "AIRFLOW_FERNET_KEY",
+        "AIRFLOW_USERNAME",
+        "AIRFLOW_PASSWORD",
     ):
-        assert f"{name}=<" in env
-        assert f"${{{name}:?" in compose
+        assert f"{name}=" in env
+        assert f"${{{name}" in compose
+    assert "APP_ACCOUNT" not in env + compose
+    assert "APP_PASSWORD" not in env + compose
+    assert "AIRFLOW_FERNET_KEY" not in env
+    assert "AIRFLOW_SECRET_KEY" not in env
+    assert '--username "$${AIRFLOW_USERNAME}"' in compose
+    assert '--password "$${AIRFLOW_PASSWORD}"' in compose
+    assert '--email "$${AIRFLOW_USERNAME}@localhost" || true' in compose
+    assert "airflow users reset-password" in compose
 
     parsed = yaml.safe_load(compose)
-    for service in ("postgres", "minio", "pgadmin"):
+    for service in ("postgres", "minio"):
         assert "@sha256:" in parsed["services"][service]["image"]
 
 
 def test_ci_supplies_compose_credentials_and_builds_real_service_names() -> None:
     workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
 
-    assert "MINIO_ACCESS_KEY:" in workflow
-    assert "AIRFLOW_FERNET_KEY:" in workflow
+    for name in (
+        "POSTGRES_USER",
+        "POSTGRES_PASSWORD",
+        "MINIO_ACCESS_KEY",
+        "MINIO_SECRET_KEY",
+        "AIRFLOW_USERNAME",
+        "AIRFLOW_PASSWORD",
+    ):
+        assert f"{name}:" in workflow
+    assert "APP_ACCOUNT:" not in workflow
+    assert "APP_PASSWORD:" not in workflow
+    assert "AIRFLOW_FERNET_KEY:" not in workflow
+    assert "PGADMIN_DEFAULT_PASSWORD:" not in workflow
     assert "docker compose build airflow streamlit" in workflow
     assert "docker compose build airflow dashboard" not in workflow
 

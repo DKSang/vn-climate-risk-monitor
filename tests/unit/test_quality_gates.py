@@ -60,6 +60,16 @@ def test_raw_forecast_accepts_valid_landed_json(tmp_path: Path) -> None:
     run_suite_or_raise(build_raw_suite("forecast", (source,)), connector=connector_with())
 
 
+def test_raw_forecast_accepts_locations_snapped_to_same_grid(tmp_path: Path) -> None:
+    source = Path(_write_forecast(tmp_path / "response_000.json", [1_789_344_000]))
+    location = json.loads(source.read_text(encoding="utf-8"))
+    source.write_text(json.dumps([location, location]), encoding="utf-8")
+
+    run_suite_or_raise(
+        build_raw_suite("forecast", (source.as_posix(),)), connector=connector_with()
+    )
+
+
 def test_raw_forecast_rejects_duplicate_grain_within_file(tmp_path: Path) -> None:
     source = _write_forecast(
         tmp_path / "response_000.json", [1_789_344_000, 1_789_344_000]
@@ -172,7 +182,7 @@ def test_raw_archive_selects_only_requested_month() -> None:
     ) == (june,)
 
 
-def test_silver_forecast_requires_exactly_126_cells_by_72_hours() -> None:
+def test_silver_forecast_accepts_fewer_weather_grids_than_wards() -> None:
     connector = connector_with(
         """
         CREATE TABLE catalog1.silver.stg_weather_forecast AS
@@ -192,8 +202,37 @@ def test_silver_forecast_requires_exactly_126_cells_by_72_hours() -> None:
             1.0::DOUBLE AS rain_mm,
             0.0::DOUBLE AS showers_mm,
             50::INTEGER AS precipitation_probability_pct
-        FROM range(125) AS cells(cell)
+        FROM range(48) AS cells(cell)
         CROSS JOIN range(72) AS hours(hour)
+        """,
+    )
+
+    run_suite_or_raise(build_silver_suite("forecast"), connector=connector)
+
+
+def test_silver_forecast_requires_72_hours_per_grid() -> None:
+    connector = connector_with(
+        """
+        CREATE TABLE catalog1.silver.stg_weather_forecast AS
+        SELECT
+            '/incremental/2026/09/14/00/run_20260914T000000/response.json'
+                AS _source_file,
+            TIMESTAMPTZ '2026-09-14 00:00:00+00' AS _ingested_at
+        """,
+        """
+        CREATE TABLE catalog1.silver.int_weather_forecast_hourly AS
+        SELECT
+            'run_20260914T000000'::VARCHAR AS forecast_run_id,
+            'cell-' || cell::VARCHAR AS grid_cell_id,
+            TIMESTAMPTZ '2026-09-14 00:00:00+00' + hour * INTERVAL '1 hour'
+                AS valid_time_utc,
+            1.0::DOUBLE AS precipitation_mm,
+            1.0::DOUBLE AS rain_mm,
+            0.0::DOUBLE AS showers_mm,
+            50::INTEGER AS precipitation_probability_pct
+        FROM range(48) AS cells(cell)
+        CROSS JOIN range(72) AS hours(hour)
+        WHERE NOT (cell = 47 AND hour = 71)
         """,
     )
 
