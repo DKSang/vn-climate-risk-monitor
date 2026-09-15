@@ -1,9 +1,11 @@
-"""Fail-closed Provero gates for staging and curated Silver."""
+"""Fail-closed Provero gates for raw landing and curated Silver."""
 
 from __future__ import annotations
 
 import argparse
 from collections.abc import Callable, Iterable, Sequence
+from datetime import UTC, date, datetime, timedelta
+from pathlib import PurePosixPath
 from typing import Any
 
 from provero.connectors.duckdb import DuckDBConnection, DuckDBConnector
@@ -11,16 +13,19 @@ from provero.core.compiler import CheckConfig, SourceConfig, SuiteConfig
 from provero.core.engine import run_suite
 from provero.core.results import Status
 
-from vn_climate_risk_monitor.auto_loader.config import SOURCE_GROUPS
-from vn_climate_risk_monitor.auto_loader.state import connect_control_plane
 from vn_climate_risk_monitor.platform.lakehouse import get_connection
+from vn_climate_risk_monitor.platform.minio import get_minio_client
 from vn_climate_risk_monitor.platform.settings import load_settings
+from vn_climate_risk_monitor.sources.open_meteo.planner import (
+    FORECAST_PREFIX,
+    forecast_run_id,
+    model_for_month,
+    month_params,
+    slot_params,
+)
 
 BLOCKER = "blocker"
-TABLES = {
-    "forecast": "catalog1.silver.stg_weather_forecast",
-    "archive": "catalog1.silver.stg_weather_archive_hourly",
-}
+PROCESS_KEYS = ("forecast", "archive")
 
 
 class QualityGateError(RuntimeError):
@@ -57,106 +62,124 @@ def _custom(name: str, query: str) -> CheckConfig:
     return _check("custom_sql", name=name, query=query)
 
 
-def _source_files_sql(files: Sequence[str]) -> str:
+def _raw_source(files: Sequence[str]) -> str:
     if not files:
-        return "SELECT NULL::VARCHAR AS source_file WHERE FALSE"
-    values = ", ".join(f"('{value.replace("'", "''")}')" for value in files)
-    return f"SELECT source_file FROM (VALUES {values}) AS files(source_file)"
+        raise QualityGateError("raw landing contains no response files")
+    quoted = ", ".join(f"'{file.replace("'", "''")}'" for file in files)
+    return (
+        f"read_json_auto([{quoted}], filename=true, union_by_name=true, "
+        "maximum_object_size=209715200)"
+    )
 
 
-def committed_source_files(
-    rows: Sequence[tuple[str, str]], *, bucket: str
+def select_raw_keys(
+    process_key: str, keys: Sequence[str], *, month: date | None
 ) -> tuple[str, ...]:
-    bad = sorted({status for status, _ in rows if status != "COMMITTED"})
-    if bad:
-        raise QualityGateError(f"ingestion files are not COMMITTED: {', '.join(bad)}")
-    return tuple(f"s3://{bucket}/{object_key}" for _, object_key in rows)
+    responses = sorted(
+        key for key in keys if PurePosixPath(key).name.startswith("response_")
+    )
+    if process_key == "archive":
+        if month is None:
+            raise QualityGateError("--month is required for the archive raw gate")
+        prefix = month_params(month, model_for_month(month))[0] + "/"
+        return tuple(key for key in responses if key.startswith(prefix))
+
+    runs = {key.rsplit("/", 1)[0] for key in responses if key.startswith(FORECAST_PREFIX)}
+    if not runs:
+        return ()
+    latest = max(runs)
+    return tuple(key for key in responses if key.startswith(latest + "/"))
 
 
-def build_ingest_suite(process_key: str, committed_files: Sequence[str]) -> SuiteConfig:
-    table = TABLES[process_key]
-    common_not_null = (
-        "grid_latitude",
-        "grid_longitude",
-        "valid_time_utc",
-        "precipitation_mm",
-        "rain_mm",
-        "_source_file",
-        "_ingested_at",
+def build_raw_suite(
+    process_key: str,
+    files: Sequence[str],
+    *,
+    window_start: datetime | None = None,
+    window_end: datetime | None = None,
+) -> SuiteConfig:
+    source = _raw_source(files)
+    hourly_fields = ["precipitation", "rain", "weather_code"]
+    if process_key == "forecast":
+        hourly_fields += ["showers", "precipitation_probability"]
+    else:
+        hourly_fields += ["soil_moisture_0_to_7cm", "soil_moisture_7_to_28cm"]
+    unnested = ",\n".join(
+        f"UNNEST(hourly.{field}) AS {field}" for field in hourly_fields
+    )
+    valid = [
+        "time IS NOT NULL",
+        "TRY_CAST(time AS DOUBLE) = TRY_CAST(time AS BIGINT)",
+        "TRY_CAST(precipitation AS DOUBLE) BETWEEN 0 AND 500",
+        "TRY_CAST(rain AS DOUBLE) BETWEEN 0 AND 500",
+        "TRY_CAST(weather_code AS DOUBLE) = TRY_CAST(weather_code AS INTEGER)",
+        *(f"{field} IS NOT NULL" for field in hourly_fields),
+    ]
+    if process_key == "forecast":
+        valid += [
+            "TRY_CAST(showers AS DOUBLE) BETWEEN 0 AND 500",
+            "TRY_CAST(precipitation_probability AS INTEGER) BETWEEN 0 AND 100",
+            (
+                "TRY_CAST(precipitation_probability AS DOUBLE) "
+                "= TRY_CAST(precipitation_probability AS INTEGER)"
+            ),
+        ]
+    else:
+        valid += [
+            "TRY_CAST(soil_moisture_0_to_7cm AS DOUBLE) IS NOT NULL",
+            "TRY_CAST(soil_moisture_7_to_28cm AS DOUBLE) IS NOT NULL",
+        ]
+    if window_start and window_end:
+        valid += [
+            f"time >= {int(window_start.timestamp())}",
+            f"time < {int(window_end.timestamp())}",
+        ]
+    required = (
+        "latitude",
+        "longitude",
+        "elevation",
+        "timezone",
+        "utc_offset_seconds",
+        "hourly_units",
+        "hourly",
+        "filename",
     )
     checks = [
         _check("row_count", min=1),
-        _check("not_null", columns=common_not_null),
-        _check("type", column="grid_latitude", expected="float"),
-        _check("type", column="grid_longitude", expected="float"),
-        _check("type", column="valid_time_utc", expected="timestamp"),
-        _check("type", column="_ingested_at", expected="timestamp"),
-        _check("range", column="grid_latitude", min=-90, max=90),
-        _check("range", column="grid_longitude", min=-180, max=180),
-        _check("range", column="precipitation_mm", min=0, max=500),
-        _check("range", column="rain_mm", min=0, max=500),
+        _check("not_null", columns=required),
+        _check("range", column="latitude", min=-90, max=90),
+        _check("range", column="longitude", min=-180, max=180),
         _custom(
-            "rescued_data_empty",
-            f"SELECT COUNT(*) = 0 FROM {table} WHERE _rescued_data IS NOT NULL",
-        ),
-        _custom(
-            "source_file_matches_committed_ledger",
+            "raw_hourly_contract",
             f"""
-            WITH committed AS ({_source_files_sql(committed_files)})
-            SELECT
-                (SELECT COUNT(*) FROM committed)
-                    = (SELECT COUNT(DISTINCT _source_file) FROM {table})
-                AND NOT EXISTS (
-                    SELECT 1 FROM committed
-                    LEFT JOIN {table} AS staged ON staged._source_file = committed.source_file
-                    WHERE staged._source_file IS NULL
-                )
+            WITH exploded AS (
+                SELECT filename, latitude, longitude, elevation, timezone,
+                       utc_offset_seconds, hourly_units,
+                       UNNEST(hourly.time) AS time,
+                       {unnested}
+                FROM {source}
+            )
+            SELECT COUNT(*) > 0
+               AND COUNT(DISTINCT filename) = {len(files)}
+               AND COUNT_IF(
+                   TRY_CAST(latitude AS DOUBLE) IS NULL
+                   OR TRY_CAST(longitude AS DOUBLE) IS NULL
+                   OR TRY_CAST(elevation AS DOUBLE) IS NULL
+                   OR NULLIF(timezone, '') IS NULL
+                   OR TRY_CAST(utc_offset_seconds AS INTEGER) IS NULL
+                   OR TRY_CAST(utc_offset_seconds AS DOUBLE)
+                      <> TRY_CAST(utc_offset_seconds AS INTEGER)
+                   OR hourly_units IS NULL
+               ) = 0
+               AND COUNT_IF(COALESCE(NOT ({' AND '.join(valid)}), TRUE)) = 0
+               AND COUNT(*) = COUNT(DISTINCT (filename, latitude, longitude, time))
+            FROM exploded
             """,
         ),
     ]
-    if process_key == "forecast":
-        checks.extend(
-            (
-                _check(
-                    "not_null", columns=("showers_mm", "precipitation_probability_pct")
-                ),
-                _check("range", column="showers_mm", min=0, max=500),
-                _check("range", column="precipitation_probability_pct", min=0, max=100),
-                _check(
-                    "unique_combination",
-                    columns=(
-                        "_source_file",
-                        "grid_latitude",
-                        "grid_longitude",
-                        "valid_time_utc",
-                    ),
-                ),
-            )
-        )
-    else:
-        checks.extend(
-            (
-                _check("not_null", column="weather_model"),
-                _check(
-                    "accepted_values",
-                    column="weather_model",
-                    values=("era5", "ecmwf_ifs"),
-                ),
-                _check(
-                    "unique_combination",
-                    columns=(
-                        "_source_file",
-                        "weather_model",
-                        "grid_latitude",
-                        "grid_longitude",
-                        "valid_time_utc",
-                    ),
-                ),
-            )
-        )
     return SuiteConfig(
-        name=f"quality_ingest_{process_key}",
-        source=SourceConfig(type="duckdb", table=table),
+        name=f"quality_raw_{process_key}",
+        source=SourceConfig(type="duckdb", table=source),
         checks=checks,
     )
 
@@ -238,25 +261,45 @@ def run_suite_or_raise(
         raise QualityGateError(f"{suite.name} failed: {failed}")
 
 
-def run_ingest_gate(process_key: str) -> None:
+def run_raw_gate(
+    process_key: str,
+    *,
+    month: date | None = None,
+    slot: datetime | None = None,
+) -> None:
     settings = load_settings()
-    control = connect_control_plane(settings.postgres.ducklake_connection_string)
-    try:
-        pipelines = [config.name for config in SOURCE_GROUPS[process_key]]
-        rows = control.execute(
-            """
-            SELECT file.status, file.object_key
-            FROM ingestion.ingestion_files AS file
-            JOIN ingestion.ingestion_runs AS run USING (attempt_id)
-            WHERE run.pipeline_name = ANY(%s) AND run.scope = 'production'
-            ORDER BY file.object_key
-            """,
-            (pipelines,),
-        ).fetchall()
-    finally:
-        control.close()
-    files = committed_source_files(rows, bucket=settings.minio.bucket)
-    run_suite_or_raise(build_ingest_suite(process_key, files))
+    if process_key == "forecast":
+        slot = (slot or datetime.now(UTC)).astimezone(UTC).replace(
+            minute=0, second=0, microsecond=0
+        )
+        prefix = f"{slot_params(slot, settings.open_meteo)[0]}/{forecast_run_id(slot)}"
+        window_start = slot
+        window_end = slot + timedelta(hours=settings.open_meteo.forecast_hours)
+    else:
+        if month is None:
+            raise QualityGateError("--month is required for the archive raw gate")
+        prefix = month_params(month, model_for_month(month))[0]
+        window_start = datetime(month.year, month.month, 1, tzinfo=UTC)
+        window_end = (
+            datetime(month.year + 1, 1, 1, tzinfo=UTC)
+            if month.month == 12
+            else datetime(month.year, month.month + 1, 1, tzinfo=UTC)
+        )
+    client = get_minio_client(settings.minio)
+    keys = tuple(
+        obj.object_name
+        for obj in client.list_objects(
+            settings.minio.bucket, prefix=prefix + "/", recursive=True
+        )
+        if obj.object_name
+    )
+    selected = select_raw_keys(process_key, keys, month=month)
+    files = tuple(f"s3://{settings.minio.bucket}/{key}" for key in selected)
+    run_suite_or_raise(
+        build_raw_suite(
+            process_key, files, window_start=window_start, window_end=window_end
+        )
+    )
 
 
 def run_silver_gate(process_key: str) -> None:
@@ -265,11 +308,13 @@ def run_silver_gate(process_key: str) -> None:
 
 def main(argv: Sequence[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("gate", choices=("ingest", "silver-int"))
-    parser.add_argument("process_key", choices=tuple(TABLES))
+    parser.add_argument("gate", choices=("raw", "silver-int"))
+    parser.add_argument("process_key", choices=PROCESS_KEYS)
+    parser.add_argument("--month", type=date.fromisoformat)
+    parser.add_argument("--slot", type=datetime.fromisoformat)
     args = parser.parse_args(argv)
-    if args.gate == "ingest":
-        run_ingest_gate(args.process_key)
+    if args.gate == "raw":
+        run_raw_gate(args.process_key, month=args.month, slot=args.slot)
     else:
         run_silver_gate(args.process_key)
 

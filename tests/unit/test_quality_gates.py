@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
+from datetime import UTC, date, datetime
+from pathlib import Path
 
 import duckdb
 import pytest
@@ -10,10 +13,10 @@ import pytest
 from vn_climate_risk_monitor.quality.gates import (
     DuckLakeConnector,
     QualityGateError,
-    build_ingest_suite,
+    build_raw_suite,
     build_silver_suite,
-    committed_source_files,
     run_suite_or_raise,
+    select_raw_keys,
 )
 
 
@@ -27,68 +30,146 @@ def connector_with(*statements: str) -> DuckLakeConnector:
     return DuckLakeConnector(factory)
 
 
-def test_ingest_requires_every_registered_file_to_be_committed() -> None:
-    with pytest.raises(QualityGateError, match="FAILED"):
-        committed_source_files(
-            [("COMMITTED", "bronze/good.json"), ("FAILED", "bronze/bad.json")],
-            bucket="lake",
-        )
+def _write_forecast(path: Path, times: list[int | None]) -> str:
+    hourly = {
+        "time": times,
+        "precipitation": [1.0] * len(times),
+        "rain": [1.0] * len(times),
+        "showers": [0.0] * len(times),
+        "precipitation_probability": [50] * len(times),
+        "weather_code": [61] * len(times),
+    }
+    path.write_text(
+        json.dumps({
+            "latitude": 21.0,
+            "longitude": 105.8,
+            "elevation": 10.0,
+            "timezone": "UTC",
+            "utc_offset_seconds": 0,
+            "hourly_units": {name: "unit" for name in hourly},
+            "hourly": hourly,
+        }),
+        encoding="utf-8",
+    )
+    return path.as_posix()
 
 
-def test_ingest_rejects_duplicate_grain_within_one_source_file() -> None:
-    source_file = "s3://lake/bronze/forecast.json"
-    connector = connector_with(
-        f"""
-        CREATE TABLE catalog1.silver.stg_weather_forecast AS
-        SELECT
-            21.0::DOUBLE AS grid_latitude,
-            105.8::DOUBLE AS grid_longitude,
-            10.0::DOUBLE AS elevation_m,
-            TIMESTAMPTZ '2026-09-14 00:00:00+00' AS valid_time_utc,
-            1.0::DOUBLE AS precipitation_mm,
-            1.0::DOUBLE AS rain_mm,
-            0.0::DOUBLE AS showers_mm,
-            50::INTEGER AS precipitation_probability_pct,
-            61::INTEGER AS weather_code,
-            'UTC'::VARCHAR AS timezone,
-            0::INTEGER AS utc_offset_seconds,
-            '{{}}'::VARCHAR AS hourly_units_json,
-            '{source_file}'::VARCHAR AS _source_file,
-            TIMESTAMPTZ '2026-09-14 00:01:00+00' AS _ingested_at,
-            NULL::VARCHAR AS _rescued_data
-        FROM range(2)
-        """
+def test_raw_forecast_accepts_valid_landed_json(tmp_path: Path) -> None:
+    source = _write_forecast(tmp_path / "response_000.json", [1_789_344_000])
+
+    run_suite_or_raise(build_raw_suite("forecast", (source,)), connector=connector_with())
+
+
+def test_raw_forecast_rejects_duplicate_grain_within_file(tmp_path: Path) -> None:
+    source = _write_forecast(
+        tmp_path / "response_000.json", [1_789_344_000, 1_789_344_000]
     )
 
-    with pytest.raises(QualityGateError, match="quality_ingest_forecast"):
+    with pytest.raises(QualityGateError, match="quality_raw_forecast"):
         run_suite_or_raise(
-            build_ingest_suite("forecast", (source_file,)), connector=connector
+            build_raw_suite("forecast", (source,)), connector=connector_with()
         )
 
 
-def test_ingest_rejects_non_timestamp_ingestion_clock() -> None:
-    source_file = "s3://lake/bronze/forecast.json"
-    connector = connector_with(
-        f"""
-        CREATE TABLE catalog1.silver.stg_weather_forecast AS
-        SELECT
-            21.0::DOUBLE AS grid_latitude,
-            105.8::DOUBLE AS grid_longitude,
-            TIMESTAMPTZ '2026-09-14 00:00:00+00' AS valid_time_utc,
-            1.0::DOUBLE AS precipitation_mm,
-            1.0::DOUBLE AS rain_mm,
-            0.0::DOUBLE AS showers_mm,
-            50::INTEGER AS precipitation_probability_pct,
-            '{source_file}'::VARCHAR AS _source_file,
-            'not-a-timestamp'::VARCHAR AS _ingested_at,
-            NULL::VARCHAR AS _rescued_data
-        """
+def test_raw_forecast_rejects_missing_loader_schema_field(tmp_path: Path) -> None:
+    source = Path(_write_forecast(tmp_path / "response_000.json", [1_789_344_000]))
+    payload = json.loads(source.read_text(encoding="utf-8"))
+    del payload["timezone"]
+    source.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises((QualityGateError, duckdb.Error)):
+        run_suite_or_raise(
+            build_raw_suite("forecast", (source.as_posix(),)),
+            connector=connector_with(),
+        )
+
+
+def test_raw_forecast_rejects_null_timestamp(tmp_path: Path) -> None:
+    source = _write_forecast(
+        tmp_path / "response_000.json", [1_789_344_000, None]
     )
 
-    with pytest.raises(QualityGateError, match="quality_ingest_forecast"):
+    with pytest.raises(QualityGateError, match="quality_raw_forecast"):
         run_suite_or_raise(
-            build_ingest_suite("forecast", (source_file,)), connector=connector
+            build_raw_suite("forecast", (source,)), connector=connector_with()
         )
+
+
+def test_raw_forecast_rejects_uncastable_weather_code(tmp_path: Path) -> None:
+    source = Path(_write_forecast(tmp_path / "response_000.json", [1_789_344_000]))
+    payload = json.loads(source.read_text(encoding="utf-8"))
+    payload["hourly"]["weather_code"] = ["bad"]
+    source.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(QualityGateError, match="quality_raw_forecast"):
+        run_suite_or_raise(
+            build_raw_suite("forecast", (source.as_posix(),)),
+            connector=connector_with(),
+        )
+
+
+@pytest.mark.parametrize(
+    ("section", "field"),
+    (("hourly", "precipitation_probability"), (None, "utc_offset_seconds")),
+)
+def test_raw_forecast_rejects_fractional_integer_fields(
+    tmp_path: Path, section: str | None, field: str
+) -> None:
+    source = Path(_write_forecast(tmp_path / "response_000.json", [1_789_344_000]))
+    payload = json.loads(source.read_text(encoding="utf-8"))
+    target = payload if section is None else payload[section]
+    target[field] = 0.5 if section is None else [50.5]
+    source.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(QualityGateError, match="quality_raw_forecast"):
+        run_suite_or_raise(
+            build_raw_suite("forecast", (source.as_posix(),)),
+            connector=connector_with(),
+        )
+
+
+def test_raw_archive_rejects_timestamp_outside_requested_month(tmp_path: Path) -> None:
+    source = _write_forecast(tmp_path / "response_000.json", [1_788_134_400])
+    payload = json.loads(Path(source).read_text(encoding="utf-8"))
+    payload["hourly"]["soil_moisture_0_to_7cm"] = [0.2]
+    payload["hourly"]["soil_moisture_7_to_28cm"] = [0.3]
+    Path(source).write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(QualityGateError, match="quality_raw_archive"):
+        run_suite_or_raise(
+            build_raw_suite(
+                "archive",
+                (source,),
+                window_start=datetime(2026, 9, 1, tzinfo=UTC),
+                window_end=datetime(2026, 10, 1, tzinfo=UTC),
+            ),
+            connector=connector_with(),
+        )
+
+
+def test_raw_forecast_selects_only_latest_landed_run() -> None:
+    old = (
+        "bronze/files/open_meteo/forecast/incremental/2026/09/14/00/"
+        "run_20260914T000000/response_000.json"
+    )
+    latest = (
+        "bronze/files/open_meteo/forecast/incremental/2026/09/14/01/"
+        "run_20260914T010000/response_000.json"
+    )
+
+    assert select_raw_keys("forecast", (latest, old), month=None) == (latest,)
+
+
+def test_raw_archive_selects_only_requested_month() -> None:
+    june = (
+        "bronze/files/open_meteo/historical_weather_hourly/ifs/year=2026/month=06/"
+        "run_20260701T000000/response_000.json"
+    )
+    july = june.replace("month=06", "month=07")
+
+    assert select_raw_keys(
+        "archive", (july, june), month=date(2026, 6, 1)
+    ) == (june,)
 
 
 def test_silver_forecast_requires_exactly_126_cells_by_72_hours() -> None:

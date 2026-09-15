@@ -12,7 +12,13 @@ from vn_climate_risk_monitor.auto_process.config import (
     ProcessConfig,
     SourceBinding,
 )
-from vn_climate_risk_monitor.auto_process.runner import compute_bounds, run_process
+from vn_climate_risk_monitor.auto_process.runner import (
+    begin_process,
+    complete_process,
+    compute_bounds,
+    restore_bounds,
+    run_process,
+)
 
 
 def at(hour: int, minute: int = 0, second: int = 0) -> datetime:
@@ -47,7 +53,7 @@ class FakeRepository:
         return {ref: self.checkpoints.get(ref) for ref in source_refs}
 
     def begin_run(self, **kwargs: Any) -> UUID:
-        run_id = uuid4()
+        run_id = kwargs.pop("run_id", None) or uuid4()
         self.begun.append({"run_id": run_id, **kwargs})
         return run_id
 
@@ -87,6 +93,43 @@ def test_checkpoint_is_run_start_not_run_end() -> None:
     assert written["checkpoint"] == at(10, 0)
     assert written["completed_at"] == at(10, 10)
     assert written["checkpoint"] != written["completed_at"]
+
+
+def test_split_process_does_not_checkpoint_until_complete() -> None:
+    repository = FakeRepository(clock=[at(10, 0), at(10, 10)])
+    config = build_config()
+
+    running = begin_process(config=config, repository=repository)
+
+    assert running.status == "RUNNING"
+    assert repository.completed == []
+    assert repository.checkpoints == {}
+
+    complete_process(config=config, repository=repository, run=running)
+
+    assert repository.completed[0]["checkpoint"] == at(10, 0)
+
+
+def test_begin_process_uses_caller_supplied_stable_run_id() -> None:
+    repository = FakeRepository(clock=[at(10, 0)])
+    stable_id = uuid4()
+
+    running = begin_process(
+        config=build_config(), repository=repository, run_id=stable_id
+    )
+
+    assert running.run_id == stable_id
+    assert repository.begun[0]["run_id"] == stable_id
+
+
+def test_saved_bounds_can_be_restored_by_a_later_airflow_task() -> None:
+    original = compute_bounds(
+        build_config(), {"archive_hourly": at(9, 0)}, at(10, 0)
+    )
+
+    restored = restore_bounds(original.run_started_at, original.as_json())
+
+    assert restored == original
 
 
 def test_row_arriving_mid_run_is_picked_up_next_time() -> None:
