@@ -58,8 +58,6 @@ Public facts:
 - `gold.fct_rain_forecast_current_hourly`: latest validated forecast horizon.
 - `gold.fct_rain_pressure_alert`: current rainfall-pressure signal by ward/hour.
 - `gold.fct_rain_archive_hourly`: historical archive rainfall by model/grid/hour.
-- `gold.fct_flood_event_observation`: sourced and normalized flood observations.
-
 Reference dimensions and bridges are rebuilt as tables from versioned seeds;
 runtime soft-delete is not used for static references. Forecast and archive use
 native dbt model tags, so no handwritten selector registry can drift from the

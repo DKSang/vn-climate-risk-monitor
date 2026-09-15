@@ -10,6 +10,8 @@ from typing import Any
 
 import pytest
 
+from vn_climate_risk_monitor.auto_process.cli import run_processing_phases
+from vn_climate_risk_monitor.auto_process.config import load_active_config
 from vn_climate_risk_monitor.auto_process.dbt import (
     DbtBuildError,
     build_command,
@@ -149,3 +151,38 @@ def test_file_backed_secrets_are_forwarded_only_to_dbt_child(
     assert child_environment["POSTGRES_PASSWORD"] == "postgres-from-file"
     assert child_environment["MINIO_SECRET_KEY"] == "minio-from-file"
     assert os.environ["POSTGRES_PASSWORD"] == "stale-environment-value"
+
+
+def test_processing_phases_gate_silver_before_gold() -> None:
+    events: list[str] = []
+    config = load_active_config("forecast")
+
+    metrics = run_processing_phases(
+        config,
+        bounds(lower=at(9, 45)),
+        dbt_runner=lambda *a, selection, **k: events.append(f"dbt:{selection}"),
+        silver_gate=lambda process_key: events.append(f"gate:{process_key}"),
+        metrics_reader=lambda _: {"target_row_count": 9_072},
+    )
+
+    assert events == [
+        "dbt:int_weather_forecast_hourly",
+        "gate:forecast",
+        "dbt:tag:marts,tag:forecast",
+    ]
+    assert metrics == {"target_row_count": 9_072}
+
+
+def test_failed_silver_gate_never_builds_gold() -> None:
+    selections: list[str] = []
+
+    with pytest.raises(RuntimeError, match="silver failed"):
+        run_processing_phases(
+            load_active_config("archive"),
+            bounds(lower=at(9, 45)),
+            dbt_runner=lambda *a, selection, **k: selections.append(selection),
+            silver_gate=lambda _: (_ for _ in ()).throw(RuntimeError("silver failed")),
+            metrics_reader=lambda _: {},
+        )
+
+    assert selections == ["int_weather_archive_hourly"]

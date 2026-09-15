@@ -42,7 +42,6 @@ def test_dashboard_queries_are_split_by_data_domain() -> None:
     assert {
         "load_archive_models",
         "load_archive_by_hour",
-        "load_verified_flood_events",
     } <= _function_names(archive)
 
 
@@ -179,9 +178,5 @@ def test_serving_snapshot_requires_a_validated_processing_publication(monkeypatc
 
 
 def test_one_time_enrichment_tools_are_not_runtime_modules() -> None:
-    assert (ROOT / "tools" / "flood_observations.py").is_file()
-    assert (ROOT / "tools" / "flood_geocode.py").is_file()
     assert (ROOT / "tools" / "fetch_hanoi_geojson.py").is_file()
-    assert not (ROOT / "src" / "vn_climate_risk_monitor" / "flood_observations.py").exists()
-    assert not (ROOT / "src" / "vn_climate_risk_monitor" / "flood_geocode.py").exists()
     assert not (ROOT / "scripts" / "fetch_hanoi_geojson.py").exists()

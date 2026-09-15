@@ -26,5 +26,5 @@ uv run dbt seed --project-dir transform --profiles-dir transform
 uv run dbt build --project-dir transform --profiles-dir transform --select dim_ward dim_grid bridge_ward_grid
 ```
 
-One-time source scraping, geocoding, and GeoJSON generation live under
-`tools/`; their outputs are reviewed and committed as seeds/reference data.
+One-time GeoJSON generation lives under `tools/`; its output is reviewed and
+committed as a reference asset.

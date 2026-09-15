@@ -56,8 +56,8 @@ the successful run.
   the model/source contract, while health checks stay operational and cheap.
 - DuckDB/DuckLake is an economical local analytical store, not a multi-node
   warehouse under high concurrency.
-- Static geography and flood references are versioned seeds. Scraping, geocoding,
-  and GeoJSON generation are one-time tools, not runtime pipeline dependencies.
+- Static geography references are versioned seeds. GeoJSON generation is a
+  one-time tool, not a runtime pipeline dependency.
 
 ## Six undercurrents
 

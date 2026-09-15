@@ -40,25 +40,45 @@ def _dag_tasks(path: Path) -> tuple[dict[str, str], str]:
     return tasks, source
 
 
-def test_forecast_dag_is_the_four_task_explicit_pipeline() -> None:
+def test_forecast_dag_places_ingest_quality_after_autoload() -> None:
     tasks, source = _dag_tasks(ROOT / "orchestration/dags/forecast_hourly_dag.py")
 
-    assert list(tasks) == ["copy_raw", "autoload_staging", "process_dbt", "health"]
-    assert "copy_raw >> autoload_staging >> process_dbt >> health" in source
+    assert list(tasks) == [
+        "copy_raw",
+        "autoload_staging",
+        "quality_ingest",
+        "process_dbt",
+        "health",
+    ]
+    assert (
+        "copy_raw >> autoload_staging >> quality_ingest >> process_dbt >> health"
+        in source
+    )
     assert "fetch-open-meteo forecast --execute" in tasks["copy_raw"]
     assert "auto-loader forecast" in tasks["autoload_staging"]
+    assert "quality-gate ingest forecast" in tasks["quality_ingest"]
     assert "auto-process run forecast" in tasks["process_dbt"]
     assert "pipeline-health --scope forecast --require-gold" in tasks["health"]
 
 
-def test_archive_dag_is_the_four_task_pipeline_without_seed() -> None:
+def test_archive_dag_places_ingest_quality_after_autoload() -> None:
     tasks, source = _dag_tasks(ROOT / "orchestration/dags/archive_monthly_dag.py")
 
-    assert list(tasks) == ["copy_raw", "autoload_staging", "process_dbt", "health"]
-    assert "copy_raw >> autoload_staging >> process_dbt >> health" in source
+    assert list(tasks) == [
+        "copy_raw",
+        "autoload_staging",
+        "quality_ingest",
+        "process_dbt",
+        "health",
+    ]
+    assert (
+        "copy_raw >> autoload_staging >> quality_ingest >> process_dbt >> health"
+        in source
+    )
     assert "fetch-open-meteo archive" in tasks["copy_raw"]
     assert "--start $MONTH --end $MONTH" in tasks["copy_raw"]
     assert "auto-loader archive" in tasks["autoload_staging"]
+    assert "quality-gate ingest archive" in tasks["quality_ingest"]
     assert "auto-process run archive" in tasks["process_dbt"]
     assert "pipeline-health --scope archive --require-gold" in tasks["health"]
     assert "dbt seed" not in source.lower()

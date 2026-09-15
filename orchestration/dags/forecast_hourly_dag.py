@@ -32,6 +32,13 @@ with DAG(
         bash_command="uv run auto-loader forecast",
     )
 
+    quality_ingest = BashOperator(
+        task_id="quality_ingest",
+        pool=POOL,
+        cwd=PROJECT_DIR,
+        bash_command="uv run quality-gate ingest forecast",
+    )
+
     process_dbt = BashOperator(
         task_id="process_dbt",
         pool=POOL,
@@ -46,4 +53,4 @@ with DAG(
         bash_command="uv run pipeline-health --scope forecast --require-gold",
     )
 
-    copy_raw >> autoload_staging >> process_dbt >> health
+    copy_raw >> autoload_staging >> quality_ingest >> process_dbt >> health
