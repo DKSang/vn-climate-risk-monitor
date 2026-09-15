@@ -1,4 +1,4 @@
-"""Phát lại weather archive để kiểm chứng giao diện bằng sự kiện quá khứ."""
+"""Phát lại weather archive để kiểm chứng giao diện theo ngày và giờ."""
 # ruff: noqa: N999
 
 from __future__ import annotations
@@ -19,8 +19,6 @@ from serving.dashboard.archive import (
     load_archive_models,
     load_archive_peak_hour_for_local_date,
     load_archive_top_events,
-    load_verified_flood_events,
-    load_verified_flood_observations_until,
 )
 from serving.dashboard.common import (
     load_serving_snapshot,
@@ -117,8 +115,6 @@ models = _cached_archive_models(snapshot_version)
 if not models:
     st.warning("Bảng weather archive chưa có dữ liệu để phát lại.")
     st.stop()
-verified_events = load_verified_flood_events(snapshot_version)
-
 page_header(
     "Historical weather replay",
     "Phát lại mưa quá khứ",
@@ -129,8 +125,7 @@ page_header(
 
 st.info(
     "Đây là dữ liệu archive/reanalysis theo ô lưới từ Open-Meteo, không phải số đo "
-    "quan trắc tại trạm. Trang này kiểm chứng cách UI diễn giải dữ liệu, không dùng để "
-    "khẳng định một điểm cụ thể đã ngập."
+    "quan trắc tại trạm. Trang này kiểm chứng cách UI diễn giải dữ liệu theo ô lưới."
 )
 
 model_lookup = {str(item["weather_model"]): item for item in models}
@@ -138,10 +133,8 @@ model_options = list(model_lookup)
 default_model_index = (
     model_options.index("ecmwf_ifs") if "ecmwf_ifs" in model_options else 0
 )
-selected_verified_event_id: str | None = None
-
 with st.container(border=True):
-    model_col, indicator_col, observed_col, style_col = st.columns([1.1, 1.3, 1.2, 1.1])
+    model_col, indicator_col, style_col = st.columns([1.1, 1.3, 1.1])
     with model_col:
         selected_model = st.selectbox(
             "Nguồn archive",
@@ -161,12 +154,6 @@ with st.container(border=True):
                 "Kịch bản QĐ 2280 theo 1 giờ vẫn được giữ để đối chiếu đúng nguồn."
             ),
         )
-    with observed_col:
-        show_observed = st.toggle(
-            "Ngập thực tế đã xác minh",
-            value=True,
-            help="Chỉ hiện anchor mức high đã review và nằm trong polygon S13.",
-        )
     with style_col:
         selected_style = st.selectbox(
             "Nền bản đồ",
@@ -176,8 +163,6 @@ with st.container(border=True):
         )
 
     selection_options = ["Giờ mưa nổi bật", "Chọn ngày/giờ"]
-    if verified_events:
-        selection_options.insert(0, "Sự kiện có đối chứng")
     selection_mode = st.radio(
         "Cách chọn thời điểm",
         selection_options,
@@ -193,41 +178,7 @@ with st.container(border=True):
         float(indicator["threshold"]),
         snapshot_version,
     )
-    if selection_mode == "Sự kiện có đối chứng":
-        event_options = list(range(len(verified_events)))
-        selected_event_index = st.selectbox(
-            "Sự kiện đã có nhãn thực tế",
-            event_options,
-            format_func=lambda index: (
-                f"{_as_local_date(verified_events[index]['replay_at_utc']).strftime('%d/%m/%Y')}"
-                f" · {int(verified_events[index]['observation_count'])} anchor"
-                f" · {verified_events[index]['source_publisher']}"
-            ),
-        )
-        selected_event = verified_events[selected_event_index]
-        selected_verified_event_id = str(selected_event["event_id"])
-        selected_date = _as_local_date(selected_event["replay_at_utc"])
-        archive_hours = _cached_hours(
-            selected_model,
-            selected_date,
-            snapshot_version,
-        )
-        if not archive_hours:
-            st.warning("Ngày của sự kiện chưa có dữ liệu trong nguồn archive đã chọn.")
-            st.stop()
-        observed_at = pd.Timestamp(selected_event["replay_at_utc"])
-        default_hour = min(
-            archive_hours,
-            key=lambda value: abs(pd.Timestamp(value) - observed_at),
-        )
-        selected_hour = st.select_slider(
-            "Giờ đối chiếu · Hà Nội (UTC+7)",
-            options=archive_hours,
-            value=default_hour,
-            format_func=lambda value: local_time(value, "%H:%M"),
-            key=(f"verified-event-hour-{selected_model}-{selected_verified_event_id}"),
-        )
-    elif selection_mode == "Giờ mưa nổi bật":
+    if selection_mode == "Giờ mưa nổi bật":
         if not top_events:
             st.warning("Không tìm thấy sự kiện mưa trong nguồn archive đã chọn.")
             st.stop()
@@ -290,12 +241,6 @@ df_event = load_archive_event_timeseries(
     selected_hour,
     snapshot_version,
 )
-df_observed = load_verified_flood_observations_until(
-    selected_hour,
-    snapshot_version,
-    event_id=selected_verified_event_id,
-)
-
 ward_count = int(summary.get("ward_count") or 0)
 elevated_count = int(summary.get(str(indicator["summary_key"])) or 0)
 metric_strip(
@@ -368,48 +313,7 @@ if len(boundary_codes) != 126:
     st.stop()
 
 layers: list[pdk.Layer] = [ward_polygon_layer(geojson_data)]
-if show_observed and not df_observed.empty:
-    observed_points = df_observed.copy()
-    observed_points["color"] = [
-        [255, 59, 48, 245]
-        if status in {"impassable", "diverted"}
-        else [255, 149, 0, 235]
-        for status in observed_points["traffic_status"]
-    ]
-    observed_points["tooltip_name"] = observed_points["location_name_raw"]
-    observed_points["tooltip_primary_label"] = "Độ sâu ghi nhận"
-    observed_points["tooltip_primary_value"] = observed_points["depth_text_raw"].fillna(
-        "Không rõ độ sâu"
-    )
-    rain_1h_by_ward = {
-        str(row["ward_code"]).zfill(5): rain_label(row["rain_1h_mm"])
-        for row in df_archive.to_dict(orient="records")
-    }
-    observed_points["tooltip_rain_1h"] = [
-        rain_1h_by_ward.get(str(code).zfill(5), "Không có dữ liệu")
-        for code in observed_points["ward_code"]
-    ]
-    observed_points["tooltip_status"] = observed_points["traffic_text_raw"]
-    layers.append(
-        pdk.Layer(
-            "ScatterplotLayer",
-            observed_points,
-            id="verified-flood-observations",
-            get_position=["longitude", "latitude"],
-            get_fill_color="color",
-            get_line_color=[255, 255, 255, 240],
-            stroked=True,
-            line_width_min_pixels=2,
-            get_radius=200,
-            radius_min_pixels=7,
-            radius_max_pixels=14,
-            pickable=True,
-        )
-    )
-
 map_legend = tuple(indicator["legend"])
-if show_observed:
-    map_legend += (("#FF3B30", "Ngập thực tế ghi nhận", "nguồn B · anchor high"),)
 legend_row(map_legend)
 
 map_col, rank_col = st.columns([3.2, 1])
@@ -467,42 +371,6 @@ with rank_col, st.container(border=True):
             column_config=number_columns,
         )
     st.caption("Đơn vị mm. Phường chung ô lưới có thể nhận cùng giá trị.")
-
-if not df_observed.empty:
-    st.markdown("### Đối chiếu với ngập đã xác nhận")
-    st.caption(
-        "Các điểm dưới đây đã được kiểm tra tên đường/POI và point-in-polygon "
-        "S13. Chúng là dữ liệu đối chiếu, không được dùng để suy ra xác suất ngập."
-    )
-    metric_strip(
-        [
-            (
-                "Quan sát đến giờ chọn",
-                str(len(df_observed)),
-                "Địa điểm đã xác minh",
-            ),
-        ]
-    )
-    observed_table = df_observed[
-        [
-            "location_name_raw",
-            "observed_at_utc",
-            "depth_text_raw",
-            "traffic_status",
-            "ward_code",
-        ]
-    ].copy()
-    observed_table["observed_at_utc"] = observed_table["observed_at_utc"].map(
-        lambda value: local_time(value, "%H:%M")
-    )
-    observed_table.columns = [
-        "Địa điểm",
-        "Ghi nhận",
-        "Độ sâu",
-        "Giao thông",
-        "Mã phường",
-    ]
-    st.dataframe(observed_table, hide_index=True, width="stretch")
 
 st.markdown("### Diễn biến quanh thời điểm đã chọn")
 if df_event.empty:

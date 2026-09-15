@@ -33,29 +33,3 @@ models:
                 values: ['era5', 'ecmwf_ifs']
       - name: grid_cell_id
         tests: [not_null]
-
-  - name: stg_seed__flood_observation
-    description: >
-      View mỏng cho quan sát ngập từ seed Flourish/VnExpress. Giữ nguyên các cột
-      `*_raw` để mọi phép suy diễn từ câu chữ tiếng Việt còn đối chiếu được.
-      Nối với `flood_observation_geocode_seed` để lấy toạ độ và phường;
-      `ward_code` CHỈ non-NULL khi geocode đã được người soát.
-    columns:
-      - name: observation_id
-        tests: [unique, not_null]
-      - name: event_id
-        tests: [not_null]
-      - name: is_flooded
-        tests: [not_null]
-      - name: observed_at_precision
-        tests:
-          - not_null
-          - accepted_values:
-              arguments:
-                values: ['hour', 'unknown']
-      - name: source_grade
-        tests:
-          - not_null
-          - accepted_values:
-              arguments:
-                values: ['A', 'B', 'C', 'D']

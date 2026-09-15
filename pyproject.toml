@@ -12,18 +12,16 @@ dependencies = [
     "duckdb>=1.5.5",
     "minio>=7.2.0",
     "psycopg[binary]>=3.2.0",
-
     # ── Transform (dbt + DuckDB) ──
     "dbt-duckdb>=1.11.0",
-
     # ── Runtime configuration ──
     "python-dotenv>=1.1.0",
-
     # ── Serving / Dashboard (Streamlit + deck.gl) ──
     "streamlit>=1.45.0",
     "pydeck>=0.9.1",
     "pandas>=2.2.0",
     "altair>=5.0.0",
+    "provero==0.2.1",
 ]
 
 [dependency-groups]
@@ -39,6 +37,7 @@ fetch-open-meteo = "vn_climate_risk_monitor.sources.open_meteo.cli:main"
 auto-loader = "vn_climate_risk_monitor.auto_loader.cli:main"
 auto-process = "vn_climate_risk_monitor.auto_process.cli:main"
 pipeline-health = "vn_climate_risk_monitor.quality.health:main"
+quality-gate = "vn_climate_risk_monitor.quality.gates:main"
 maintain-lakehouse = "vn_climate_risk_monitor.operations.maintenance:main"
 bootstrap-lakehouse = "vn_climate_risk_monitor.operations.bootstrap:main"
 reset-lakehouse = "vn_climate_risk_monitor.operations.reset:main"

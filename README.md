@@ -1,6 +1,6 @@
 # VN Climate Risk Monitor
 
-### Nền tảng giám sát áp lực mưa và phát lại dữ liệu ngập lụt lịch sử tại Hà Nội
+### Nền tảng giám sát áp lực mưa và phát lại dữ liệu thời tiết lịch sử tại Hà Nội
 
 ![Python](https://img.shields.io/badge/Language-Python_3.13-3776AB)
 ![Lakehouse](https://img.shields.io/badge/Lakehouse-DuckLake-F9C74F)
@@ -22,7 +22,7 @@ nguyên bản phản hồi nguồn, xử lý dữ liệu theo kiến trúc medal
 
 - dự báo mưa trong 72 giờ;
 - chỉ số áp lực mưa có thể giải thích theo từng phường/xã;
-- dữ liệu mưa lịch sử đặt cạnh các quan sát ngập đã được kiểm chứng;
+- dữ liệu mưa lịch sử theo ngày, giờ và nguồn archive;
 - trạng thái pipeline, checkpoint, lineage và lịch sử publication.
 
 > [!IMPORTANT]
@@ -33,6 +33,13 @@ nguyên bản phản hồi nguồn, xử lý dữ liệu theo kiến trúc medal
 ## Kiến trúc hệ thống
 
 ![Kiến trúc VN Climate Risk Monitor](docs/vn-climate-risk-monitor-architecture.png)
+
+### dbt lineage
+
+![dbt lineage của pipeline](docs/dbt-lineage.png)
+
+Graph dbt hiện tại thể hiện luồng từ các source và seed địa lý qua Silver,
+Intermediate đến các Gold model phục vụ dashboard.
 
 | Lớp | Thành phần | Trách nhiệm |
 |---|---|---|
@@ -112,11 +119,11 @@ vn-climate-risk-monitor/
 │   ├── quality/                    # Health và readiness checks
 │   └── sources/open_meteo/         # Lập kế hoạch và tải dữ liệu nguồn
 ├── tests/                          # Unit tests và contract tests
-├── tools/                          # Geocoding, scraping và tạo GeoJSON
+├── tools/                          # Tạo GeoJSON
 ├── transform/
 │   ├── macros/                     # Incremental scope và data quality
 │   ├── models/                     # Staging, intermediate và Gold marts
-│   ├── seeds/                      # Geography và flood references
+│   ├── seeds/                      # Geography references
 │   └── tests/                      # dbt singular tests
 ├── .env.example                    # Mẫu cấu hình local
 ├── docker-compose.yml              # Toàn bộ single-node runtime
@@ -131,7 +138,6 @@ vn-climate-risk-monitor/
 | Open-Meteo Forecast API | Thời tiết theo giờ | 72 giờ tiếp theo | Dự báo mưa và tính rainfall-pressure signal |
 | Open-Meteo Archive API | Thời tiết lịch sử theo giờ | ERA5 trước 2017, ECMWF IFS từ 2017 | Phát lại dữ liệu mưa lịch sử |
 | Geography seeds | Tọa độ, ranh giới và ánh xạ weather grid | 126 phường/xã Hà Nội | Liên kết dữ liệu thời tiết với địa giới hành chính |
-| Flood reference seeds | Điểm ngập và quan sát sự kiện | Dữ liệu tham chiếu đã chuẩn hóa | Đặt lượng mưa lịch sử trong bối cảnh ngập thực tế |
 
 Forecast và archive sử dụng grain riêng. Mỗi bản ghi staging giữ metadata ingestion
 và `_source_file`; các mô hình thời tiết lịch sử không bị trộn âm thầm vào cùng
@@ -178,8 +184,7 @@ signal và độ dai dẳng.
 
 ### Phát lại quá khứ
 
-Phát lại lượng mưa lịch sử theo ngày và giờ địa phương, đồng thời đặt dữ liệu
-khí tượng cạnh các quan sát ngập đã được kiểm chứng.
+Phát lại lượng mưa lịch sử theo ngày, giờ địa phương và nguồn archive.
 
 ## Hướng dẫn chạy
 
@@ -299,6 +304,6 @@ trên Windows. Container và CI đã sử dụng UTF-8 locale.
 
 - Chạy theo mô hình local single-node, single-writer; không hỗ trợ HA hoặc scale-out.
 - Pressure signal phản ánh áp lực khí tượng, không phải xác suất hay độ sâu ngập.
-- Geography và flood references là dữ liệu seed có version, không phải nguồn realtime.
+- Geography là dữ liệu seed có version, không phải nguồn realtime.
 - Credential trong `.env` chỉ phù hợp cho môi trường local, không thay thế secret
   management của production.

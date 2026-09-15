@@ -24,6 +24,7 @@ from vn_climate_risk_monitor.auto_process.state import (
 )
 from vn_climate_risk_monitor.platform.lakehouse import PRIMARY_CATALOG, get_connection
 from vn_climate_risk_monitor.platform.settings import load_settings
+from vn_climate_risk_monitor.quality.gates import run_silver_gate
 
 TRANSFORM_DIR = Path("transform")
 
@@ -86,6 +87,29 @@ def _publication_metrics(config: ProcessConfig) -> dict[str, int | None]:
     }
 
 
+def run_processing_phases(
+    config: ProcessConfig,
+    bounds: Bounds,
+    *,
+    dbt_runner=run_dbt,
+    silver_gate=run_silver_gate,
+    metrics_reader=_publication_metrics,
+) -> dict[str, int | None]:
+    """Build Silver, gate it, then build and publish tested Gold."""
+    dbt_runner(
+        bounds,
+        project_dir=TRANSFORM_DIR,
+        selection=f"int_weather_{config.process_key}_hourly",
+    )
+    silver_gate(config.process_key)
+    dbt_runner(
+        bounds,
+        project_dir=TRANSFORM_DIR,
+        selection=f"tag:marts,tag:{config.process_key}",
+    )
+    return metrics_reader(config)
+
+
 def _run_one(config: ProcessConfig, args: argparse.Namespace) -> None:
     if args.full_refresh and not (args.reason and args.reason.strip()):
         raise SystemExit("--full-refresh cần --reason để audit")
@@ -93,13 +117,7 @@ def _run_one(config: ProcessConfig, args: argparse.Namespace) -> None:
     repository, connection = open_repository()
 
     def execute(bounds: Bounds) -> dict[str, int | None]:
-        # Read metrics only after dbt build and its data tests succeed.
-        run_dbt(
-            bounds,
-            project_dir=TRANSFORM_DIR,
-            selection=f"tag:{config.process_key}",
-        )
-        return _publication_metrics(config)
+        return run_processing_phases(config, bounds)
 
     try:
         result = run_process(
