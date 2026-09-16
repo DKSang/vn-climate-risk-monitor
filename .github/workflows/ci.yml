@@ -93,7 +93,7 @@ jobs:
 
       - name: Parse DAGs in the runtime image
         run: |
-          docker compose run --rm --no-deps airflow python - <<'PY'
+          docker compose run --rm --no-deps --entrypoint python airflow - <<'PY'
           from airflow.models.dagbag import DagBag
 
           dagbag = DagBag('/opt/airflow/dags', include_examples=False)
