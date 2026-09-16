@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Đồng bộ bộ ranh giới S13 đã ghim phiên bản cho 126 phường/xã Hà Nội."""
 
 from __future__ import annotations
