@@ -24,6 +24,22 @@ insights for 126 administrative areas in Hanoi.
 |---|---|---|---|
 | Hanoi wards/communes | Forecast horizon | Airflow forecast DAG | Quality and behavior coverage |
 
+## Pipeline scale and runtime
+
+The figures below combine design-time volume formulas with local runs measured on 16 Sep 2026.
+Runtime varies with API latency, machine resources and whether the run is a first load or an
+incremental update.
+
+| Pipeline | Input volume per run | Output volume per run | Processing time |
+|---|---|---|---|
+| Forecast, hourly | 126 locations × 72 hours = **9,072 source rows**; 6 API requests with batch size 25 | 48 weather grids × 72 hours = **3,456 curated rows**; ward serving layer = **9,072 rows** | **31–59s end-to-end** on recent successful Airflow runs; **18–32s** for processing and publication |
+| Archive, monthly | 31-day month: 48 IFS grids × 31 × 24 = **35,712 source rows**, or 12 ERA5 grids × 31 × 24 = **8,928 rows**; 2 IFS requests or 1 ERA5 request | 31-day IFS month = **35,712 rows**; 31-day ERA5 month = **8,928 rows** | **344.9s (~5m45s)** for a measured full IFS month processing run; **38.7s** for an already-covered rerun |
+
+The measured local Bronze footprint was approximately **2.76 MB for 8 forecast vintages** and
+**1.29 MB for one archive month**. The latest local Gold tables contained **27,648 forecast
+history rows**, **3,456 current forecast rows**, **9,072 pressure rows** and **35,712 archive
+rows**. These are reproducible sample-run figures, not a production capacity claim.
+
 ## What this project demonstrates
 
 - Batch ingestion from external APIs with deterministic request windows and retry-safe object keys.
