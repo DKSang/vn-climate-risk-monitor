@@ -376,7 +376,7 @@ def test_forecast_re_reads_all_rows_for_runs_touched_by_the_changed_window() -> 
     assert "incremental_changed_filter" in sql
     assert sql.index("changed_runs AS") < sql.index("staged AS")
     assert "FROM raw_rows" in sql
-    assert "forecast_run_id IN (SELECT forecast_run_id FROM changed_runs)" in sql
+    assert "INNER JOIN changed_runs USING (weather_model, forecast_run_id)" in sql
 
 
 def test_forecast_completeness_counts_source_locations_before_grid_dedup() -> None:

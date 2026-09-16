@@ -19,6 +19,11 @@ SOURCE_GROUPS = {
             target="catalog1.silver.stg_weather_forecast",
             batch_size=10,
             parameters={},
+            target_columns={
+                "weather_model": "VARCHAR",
+                "forecast_run_id": "VARCHAR",
+                "forecast_run_at": "TIMESTAMPTZ",
+            },
             base_dir=SOURCE_DIR,
         ),
     ),

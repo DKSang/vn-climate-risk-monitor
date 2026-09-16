@@ -128,7 +128,7 @@ def month_params(month: date, model: ArchiveModel) -> tuple[str, dict[str, str]]
 def slot_params(
     slot: datetime, settings: OpenMeteoSettings
 ) -> tuple[str, dict[str, str]]:
-    prefix = f"{FORECAST_PREFIX}/{slot:%Y/%m/%d/%H}"
+    prefix = f"{FORECAST_PREFIX}/model={settings.forecast_model}/{slot:%Y/%m/%d/%H}"
     return prefix, {
         "hourly": FORECAST_FIELDS,
         "models": settings.forecast_model,

@@ -66,10 +66,10 @@ dimension địa lý khi xuất bản sang Gold.
 | `int_weather_forecast_hourly` | Forecast run × grid × giờ; chỉ nhận run đủ 126 locations × 72 giờ rồi loại trùng | Giữ lịch sử các forecast vintage mà không trộn các run |
 | `stg_seed__ward` và `stg_seed__ward_grid` | 126 phường/xã Hà Nội và ánh xạ phường → grid theo weather model | Chuẩn hóa geography seed trước khi tạo dimension |
 | `dim_ward`, `dim_grid` | Một dòng cho mỗi phường và mỗi ô lưới thời tiết | Dimension dùng chung cho archive, forecast và dashboard |
-| `bridge_ward_grid` | Phường × weather model → grid; forecast dùng grid gần nhất của mesh hiện hành | Nối dữ liệu theo ô lưới về địa bàn hành chính mà không nhúng grid vào `dim_ward` |
+| `bridge_ward_grid` | Phường × weather model → grid từ seed đã version hóa | Nối dữ liệu theo ô lưới về địa bàn hành chính mà không nhúng grid vào `dim_ward` |
 | `fct_rain_archive_hourly` | Grid × giờ với cửa sổ mưa 1/3/6/12/24 giờ và các dải kịch bản | Phục vụ phát lại, đối chiếu và phân tích mưa lịch sử |
 | `fct_rain_forecast_hourly` | Forecast run × grid × giờ với cả rolling history và `forecast_next_*h_mm` | Giữ đầy đủ lịch sử dự báo để so sánh các lần phát hành |
-| `fct_rain_forecast_current_hourly` | View của horizon thuộc forecast run mới nhất | Cung cấp lát cắt forecast hiện hành cho truy vấn nhanh |
+| `fct_rain_forecast_current_hourly` | View của horizon thuộc logical forecast run mới nhất theo `forecast_run_at` | Cung cấp lát cắt forecast hiện hành cho truy vấn nhanh; `_ingested_at` chỉ là tie-breaker |
 | `fct_rain_pressure_alert` | Phường × giờ của run mới nhất; kết hợp forecast 1/3/6/24 giờ, revision và persistence | Tạo `pressure_score`, `pressure_level` và lý do kích hoạt cho dashboard; đây không phải xác suất ngập hay cảnh báo chính thức |
 
 Các test schema kiểm tra unique key, `not_null`, relationship, accepted values,

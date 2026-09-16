@@ -46,7 +46,10 @@ models:
         description: "Thời điểm vintage được publish vào Silver."
         tests: [not_null]
       - name: forecast_run_id
-        description: "Logical retrieval run từ path raw, ví dụ run_20260907T101500"
+        description: "Logical retrieval run từ path raw, ví dụ run_20260907T100000"
+        tests: [not_null]
+      - name: forecast_run_at
+        description: "UTC slot của logical retrieval run; không phải ingestion time"
         tests: [not_null]
       - name: is_active
         tests: [not_null]
@@ -57,6 +60,6 @@ models:
           - not_null
           - accepted_values:
               arguments:
-                values: ['ecmwf_ifs_fc']
+                values: ['best_match', 'ecmwf_ifs']
       - name: valid_time_utc
         tests: [not_null]

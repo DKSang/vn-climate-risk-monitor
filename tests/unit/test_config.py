@@ -10,6 +10,7 @@ def runtime_secrets(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("POSTGRES_PASSWORD", "test-postgres")
     monkeypatch.setenv("MINIO_ACCESS_KEY", "test-minio-user")
     monkeypatch.setenv("MINIO_SECRET_KEY", "test-minio")
+    monkeypatch.setenv("OPEN_METEO_FORECAST_MODEL", "ecmwf_ifs")
     monkeypatch.delenv("POSTGRES_PASSWORD_FILE", raising=False)
     monkeypatch.delenv("MINIO_SECRET_KEY_FILE", raising=False)
     load_settings.cache_clear()
@@ -73,6 +74,18 @@ def test_open_meteo_settings_reject_invalid_integer(
     load_settings.cache_clear()
 
     with pytest.raises(ValueError, match="OPEN_METEO_FORECAST_HOURS"):
+        load_settings()
+
+    load_settings.cache_clear()
+
+
+def test_forecast_model_rejects_semantically_incompatible_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPEN_METEO_FORECAST_MODEL", "best_match")
+    load_settings.cache_clear()
+
+    with pytest.raises(ValueError, match="OPEN_METEO_FORECAST_MODEL"):
         load_settings()
 
     load_settings.cache_clear()

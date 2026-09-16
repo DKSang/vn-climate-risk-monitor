@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -314,6 +315,38 @@ def test_reloading_the_same_object_replaces_rows_without_duplicates(
     assert second_rows == first_rows
 
 
+def test_declared_columns_evolve_an_existing_staging_table(tmp_path: Path) -> None:
+    config = build_idempotency_config(tmp_path)
+    (tmp_path / config.sql_file).write_text(
+        "SELECT source_file AS _source_file, md5(source_file) AS row_hash, "
+        "'ecmwf_ifs' AS weather_model "
+        "FROM UNNEST({{ files }}) AS source_files(source_file)",
+        encoding="utf-8",
+    )
+    config = replace(config, target_columns={"weather_model": "VARCHAR"})
+    sql = RecordingSql()
+    sql.connection.execute(
+        "CREATE TABLE main.staging (_source_file VARCHAR, row_hash VARCHAR)"
+    )
+    loader = AutoLoader(
+        config=config,
+        checkpoint=FakeCheckpoint(),
+        object_client=FakeObjectClient(["raw/a.json"]),
+        sql=sql,
+        bucket="bkt",
+        worker_id="w1",
+    )
+
+    result = loader.load()
+    columns = {
+        row[1]
+        for row in sql.connection.execute("PRAGMA table_info('main.staging')").fetchall()
+    }
+
+    assert result.failures == ()
+    assert "weather_model" in columns
+
+
 def test_commit_gap_retry_replaces_rows_after_expired_lease(tmp_path: Path) -> None:
     events: list[str] = []
     checkpoint = CrashGapCheckpoint(events)
@@ -551,6 +584,60 @@ def test_sources_do_not_use_duckdb_clock_for_ingested_at() -> None:
         )
         assert "{{ ingested_at }}" in code, path
         assert "CURRENT_TIMESTAMP" not in code, path
+
+
+def test_forecast_parser_preserves_model_and_logical_run_metadata(tmp_path: Path) -> None:
+    source_file = (
+        tmp_path
+        / "model=ecmwf_ifs"
+        / "2026"
+        / "09"
+        / "15"
+        / "06"
+        / "run_20260915T060000"
+        / "response_000.json"
+    )
+    source_file.parent.mkdir(parents=True)
+    source_file.write_text(
+        json.dumps(
+            {
+                "latitude": 21.0,
+                "longitude": 105.75,
+                "elevation": 12.0,
+                "timezone": "UTC",
+                "utc_offset_seconds": 0,
+                "hourly_units": {"time": "unixtime"},
+                "hourly": {
+                    "time": [1789432800],
+                    "precipitation": [1.0],
+                    "rain": [1.0],
+                    "showers": [0.0],
+                    "precipitation_probability": [80],
+                    "weather_code": [61],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    template = Path(
+        "src/vn_climate_risk_monitor/auto_loader/sql/open_meteo_forecast.sql"
+    ).read_text(encoding="utf-8")
+    rendered = template.replace("{{ files }}", repr([source_file.as_posix()])).replace(
+        "{{ ingested_at }}", "TIMESTAMPTZ '2026-09-15 06:05:00+00'"
+    )
+
+    row = duckdb.connect().execute(
+        f"""
+        SELECT weather_model, forecast_run_id, forecast_run_at
+        FROM ({rendered})
+        """
+    ).fetchone()
+
+    assert row == (
+        "ecmwf_ifs",
+        "run_20260915T060000",
+        datetime(2026, 9, 15, 6, tzinfo=UTC),
+    )
 
 
 def test_repository_has_a_real_discovery_run_lifecycle() -> None:

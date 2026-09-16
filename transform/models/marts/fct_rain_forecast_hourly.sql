@@ -28,7 +28,9 @@ WITH source AS (
 windowed AS (
     SELECT
         grid_cell_id,
+        weather_model,
         forecast_run_id,
+        forecast_run_at,
         valid_time_utc,
         precipitation_mm,
         rain_mm,
@@ -58,6 +60,8 @@ published AS (
             AS rain_forecast_hourly_key,
         forecast_run_id,
         grid_cell_id,
+        weather_model,
+        forecast_run_at,
         valid_time_utc,
         CAST(valid_time_utc AS DATE) AS forecast_date,
         precipitation_mm,

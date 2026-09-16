@@ -254,12 +254,23 @@ def test_approved_operational_console_entry_points_are_package_owned() -> None:
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     scripts = project["project"]["scripts"]
 
+    assert set(scripts) == {
+        "fetch-open-meteo",
+        "auto-loader",
+        "auto-process",
+        "pipeline-health",
+        "quality-gate",
+        "maintain-lakehouse",
+        "bootstrap-lakehouse",
+        "reset-lakehouse",
+    }
     assert scripts["fetch-open-meteo"] == (
         "vn_climate_risk_monitor.sources.open_meteo.cli:main"
     )
     assert scripts["auto-loader"] == "vn_climate_risk_monitor.auto_loader.cli:main"
     assert scripts["auto-process"] == "vn_climate_risk_monitor.auto_process.cli:main"
     assert scripts["pipeline-health"] == "vn_climate_risk_monitor.quality.health:main"
+    assert scripts["quality-gate"] == "vn_climate_risk_monitor.quality.gates:main"
     assert scripts["maintain-lakehouse"] == (
         "vn_climate_risk_monitor.operations.maintenance:main"
     )
@@ -319,10 +330,14 @@ def test_compose_has_only_runtime_services() -> None:
     assert "${MINIO_SECRET_KEY:-" not in compose_text
 
 
-def test_dashboard_image_exposes_project_package_to_streamlit() -> None:
-    dockerfile = (ROOT / "docker/dashboard.Dockerfile").read_text(encoding="utf-8")
+def test_runtime_images_install_project_entry_points() -> None:
+    for relative_path in ("docker/airflow.Dockerfile", "docker/dashboard.Dockerfile"):
+        dockerfile = (ROOT / relative_path).read_text(encoding="utf-8")
 
-    assert "PYTHONPATH=/project/src:/project" in dockerfile
+        assert "RUN uv sync --frozen --no-dev\n" in dockerfile
+        assert "for spec in" not in dockerfile
+        assert "printf '#!/bin/sh" not in dockerfile
+        assert "PYTHONPATH=" not in dockerfile
 
 
 def test_bootstrap_partial_dbt_build_only_selects_tests_with_complete_parents() -> None:

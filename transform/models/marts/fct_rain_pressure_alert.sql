@@ -18,13 +18,14 @@
 WITH history AS (
     SELECT *
     FROM {{ ref('fct_rain_forecast_hourly') }}
+    WHERE weather_model = '{{ var('forecast_model', 'ecmwf_ifs') }}'
 ),
 
 ranked_runs AS (
     SELECT
         forecast_run_id,
         ROW_NUMBER() OVER (
-            ORDER BY MAX(_ingested_at) DESC, forecast_run_id DESC
+            ORDER BY {{ forecast_run_order() }}
         ) AS run_rank
     FROM history
     GROUP BY forecast_run_id
@@ -51,9 +52,10 @@ run_pressure AS (
 current_forecast AS (
     SELECT
         f.forecast_run_id,
+        f.weather_model,
         f.grid_cell_id,
         f.valid_time_utc,
-        f._ingested_at AS issued_at_utc,
+        f.forecast_run_at AS issued_at_utc,
         b.ward_code,
         f.forecast_next_1h_mm,
         f.forecast_next_3h_mm,
@@ -65,7 +67,7 @@ current_forecast AS (
     FROM {{ ref('fct_rain_forecast_current_hourly') }} AS f
     JOIN {{ ref('bridge_ward_grid') }} AS b
         ON b.grid_cell_id = f.grid_cell_id
-       AND b.weather_model = 'ecmwf_ifs_fc'
+       AND b.weather_model = f.weather_model
        AND b.is_active = TRUE
     LEFT JOIN run_pressure AS p
         ON p.grid_cell_id = f.grid_cell_id
@@ -169,6 +171,7 @@ SELECT
     ))
         AS rain_pressure_alert_key,
     forecast_run_id,
+    weather_model,
     ward_code,
     grid_cell_id,
     valid_time_utc,

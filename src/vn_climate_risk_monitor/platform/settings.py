@@ -98,6 +98,9 @@ class Settings:
 @lru_cache(maxsize=1)
 def load_settings() -> Settings:
     """Load settings once from ``.env`` and environment variables."""
+    forecast_model = os.getenv("OPEN_METEO_FORECAST_MODEL", "ecmwf_ifs")
+    if forecast_model != "ecmwf_ifs":
+        raise ValueError("OPEN_METEO_FORECAST_MODEL must be 'ecmwf_ifs'")
     return Settings(
         minio=MinioSettings(
             endpoint=os.getenv("MINIO_ENDPOINT", "localhost:9000"),
@@ -123,7 +126,7 @@ def load_settings() -> Settings:
                 "https://archive-api.open-meteo.com/v1/archive",
             ),
             # Archive model is period-based; see model_for_month().
-            forecast_model=os.getenv("OPEN_METEO_FORECAST_MODEL", "best_match"),
+            forecast_model=forecast_model,
             forecast_hours=_as_int(
                 "OPEN_METEO_FORECAST_HOURS",
                 os.getenv("OPEN_METEO_FORECAST_HOURS", "72"),

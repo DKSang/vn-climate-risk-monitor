@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import importlib
 import inspect
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
+import duckdb
 import pytest
 
 from vn_climate_risk_monitor.sources.open_meteo import cli as open_meteo
@@ -29,7 +30,7 @@ LOCATIONS = tuple(Location(f"P{i:03}", 21.0 + i * 0.01, 105.8) for i in range(4)
 SETTINGS = SimpleNamespace(
     archive_url="https://archive-api.open-meteo.com/v1/archive",
     forecast_url="https://api.open-meteo.com/v1/forecast",
-    forecast_model="best_match",
+    forecast_model="ecmwf_ifs",
     forecast_hours=72,
     location_batch_size=2,
 )
@@ -178,9 +179,83 @@ def test_forecast_still_batches_wards(tmp_path: Path) -> None:
     assert len(tasks) == 2  # 4 phường / batch_size 2
     assert tasks[0].url.startswith("https://api.open-meteo.com/v1/forecast?")
     assert tasks[0].key.startswith(
-        "bronze/files/open_meteo/forecast/incremental/2026/08/27/09/run_fc/"
+        "bronze/files/open_meteo/forecast/incremental/model=ecmwf_ifs/"
+        "2026/08/27/09/run_fc/"
     )
     assert "timeformat=unixtime" in tasks[0].url
+    assert "models=ecmwf_ifs" in tasks[0].url
+
+
+def test_archive_month_requires_every_expected_grid() -> None:
+    connection = duckdb.connect()
+    month = date(2026, 8, 1)
+    try:
+        connection.execute(
+            """
+            CREATE TABLE archive_hourly (
+                weather_model VARCHAR,
+                grid_latitude DOUBLE,
+                grid_longitude DOUBLE,
+                valid_time_utc TIMESTAMPTZ
+            )
+            """
+        )
+        start = datetime(2026, 8, 1, tzinfo=UTC)
+        connection.executemany(
+            "INSERT INTO archive_hourly VALUES ('ecmwf_ifs', 21.0, 105.75, ?)",
+            [(start + timedelta(hours=hour),) for hour in range(31 * 24)],
+        )
+
+        covered = open_meteo.covered_months(
+            connection,
+            "archive_hourly",
+            weather_model="ecmwf_ifs",
+            expected_cells=(
+                grid.GridCell(21.0, 105.75),
+                grid.GridCell(21.0, 105.84),
+            ),
+        )
+
+        assert month not in covered
+    finally:
+        connection.close()
+
+
+def test_archive_month_is_covered_when_each_expected_grid_has_every_hour() -> None:
+    connection = duckdb.connect()
+    month = date(2026, 8, 1)
+    try:
+        connection.execute(
+            """
+            CREATE TABLE archive_hourly (
+                weather_model VARCHAR,
+                grid_latitude DOUBLE,
+                grid_longitude DOUBLE,
+                valid_time_utc TIMESTAMPTZ
+            )
+            """
+        )
+        start = datetime(2026, 8, 1, tzinfo=UTC)
+        rows = [
+            ("ecmwf_ifs", latitude, longitude, start + timedelta(hours=hour))
+            for latitude, longitude in ((21.0, 105.75), (21.0, 105.84))
+            for hour in range(31 * 24)
+        ]
+        connection.executemany("INSERT INTO archive_hourly VALUES (?, ?, ?, ?)", rows)
+
+        covered = open_meteo.covered_months(
+            connection,
+            "archive_hourly",
+            weather_model="ecmwf_ifs",
+            expected_cells=(
+                grid.GridCell(21.0, 105.75),
+                grid.GridCell(21.0, 105.84),
+            ),
+        )
+
+        assert covered == frozenset({month})
+    finally:
+        connection.close()
 
 
 def test_forecast_run_id_is_stable_for_retries_in_the_same_hour() -> None:

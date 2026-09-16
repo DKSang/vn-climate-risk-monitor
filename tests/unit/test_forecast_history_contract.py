@@ -37,6 +37,31 @@ def test_current_view_is_separate_from_history_table() -> None:
     assert "DATE_TRUNC('hour', CURRENT_TIMESTAMP)" in current_view
 
 
+def test_logical_run_order_and_model_provenance_reach_every_forecast_consumer() -> None:
+    intermediate = _sql("intermediate/int_weather_forecast_hourly.sql")
+    fact = _sql("marts/fct_rain_forecast_hourly.sql")
+    current = _sql("marts/fct_rain_forecast_current_hourly.sql")
+    alert = _sql("marts/fct_rain_pressure_alert.sql")
+    bridge = _sql("marts/bridge_ward_grid.sql")
+    dashboard = _serving_sql()
+    forecast_sql = (
+        f"{intermediate}\n{fact}\n{current}\n{alert}\n{bridge}\n{dashboard}"
+    )
+
+    assert "forecast_run_at" in intermediate
+    assert "SELECT DISTINCT weather_model, forecast_run_id" in intermediate
+    assert "GROUP BY weather_model, forecast_run_id, valid_time_utc" in intermediate
+    assert "weather_model" in fact
+    assert "forecast_run_at" in fact
+    assert "forecast_run_order()" in current
+    assert "var('forecast_model'" in current
+    assert "forecast_run_order()" in alert
+    assert "var('forecast_model'" in alert
+    assert "f.weather_model" in alert
+    assert "f.forecast_run_at AS issued_at_utc" in alert
+    assert "ecmwf_ifs_fc" not in forecast_sql
+
+
 def test_forecast_pressure_alert_uses_forward_windows_and_current_run() -> None:
     forecast = _sql("marts/fct_rain_forecast_hourly.sql")
     alert = _sql("marts/fct_rain_pressure_alert.sql")
