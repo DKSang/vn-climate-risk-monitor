@@ -1,9 +1,9 @@
 # VN Climate Risk Monitor
 
-End-to-end Data Engineering portfolio project for monitoring rainfall pressure across Hanoi.
-The platform ingests hourly Open-Meteo data, preserves immutable raw responses, builds tested
-Silver/Gold datasets, orchestrates reliable batch pipelines with Airflow, and serves a
-snapshot-consistent Streamlit dashboard.
+Airflow • dbt • DuckDB/DuckLake • MinIO • PostgreSQL • Docker
+
+An end-to-end data platform that turns hourly Open-Meteo weather data into tested rainfall
+insights for 126 administrative areas in Hanoi.
 
 ![Python](https://img.shields.io/badge/Python-3.12%2B-3776AB)
 ![Airflow](https://img.shields.io/badge/Orchestration-Airflow-017CEE)
@@ -16,7 +16,13 @@ snapshot-consistent Streamlit dashboard.
 > Portfolio scope: local single-node, single-writer system designed to demonstrate data
 > engineering fundamentals. It is not an official weather warning or flood prediction service.
 
+![VN Climate Risk Monitor architecture](docs/vn-climate-risk-monitor-architecture.png)
+
 ![Dashboard rainfall forecast](docs/dashboard-forecast-map.png)
+
+| 126 administrative areas | 72-hour forecast | Hourly orchestration | 141 dbt data tests · 216 unit tests |
+|---|---|---|---|
+| Hanoi wards/communes | Forecast horizon | Airflow forecast DAG | Quality and behavior coverage |
 
 ## What this project demonstrates
 
@@ -43,8 +49,6 @@ The pressure signal is an explainable prioritization metric based on rainfall fo
 persistence. It is not a flood probability or flood-depth model.
 
 ## Architecture
-
-![VN Climate Risk Monitor architecture](docs/vn-climate-risk-monitor-architecture.png)
 
 ```text
 Open-Meteo Forecast / Archive APIs
