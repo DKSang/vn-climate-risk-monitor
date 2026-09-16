@@ -25,11 +25,10 @@ Linux containers and CI already use UTF-8 locales.
 
 The first environment initialization must create both physical Silver weather
 tables before a tagged Gold build. Fetch at least one forecast run and the intended
-archive window, then run `auto-loader` and `auto-process run` without a group. The
-automatic processing order is archive then forecast because the shared grid
-dimension reads the archive intermediate model. Later scheduled runs can target a
-single group. Missing cross-domain relations fail fast; dbt no longer hides them
-behind relation-existence branches or empty placeholder CTEs.
+archive window, then trigger the archive DAG followed by the forecast DAG. The DAG
+order is archive then forecast because the shared grid dimension reads the archive
+intermediate model. Missing cross-domain relations fail fast; dbt no longer hides
+them behind relation-existence branches or empty placeholder CTEs.
 
 ## Normal runs
 
@@ -39,12 +38,15 @@ Airflow owns schedule and task retries. The two data DAGs are explicit:
 copy_raw → autoload_staging → process_dbt → health
 ```
 
-Manual commands use the same public interfaces:
+Airflow owns one complete run, including dbt publication and checkpoint advance.
+For an ad-hoc end-to-end run, trigger `open_meteo_forecast_hourly`; `auto-process`
+intentionally exposes the phases used by that DAG rather than a `run` subcommand.
+These public commands are useful for manual ingestion and diagnosis:
 
 ```text
 fetch-open-meteo forecast --execute
 auto-loader forecast
-auto-process run forecast
+auto-process status forecast
 pipeline-health --scope forecast --require-gold
 ```
 
