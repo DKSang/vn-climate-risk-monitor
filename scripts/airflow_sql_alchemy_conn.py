@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Print Airflow's metadata URI using the required local runtime settings."""
 
 from __future__ import annotations
