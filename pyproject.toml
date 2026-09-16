@@ -3,9 +3,6 @@ name = "vn-climate-risk-monitor"
 version = "0.1.0"
 description = "Hanoi Flood & Climate Risk Monitor — DuckLake lakehouse + medallion architecture"
 readme = "README.md"
-authors = [
-    { name = "Antigravity", email = "antigravity@bmad-method.org" }
-]
 requires-python = ">=3.12"
 dependencies = [
     # ── Lakehouse (DuckDB compute + MinIO storage) ──
