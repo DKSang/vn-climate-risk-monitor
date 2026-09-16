@@ -1,278 +1,199 @@
 # VN Climate Risk Monitor
 
-### Nền tảng giám sát áp lực mưa và phát lại dữ liệu thời tiết lịch sử tại Hà Nội
+End-to-end Data Engineering portfolio project for monitoring rainfall pressure across Hanoi.
+The platform ingests hourly Open-Meteo data, preserves immutable raw responses, builds tested
+Silver/Gold datasets, orchestrates reliable batch pipelines with Airflow, and serves a
+snapshot-consistent Streamlit dashboard.
 
-![Python](https://img.shields.io/badge/Language-Python_3.13-3776AB)
-![Lakehouse](https://img.shields.io/badge/Lakehouse-DuckLake-F9C74F)
-![Storage](https://img.shields.io/badge/Object_Storage-MinIO-C72E49)
-![Orchestration](https://img.shields.io/badge/Orchestration-Apache_Airflow-017CEE)
-![Dashboard](https://img.shields.io/badge/Dashboard-Streamlit-FF4B4B)
-![Deployment](https://img.shields.io/badge/Deployment-Docker_Compose-2496ED)
+![Python](https://img.shields.io/badge/Python-3.12%2B-3776AB)
+![Airflow](https://img.shields.io/badge/Orchestration-Airflow-017CEE)
+![dbt](https://img.shields.io/badge/Transform-dbt-FF694B)
+![DuckLake](https://img.shields.io/badge/Lakehouse-DuckLake-F9C74F)
+![MinIO](https://img.shields.io/badge/Object_Storage-MinIO-C72E49)
+![Streamlit](https://img.shields.io/badge/Serving-Streamlit-FF4B4B)
+[![CI](https://github.com/DKSang/vn-climate-risk-monitor/actions/workflows/ci.yml/badge.svg)](https://github.com/DKSang/vn-climate-risk-monitor/actions/workflows/ci.yml)
 
-## Bài toán
+> Portfolio scope: local single-node, single-writer system designed to demonstrate data
+> engineering fundamentals. It is not an official weather warning or flood prediction service.
 
-Mưa lớn và ngập lụt đô thị có thể gây gián đoạn giao thông, ảnh hưởng sinh hoạt
-và tạo áp lực lên hạ tầng của Hà Nội. Để hỗ trợ việc theo dõi rủi ro, dữ liệu dự
-báo cần được cập nhật thường xuyên, dữ liệu lịch sử cần có khả năng phát lại, và
-mọi kết quả công bố phải truy vết được về nguồn.
+![Dashboard rainfall forecast](docs/dashboard-forecast-map.png)
 
-VN Climate Risk Monitor xây dựng một data platform tự động cho **126 phường/xã
-của Hà Nội**. Hệ thống thu thập dữ liệu thời tiết theo giờ từ Open-Meteo, lưu
-nguyên bản phản hồi nguồn, xử lý dữ liệu theo kiến trúc medallion và hiển thị:
+## What this project demonstrates
 
-- dự báo mưa trong 72 giờ;
-- chỉ số áp lực mưa có thể giải thích theo từng phường/xã;
-- dữ liệu mưa lịch sử theo ngày, giờ và nguồn archive;
-- trạng thái pipeline, checkpoint, lineage và lịch sử publication.
+- Batch ingestion from external APIs with deterministic request windows and retry-safe object keys.
+- Immutable Bronze storage on MinIO with source-file lineage retained into Silver.
+- Stateful incremental loading with PostgreSQL leases, checkpoints, retries and processing audit.
+- dbt/DuckDB transformations with explicit grains, deduplication and data quality tests.
+- Airflow orchestration for forecast, archive and lakehouse maintenance workflows.
+- Fail-closed publication: Gold is exposed only after transformation and validation succeed.
+- Snapshot-pinned Streamlit serving so one dashboard view never mixes two pipeline publications.
+- Reproducible local deployment and CI checks using Docker Compose, uv, Ruff, pytest and dbt.
 
-> [!IMPORTANT]
-> Đây là dự án portfolio chạy trên một máy cục bộ. Hệ thống không phải cảnh báo
-> thời tiết chính thức, không dự đoán xác suất ngập và không được thiết kế như
-> một dịch vụ high availability.
+## Business problem
 
-## Kiến trúc hệ thống
+Heavy rainfall can disrupt transport and urban infrastructure in Hanoi. The project turns raw
+weather API responses into a traceable analytical product for 126 wards/communes:
 
-![Kiến trúc VN Climate Risk Monitor](docs/vn-climate-risk-monitor-architecture.png)
+- 72-hour rainfall forecast;
+- rainfall-pressure signal by ward/commune;
+- historical rainfall replay by hour and weather model;
+- pipeline health, checkpoint, lineage and publication metadata.
 
-| Lớp | Thành phần | Trách nhiệm |
+The pressure signal is an explainable prioritization metric based on rainfall forecasts and
+persistence. It is not a flood probability or flood-depth model.
+
+## Architecture
+
+![VN Climate Risk Monitor architecture](docs/vn-climate-risk-monitor-architecture.png)
+
+```text
+Open-Meteo Forecast / Archive APIs
+                │
+                ▼
+        Python ingestion
+                │
+                ▼
+       MinIO Bronze objects
+       immutable raw bytes
+                │
+                ▼
+      Auto Loader + DuckLake
+          Silver staging
+                │
+                ▼
+          dbt + DuckDB
+   intermediate → Gold marts
+                │
+                ▼
+        Streamlit dashboard
+
+PostgreSQL: catalog + ingestion/process control state
+Airflow: schedule + dependencies + retries + single-writer coordination
+```
+
+| Layer | Technology | Responsibility |
 |---|---|---|
-| Source | Open-Meteo Forecast & Archive APIs, PostgreSQL ward data và CSV reference data | Cung cấp dữ liệu thời tiết, địa giới và dữ liệu tham chiếu |
-| Bronze | MinIO | Lưu nguyên byte phản hồi HTTP bằng object key bất biến |
-| Control plane | PostgreSQL | Lưu DuckLake catalog, lease, checkpoint, retry và audit state |
-| Silver | Auto Loader + DuckLake | Parse file nguồn, nạp staging và giữ `_source_file` lineage |
-| Transform | dbt + DuckDB | Chuẩn hóa, loại trùng, kiểm thử và xây dựng Gold marts |
-| Orchestration | Apache Airflow | Lập lịch, quản lý dependency, retry và single-writer pool |
-| Serving | Streamlit | Đọc snapshot đã kiểm thử và hiển thị dashboard |
+| Source | Open-Meteo | Forecast and historical hourly weather data |
+| Bronze | MinIO | Immutable raw HTTP responses for replay and audit |
+| Control plane | PostgreSQL | Catalog, leases, checkpoints, retries and publication state |
+| Silver | Auto Loader + DuckLake | Parse new files, append staging rows and preserve `_source_file` lineage |
+| Transform | dbt + DuckDB | Normalize, deduplicate, validate and build analytical marts |
+| Orchestration | Apache Airflow | Schedule workflows, manage retries and serialize writes |
+| Serving | Streamlit | Read validated Gold snapshots for maps and drill-down views |
 
-Airflow điều phối toàn bộ luồng: Python thu thập dữ liệu nguồn vào Bronze,
-Auto Loader đưa dữ liệu sang Silver, dbt và DuckDB xây dựng Gold rồi Streamlit
-đọc snapshot đã công bố. MinIO lưu file dữ liệu, còn PostgreSQL giữ DuckLake
-catalog cùng trạng thái ingestion, checkpoint và audit.
+### Raw lakehouse layout
 
-### dbt lineage
+Bronze objects are organized by source, data mode and time window so a failed or historical run
+can be traced back to the exact raw responses that produced it.
 
-![dbt lineage của pipeline](docs/dbt-lineage.png)
+![Raw lakehouse directory layout](docs/raw-lakehouse-directory.png)
 
-Lineage được đọc từ trái sang phải; mỗi mũi tên là một dependency `source()` hoặc
-`ref()` để dbt tự xác định thứ tự build. Hai nhánh thời tiết archive và forecast
-được giữ riêng vì khác model, grain và mục đích sử dụng, nhưng cùng dùng các
-dimension địa lý khi xuất bản sang Gold.
+### Pipeline flow
 
-| Nhóm model | Grain và biến đổi chính | Vai trò trong pipeline |
-|---|---|---|
-| `silver_staging.stg_weather_archive_hourly` | Change log append-only của model × tọa độ grid × giờ; giữ `_source_file` và `_ingested_at` | Nguồn archive do Auto Loader nạp từ file Bronze |
-| `int_weather_archive_hourly` | Một dòng hiện hành cho model × `grid_cell_id` × `valid_time_utc`; chuẩn hóa tọa độ và loại trùng deterministic | Curated Silver cho lịch sử ERA5 và ECMWF IFS |
-| `silver_staging.stg_weather_forecast` | Change log append-only của từng lần lấy forecast | Nguồn forecast do Auto Loader nạp từ Bronze |
-| `int_weather_forecast_hourly` | Forecast run × grid × giờ; chỉ nhận run đủ 126 locations × 72 giờ rồi loại trùng | Giữ lịch sử các forecast vintage mà không trộn các run |
-| `stg_seed__ward` và `stg_seed__ward_grid` | 126 phường/xã Hà Nội và ánh xạ phường → grid theo weather model | Chuẩn hóa geography seed trước khi tạo dimension |
-| `dim_ward`, `dim_grid` | Một dòng cho mỗi phường và mỗi ô lưới thời tiết | Dimension dùng chung cho archive, forecast và dashboard |
-| `bridge_ward_grid` | Phường × weather model → grid từ seed đã version hóa | Nối dữ liệu theo ô lưới về địa bàn hành chính mà không nhúng grid vào `dim_ward` |
-| `fct_rain_archive_hourly` | Grid × giờ với cửa sổ mưa 1/3/6/12/24 giờ và các dải kịch bản | Phục vụ phát lại, đối chiếu và phân tích mưa lịch sử |
-| `fct_rain_forecast_hourly` | Forecast run × grid × giờ với cả rolling history và `forecast_next_*h_mm` | Giữ đầy đủ lịch sử dự báo để so sánh các lần phát hành |
-| `fct_rain_forecast_current_hourly` | View của horizon thuộc logical forecast run mới nhất theo `forecast_run_at` | Cung cấp lát cắt forecast hiện hành cho truy vấn nhanh; `_ingested_at` chỉ là tie-breaker |
-| `fct_rain_pressure_alert` | Phường × giờ của run mới nhất; kết hợp forecast 1/3/6/24 giờ, revision và persistence | Tạo `pressure_score`, `pressure_level` và lý do kích hoạt cho dashboard; đây không phải xác suất ngập hay cảnh báo chính thức |
+Both data pipelines follow the same seven-stage contract:
 
-Các test schema kiểm tra unique key, `not_null`, relationship, accepted values,
-freshness và phạm vi lượng mưa. Chỉ khi graph cùng các test liên quan thành công,
-pipeline mới cập nhật `published_snapshot_id` để Streamlit đọc một snapshot nhất
-quán thay vì dữ liệu đang được build dở.
+```text
+ingest Bronze
+    ↓
+validate Bronze
+    ↓
+load Silver staging
+    ↓
+build Silver intermediate
+    ↓
+validate Silver intermediate
+    ↓
+publish Gold
+    ↓
+check pipeline health
+```
 
-Thiết kế sử dụng một writer duy nhất để giữ quá trình phục hồi dễ hiểu và phù
-hợp với môi trường local. Dashboard luôn pin vào một `published_snapshot_id` đã
-vượt qua toàn bộ dbt tests, tránh việc một trang đọc lẫn dữ liệu từ hai lần công
-bố khác nhau.
+The forecast DAG runs hourly. The archive DAG runs monthly. A maintenance DAG applies snapshot
+retention and safe file cleanup.
 
-Chi tiết về ownership, publication và các đánh đổi kỹ thuật nằm trong
-[tài liệu kiến trúc](docs/03-architecture.md).
+![Airflow forecast DAG](docs/airflow-forecast-dag.png)
 
-## Tech Stack
+## Reliability and data quality
 
-### Lưu trữ và truy vấn
+The project intentionally focuses on correctness and recoverability rather than scale for its own
+sake.
 
-![MinIO](https://img.shields.io/badge/MinIO-C72E49?style=for-the-badge&logo=minio&logoColor=white)
-![PostgreSQL](https://img.shields.io/badge/PostgreSQL-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)
-![DuckDB](https://img.shields.io/badge/DuckDB-FFF000?style=for-the-badge&logo=duckdb&logoColor=black)
-![DuckLake](https://img.shields.io/badge/DuckLake-Lakehouse-F9C74F?style=for-the-badge)
-
-### Data Engineering
-
-![dbt](https://img.shields.io/badge/dbt-FF694B?style=for-the-badge&logo=dbt&logoColor=white)
-![Provero](https://img.shields.io/badge/Provero-Data_Quality-00A88F?style=for-the-badge)
-![Apache Airflow](https://img.shields.io/badge/Apache_Airflow-017CEE?style=for-the-badge&logo=apacheairflow&logoColor=white)
-![Python](https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white)
-![SQL](https://img.shields.io/badge/SQL-4479A1?style=for-the-badge&logo=postgresql&logoColor=white)
-![uv](https://img.shields.io/badge/uv-Package_Manager-DE5FE9?style=for-the-badge&logo=uv&logoColor=white)
-
-### Dashboard
-
-![Streamlit](https://img.shields.io/badge/Streamlit-FF4B4B?style=for-the-badge&logo=streamlit&logoColor=white)
-![deck.gl](https://img.shields.io/badge/deck.gl-8A2BE2?style=for-the-badge)
-![Altair](https://img.shields.io/badge/Altair-1F77B4?style=for-the-badge)
-
-### Containerization
-
-![Docker](https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white)
-![Docker Compose](https://img.shields.io/badge/Docker_Compose-2496ED?style=for-the-badge&logo=docker&logoColor=white)
-
-### Thư viện chính
-
-| Thư viện | Vai trò |
+| Concern | Design |
 |---|---|
-| `duckdb` | Compute engine và kết nối DuckLake |
-| `minio` | Đọc/ghi dữ liệu Bronze trên object storage |
-| `psycopg` | Truy cập PostgreSQL control plane |
-| `dbt-duckdb` | Transformation, data tests và publication |
-| `provero` | Quality gate fail-closed cho Raw và Silver intermediate |
-| `streamlit` | Xây dựng giao diện dashboard |
-| `pydeck` | Hiển thị bản đồ tương tác |
-| `pandas` và `altair` | Xử lý và trực quan hóa dữ liệu trên dashboard |
+| Replay | Raw API response bytes are kept in Bronze with deterministic object paths |
+| Idempotency | Existing Bronze objects are not duplicated; Silver reloads replace rows by source file |
+| Incremental state | PostgreSQL stores file leases, processing runs and checkpoints |
+| Failure recovery | Checkpoints advance only after a successful publication |
+| Data quality | Provero gates Raw/Silver inputs; dbt generic and singular tests validate transformed data |
+| Consistent serving | Dashboard reads the latest validated `published_snapshot_id` |
+| Concurrency | Airflow uses a single-writer pool for DuckLake mutation |
+| Backup / restore | Operational scripts cover lakehouse and metadata backup, verification and restore |
+| CI | Ruff, pytest, docs validation, Compose validation, dbt parse/compile, image build and DAG import |
 
-## Cấu trúc dự án
+Examples of tested contracts include uniqueness, non-null keys, rainfall ranges, forecast horizon
+coverage, stable time-based keys, ward-grid coverage and Gold table grains.
+
+![dbt lineage](docs/dbt-lineage.png)
+
+## Data products
+
+Important Gold models:
+
+| Model | Grain | Purpose |
+|---|---|---|
+| `dim_ward` | one row per Hanoi ward/commune | Geography dimension |
+| `dim_grid` | one row per weather grid cell | Weather-grid dimension |
+| `bridge_ward_grid` | ward × weather model | Stable mapping from administrative area to weather grid |
+| `fct_rain_archive_hourly` | grid × hour | Historical rainfall and rolling windows |
+| `fct_rain_forecast_hourly` | forecast run × grid × hour | Full forecast-vintage history |
+| `fct_rain_forecast_current_hourly` | latest run × grid × hour | Current forecast serving view |
+| `fct_rain_pressure_alert` | ward × hour | Explainable rainfall-pressure signal |
+
+Detailed grains, quality rules and model contracts are documented in
+[`docs/04-data-contracts.md`](docs/04-data-contracts.md).
+
+## Why these technologies
+
+| Technology | Why it exists in this project |
+|---|---|
+| MinIO | Demonstrates durable object-storage landing and replay without requiring a cloud account |
+| DuckDB + DuckLake | Provides local analytical SQL plus lakehouse-style snapshots/catalog behavior |
+| PostgreSQL | Keeps durable control state separate from analytical data |
+| dbt | Makes SQL transformations, dependencies and data tests explicit and reviewable |
+| Airflow | Demonstrates scheduling, dependency management, retries and backfill-oriented orchestration |
+| Streamlit | Provides a small downstream consumer that proves Gold datasets are usable |
+
+The system deliberately avoids Kubernetes, Kafka and distributed compute because the current data
+volume and latency requirements do not justify their operational complexity.
+
+## Repository structure
 
 ```text
 vn-climate-risk-monitor/
-│
-├── docker/                         # Dockerfile cho Airflow và dashboard
-├── docs/                           # Kiến trúc, data contract và runbook
-├── orchestration/
-│   └── dags/                       # Forecast, archive và maintenance DAGs
-├── scripts/                        # Backup, restore và kiểm tra tài liệu
-├── serving/
-│   └── dashboard/                  # Ứng dụng Streamlit và query modules
+├── .github/workflows/ci.yml        # CI quality and runtime checks
+├── docker/                         # Airflow and dashboard images
+├── docs/                           # Architecture, contracts and operations
+├── orchestration/dags/             # Forecast, archive and maintenance DAGs
+├── scripts/                        # Backup, restore and repository checks
+├── serving/dashboard/              # Streamlit application and query modules
 ├── src/vn_climate_risk_monitor/
-│   ├── auto_loader/                # Bronze → Silver staging và parser SQL
-│   ├── auto_process/               # Silver → Gold với dbt
-│   ├── operations/                 # Bootstrap, maintenance và reset
-│   ├── platform/                   # Settings và storage adapters
-│   ├── quality/                    # Health và readiness checks
-│   └── sources/open_meteo/         # Lập kế hoạch và tải dữ liệu nguồn
-├── tests/                          # Unit tests và contract tests
-├── tools/                          # Tạo GeoJSON
-├── transform/
-│   ├── macros/                     # Incremental scope và data quality
-│   ├── models/                     # Staging, intermediate và Gold marts
-│   ├── seeds/                      # Geography references
-│   └── tests/                      # dbt singular tests
-├── .env.example                    # Mẫu cấu hình local
-├── docker-compose.yml              # Toàn bộ single-node runtime
-├── pyproject.toml                  # Package, dependencies và CLI entry points
-└── uv.lock                         # Dependency lockfile
+│   ├── sources/open_meteo/         # Source planning and ingestion
+│   ├── auto_loader/                # Bronze → Silver
+│   ├── auto_process/               # Incremental processing and publication state
+│   ├── quality/                    # Runtime quality and health gates
+│   ├── operations/                 # Bootstrap, maintenance and reset
+│   └── platform/                   # Storage/catalog configuration
+├── tests/unit/                     # Behavioral and contract tests
+├── tools/                          # One-time reproducible data preparation tools
+├── transform/                      # dbt models, macros, seeds and singular tests
+├── docker-compose.yml
+├── pyproject.toml
+└── uv.lock
 ```
 
-### Cấu trúc thư mục Raw Lakehouse
+## Run locally
 
-![Cấu trúc thư mục Raw Lakehouse trên MinIO](docs/raw-lakehouse-directory.png)
-
-Bucket `vn-climate` sử dụng prefix phân cấp để tách loại dữ liệu, model và cửa
-sổ thời gian ngay từ Bronze. Object key thực tế có cấu trúc:
-
-```text
-vn-climate/
-└── bronze/files/open_meteo/
-    ├── forecast/incremental/YYYY/MM/DD/HH/
-    │   └── run_YYYYMMDDTHHMMSS/response_NNN.json
-    └── historical_weather_hourly/
-        ├── backfill/year=YYYY/month=MM/
-        │   └── run_YYYYMMDDTHHMMSS/response_NNN.json   # ERA5, trước 2017
-        └── ifs/year=YYYY/month=MM/
-            └── run_YYYYMMDDTHHMMSS/response_NNN.json   # ECMWF IFS, từ 2017
-```
-
-| Thành phần path | Ý nghĩa |
-|---|---|
-| `bronze/files` | Landing zone lưu phản hồi nguồn ở dạng nguyên bản, chưa chuẩn hóa sang schema phân tích. |
-| `forecast/incremental` | Forecast 72 giờ được phân vùng theo slot UTC; cùng một slot luôn dùng một `run_id` ổn định để retry không tạo vintage mới. |
-| `historical_weather_hourly/backfill` | Archive ERA5 trước năm 2017, phân vùng theo `year=` và `month=` để backfill và kiểm tra coverage theo tháng. |
-| `historical_weather_hourly/ifs` | Archive ECMWF IFS từ năm 2017 trở đi, tách khỏi ERA5 để không trộn weather model có độ phân giải khác nhau. |
-| `run_*` | Định danh một lần thu thập; giữ các response của cùng request window trong một nhóm có thể audit và replay. |
-| `response_NNN.json` | Phản hồi HTTP nguyên bản của một batch weather grid. Với batch mặc định 25 locations, 126 phường/xã tạo tối đa sáu file cho một forecast run. |
-
-Fetcher ghi chính xác response bytes vào object storage và bỏ qua tên file đã tồn
-tại trong cùng partition, nên retry có tính idempotent. Khi Auto Loader nạp sang
-Silver staging, object key được giữ trong `_source_file`; nhờ đó mỗi bản ghi có
-thể truy ngược về file nguồn, run thu thập và cửa sổ thời gian ban đầu.
-
-## Nguồn dữ liệu
-
-| Nguồn | Loại dữ liệu | Phạm vi | Mục đích |
-|---|---|---|---|
-| Open-Meteo Forecast API | Thời tiết theo giờ | 72 giờ tiếp theo | Dự báo mưa và tính rainfall-pressure signal |
-| Open-Meteo Archive API | Thời tiết lịch sử theo giờ | ERA5 trước 2017, ECMWF IFS từ 2017 | Phát lại dữ liệu mưa lịch sử |
-| Geography seeds | Tọa độ, ranh giới và ánh xạ weather grid | 126 phường/xã Hà Nội | Liên kết dữ liệu thời tiết với địa giới hành chính |
-
-Forecast và archive sử dụng grain riêng. Mỗi bản ghi staging giữ metadata ingestion
-và `_source_file`; các mô hình thời tiết lịch sử không bị trộn âm thầm vào cùng
-một grid. Xem [data contracts](docs/04-data-contracts.md) để biết đầy đủ grain,
-quality gates và Gold models.
-
-## Các giai đoạn pipeline
-
-Hai data DAG dùng cùng chuỗi bảy task. DAG forecast xử lý slot giờ tại
-`data_interval_end`; DAG archive xử lý tháng tại `data_interval_start`.
-
-![Airflow DAG xử lý Open-Meteo forecast](docs/airflow-forecast-dag.png)
-
-| Thứ tự | Airflow task | Xử lý thực tế |
-|---:|---|---|
-| 1 | `ingest_bronze` | Gọi Open-Meteo theo slot forecast 72 giờ hoặc tháng archive, chia request theo weather grid và lưu phản hồi JSON nguyên bản vào MinIO bằng object key bất biến. |
-| 2 | `validate_bronze` | Chạy Provero trên đúng forecast run hoặc tháng archive vừa tải; yêu cầu có dữ liệu, đủ metadata và hourly fields, đúng cửa sổ thời gian, tọa độ hợp lệ, không trùng `(file, location, time)` và các giá trị mưa nằm trong phạm vi cho phép. |
-| 3 | `load_silver_staging` | Auto Loader discovery các object chưa xử lý, đăng ký và lease file trong PostgreSQL, parse JSON rồi append vào bảng Silver staging. File đã commit không bị nạp lại. |
-| 4 | `build_silver_intermediate` | Mở hoặc tiếp tục processing run ổn định theo Airflow `run_id`, lấy checkpoint bounds và chỉ build `int_weather_forecast_hourly` hoặc `int_weather_archive_hourly`. Checkpoint chưa được cập nhật ở bước này. |
-| 5 | `validate_silver_intermediate` | Kiểm tra curated Silver không rỗng, key/thời gian/lượng mưa không null, giá trị nằm đúng phạm vi và grain không trùng. Forecast còn phải bảo đảm mỗi run có đủ horizon 72 giờ. |
-| 6 | `publish_gold` | Dùng bounds của cùng processing run để chạy `dbt build` cho các marts mang tag `forecast` hoặc `archive`, bao gồm data tests. Chỉ sau khi thành công mới ghi metrics, lưu `published_snapshot_id` và tiến checkpoint. |
-| 7 | `check_pipeline_health` | Chạy health check theo scope tương ứng với `--require-gold`, xác nhận đầu ra Gold bắt buộc sẵn sàng sau publication. |
-
-Các task chạy qua pool `lakehouse_single_writer_pool` và mỗi DAG chỉ có một run
-hoạt động tại một thời điểm. Task lỗi được retry hai lần, cách nhau 180 giây.
-Nếu lỗi xảy ra từ bước build Silver đến publish Gold, processing run tương ứng
-được đóng ở trạng thái lỗi và checkpoint không tiến; mọi task failure đều gọi
-health callback để gửi thông báo khi webhook đã được cấu hình.
-
-| DAG | Lịch mặc định | Chức năng |
-|---|---|---|
-| `open_meteo_forecast_hourly` | Phút 15 mỗi giờ | Cập nhật dự báo 72 giờ |
-| `open_meteo_archive_monthly` | 02:30 ngày đầu tháng | Nạp thêm dữ liệu archive |
-| `lakehouse_maintenance_daily` | 03:30 mỗi ngày | Retention snapshot và dọn file an toàn |
-
-## Dashboard
-
-Dashboard Streamlit gồm ba luồng khám phá chính:
-
-### Bản đồ dự báo
-
-![Dashboard bản đồ dự báo và áp lực mưa tại Hà Nội](docs/dashboard-forecast-map.png)
-
-Màn hình bản đồ sử dụng forecast snapshot đã được kiểm thử và công bố gần nhất,
-giúp toàn bộ KPI, polygon và bảng xếp hạng cùng đọc một phiên bản dữ liệu nhất
-quán. Người dùng có thể chọn mốc thời gian trong horizon, chỉ báo lượng mưa và
-basemap mà không làm thay đổi snapshot nguồn.
-
-- **KPI tổng quan:** thể hiện độ phủ phường/xã, lượng mưa tích lũy 24 giờ lớn
-  nhất, số phường vượt dải nền và số phường có áp lực cao.
-- **Chú giải ngưỡng:** phân loại lượng mưa 24 giờ thành các dải màu cố định từ
-  dưới 50 mm đến trên 300 mm để so sánh trực quan giữa các địa bàn.
-- **Bản đồ chuyên đề:** tô màu 126 phường/xã theo chỉ báo đang chọn; tooltip cung
-  cấp lượng mưa tại thời điểm, lượng mưa tích lũy, điểm/mức áp lực và lý do kích hoạt.
-- **Bảng ưu tiên:** hai tab áp lực mưa và mưa 24 giờ hỗ trợ xếp hạng nhanh các
-  phường/xã cần theo dõi tại mốc đang xem.
-
-`pressure_score` là điểm ưu tiên vận hành từ tín hiệu mưa dự báo, revision và độ
-bền qua nhiều forecast run; đây không phải xác suất hoặc dự báo độ sâu ngập.
-
-### Chi tiết phường/xã
-
-Đi sâu vào chuỗi thời gian của một địa bàn: lượng mưa theo cửa sổ, pressure
-signal và độ dai dẳng.
-
-### Phát lại quá khứ
-
-Phát lại lượng mưa lịch sử theo ngày, giờ địa phương và nguồn archive.
-
-## Chạy local
-
-Yêu cầu [Git](https://git-scm.com/downloads) và
-[Docker Desktop](https://www.docker.com/products/docker-desktop/). Chạy trên
-PowerShell:
+Requirements: Git and Docker Desktop.
 
 ```powershell
 git clone https://github.com/DKSang/vn-climate-risk-monitor.git
@@ -282,54 +203,44 @@ docker compose up -d --build
 docker compose ps
 ```
 
-`.env.example` đã có credential local đơn giản; thay đổi nếu máy có người khác
-truy cập và không commit `.env`. Service `bootstrap` chạy một lần rồi thoát với
-code `0` là trạng thái bình thường.
+Local interfaces:
 
-| Giao diện | Địa chỉ | Tài khoản local |
+| Service | URL | Default local account |
 |---|---|---|
-| Streamlit | [http://localhost:8501](http://localhost:8501) | Không yêu cầu đăng nhập |
-| Airflow | [http://localhost:8080](http://localhost:8080) | `admin` / `admin` |
-| MinIO | [http://localhost:9001](http://localhost:9001) | `minioadmin` / `minioadmin` |
+| Streamlit | http://localhost:8501 | none |
+| Airflow | http://localhost:8080 | `admin` / `admin` |
+| MinIO Console | http://localhost:9001 | `minioadmin` / `minioadmin` |
 
-Trong Airflow, unpause và trigger `open_meteo_forecast_hourly`; trigger thêm
-`open_meteo_archive_monthly` khi cần dữ liệu lịch sử. Xem
-[runbook vận hành](docs/05-operations.md) cho backfill, health check, rewind,
-backup và restore.
+Unpause and trigger `open_meteo_forecast_hourly` in Airflow to populate the current forecast.
+Trigger `open_meteo_archive_monthly` when historical replay data is needed.
 
-## Phát triển và kiểm thử
+`.env.example` contains local-only credentials. Change them when the machine is accessible to other
+users and never commit the generated `.env` file.
 
-Cài [uv](https://docs.astral.sh/uv/getting-started/installation/) và dependency
-từ lockfile:
+## Development checks
 
 ```powershell
 uv sync --frozen
-```
-
-Chạy các quality gates trước khi chia sẻ thay đổi:
-
-```powershell
-uv run pytest -q
 uv run ruff check .
+uv run pytest -q
 $env:PYTHONUTF8 = "1"
 uv run dbt parse --project-dir transform --profiles-dir transform
-docker compose config
+docker compose config --quiet
 uv run python scripts/check_docs.py
 ```
 
-`PYTHONUTF8=1` giúp dbt đọc nhất quán tên địa danh tiếng Việt khi chạy trực tiếp
-trên Windows. Container và CI đã sử dụng UTF-8 locale.
+CI additionally compiles the dbt project, builds the runtime images and imports every Airflow DAG.
 
-## Tài liệu
+## Documentation
 
-- [Kiến trúc hệ thống](docs/03-architecture.md) — ownership, publication và trade-offs.
-- [Data contracts](docs/04-data-contracts.md) — source grain, quality gates và Gold models.
-- [Vận hành](docs/05-operations.md) — bootstrap, retry, rewind, maintenance và recovery.
+- [`docs/03-architecture.md`](docs/03-architecture.md) — ownership, publication model and engineering trade-offs.
+- [`docs/04-data-contracts.md`](docs/04-data-contracts.md) — source/model grains, quality rules and Gold contracts.
+- [`docs/05-operations.md`](docs/05-operations.md) — retry, backfill, health checks, backup, restore and recovery.
+- [`transform/README.md`](transform/README.md) — dbt build and seed workflow.
 
-## Giới hạn thiết kế
+## Current limitations
 
-- Chạy theo mô hình local single-node, single-writer; không hỗ trợ HA hoặc scale-out.
-- Pressure signal phản ánh áp lực khí tượng, không phải xác suất hay độ sâu ngập.
-- Geography là dữ liệu seed có version, không phải nguồn realtime.
-- Credential trong `.env` chỉ phù hợp cho môi trường local, không thay thế secret
-  management của production.
+- Single-node and single-writer: no high availability or horizontal write scaling.
+- Local Docker Compose deployment: production IAM, secret management and network isolation are out of scope.
+- Static versioned geography references rather than a real-time administrative boundary source.
+- Rainfall pressure is a meteorological prioritization signal, not an official hazard alert.

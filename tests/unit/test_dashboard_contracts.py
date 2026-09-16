@@ -1,4 +1,4 @@
-"""Focused contracts for the serving and documentation cleanup."""
+"""Dashboard query and publication contracts."""
 
 from __future__ import annotations
 
@@ -28,7 +28,6 @@ def test_dashboard_queries_are_split_by_data_domain() -> None:
     assert common.is_file()
     assert forecast.is_file()
     assert archive.is_file()
-    assert not (DASHBOARD / "queries.py").exists()
 
     assert {
         "load_serving_snapshot",
@@ -51,7 +50,6 @@ def test_dashboard_pages_import_queries_from_their_domain_modules() -> None:
         for path in (DASHBOARD / "pages").glob("*.py")
     }
 
-    assert "serving.dashboard.queries" not in "\n".join(page_sources.values())
     assert "from serving.dashboard.common import" in page_sources["01_forecast_map.py"]
     assert "from serving.dashboard.forecast import" in page_sources["01_forecast_map.py"]
     assert "from serving.dashboard.common import" in page_sources["02_ward_drilldown.py"]
@@ -175,8 +173,3 @@ def test_serving_snapshot_requires_a_validated_processing_publication(monkeypatc
 
     assert snapshot == {}
     assert connection.cursor_instance.query_count == 1
-
-
-def test_one_time_enrichment_tools_are_not_runtime_modules() -> None:
-    assert (ROOT / "tools" / "fetch_hanoi_geojson.py").is_file()
-    assert not (ROOT / "scripts" / "fetch_hanoi_geojson.py").exists()

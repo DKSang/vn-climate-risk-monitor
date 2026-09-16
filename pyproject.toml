@@ -1,7 +1,7 @@
 [project]
 name = "vn-climate-risk-monitor"
 version = "0.1.0"
-description = "Hanoi Flood & Climate Risk Monitor — DuckLake lakehouse + medallion architecture"
+description = "End-to-end Hanoi climate data pipeline with Open-Meteo, DuckLake, dbt, Airflow and Streamlit"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
