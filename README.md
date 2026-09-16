@@ -16,10 +16,6 @@ insights for 126 administrative areas in Hanoi.
 > Portfolio scope: local single-node, single-writer system designed to demonstrate data
 > engineering fundamentals. It is not an official weather warning or flood prediction service.
 
-![VN Climate Risk Monitor architecture](docs/vn-climate-risk-monitor-architecture.png)
-
-![Dashboard rainfall forecast](docs/dashboard-forecast-map.png)
-
 | 126 administrative areas | 72-hour forecast | Hourly orchestration | 141 dbt data tests · 216 unit tests |
 |---|---|---|---|
 | Hanoi wards/communes | Forecast horizon | Airflow forecast DAG | Quality and behavior coverage |
@@ -65,6 +61,8 @@ The pressure signal is an explainable prioritization metric based on rainfall fo
 persistence. It is not a flood probability or flood-depth model.
 
 ## Architecture
+
+![VN Climate Risk Monitor architecture](docs/vn-climate-risk-monitor-architecture.png)
 
 ```text
 Open-Meteo Forecast / Archive APIs
@@ -132,6 +130,13 @@ The forecast DAG runs hourly. The archive DAG runs monthly. A maintenance DAG ap
 retention and safe file cleanup.
 
 ![Airflow forecast DAG](docs/airflow-forecast-dag.png)
+
+## Dashboard
+
+The Streamlit dashboard reads a pinned Gold snapshot for a consistent view of current forecast
+pressure across Hanoi wards and communes.
+
+![Dashboard rainfall forecast](docs/dashboard-forecast-map.png)
 
 ## Reliability and data quality
 
