@@ -210,21 +210,25 @@ def build_silver_suite(process_key: str) -> SuiteConfig:
                     "forecast_complete_grid_horizons",
                     """
                     WITH staged AS (
-                        SELECT DISTINCT REGEXP_EXTRACT(
-                            _source_file,
-                            '/incremental/[0-9]{4}/[0-9]{2}/[0-9]{2}/[0-9]{2}/(run_[0-9]{8}T[0-9]{6})/',
-                            1
-                        ) AS forecast_run_id
+                        SELECT DISTINCT forecast_run_id
                         FROM catalog1.silver.stg_weather_forecast
                     ),
                     curated_cells AS (
                         SELECT forecast_run_id, grid_cell_id, COUNT(*) AS rows,
-                               COUNT(DISTINCT valid_time_utc) AS hours
+                               COUNT(DISTINCT valid_time_utc) AS hours,
+                               MIN(valid_time_utc) AS first_hour,
+                               MAX(valid_time_utc) AS last_hour
                         FROM catalog1.silver.int_weather_forecast_hourly
                         GROUP BY forecast_run_id, grid_cell_id
                     )
                     SELECT COUNT(*) = 0
                     FROM (
+                        SELECT forecast_run_id
+                        FROM staged
+                        WHERE NULLIF(TRIM(forecast_run_id), '') IS NULL
+
+                        UNION ALL
+
                         SELECT staged.forecast_run_id
                         FROM staged
                         LEFT JOIN curated_cells USING (forecast_run_id)
@@ -234,7 +238,9 @@ def build_silver_suite(process_key: str) -> SuiteConfig:
 
                         SELECT forecast_run_id
                         FROM curated_cells
-                        WHERE rows <> 72 OR hours <> 72
+                        WHERE rows <> 72
+                           OR hours <> 72
+                           OR last_hour <> first_hour + INTERVAL '71 hours'
                     ) AS invalid
                     """,
                 ),

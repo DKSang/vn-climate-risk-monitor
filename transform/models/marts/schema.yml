@@ -11,7 +11,7 @@ models:
           - not_null
           - accepted_values:
               arguments:
-                values: ['era5', 'ecmwf_ifs', 'ecmwf_ifs_fc']
+                values: ['era5', 'ecmwf_ifs', 'best_match']
       - name: grid_latitude
         tests: [not_null]
       - name: grid_longitude
@@ -38,9 +38,8 @@ models:
 
   - name: bridge_ward_grid
     description: >
-      Static phường ↔ ô lưới theo model, gồm cả mesh forecast hiện hành.
-      Rebuilt from reference seeds and current forecast mesh; no runtime
-      soft-delete state is maintained.
+      Static phường ↔ ô lưới theo model từ reference seed. Forecast ECMWF IFS
+      dùng cùng model/grid mapping với archive ECMWF IFS.
     columns:
       - name: ward_grid_key
         tests: [unique, not_null]
@@ -117,6 +116,14 @@ models:
         tests: [unique, not_null]
       - name: forecast_run_id
         tests: [not_null]
+      - name: forecast_run_at
+        tests: [not_null]
+      - name: weather_model
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['best_match', 'ecmwf_ifs']
       - name: grid_cell_id
         tests:
           - not_null
@@ -180,6 +187,8 @@ models:
         tests: [unique, not_null]
       - name: forecast_run_id
         tests: [not_null]
+      - name: forecast_run_at
+        tests: [not_null]
       - name: valid_time_utc
         tests: [not_null]
 
@@ -193,6 +202,12 @@ models:
         tests: [unique, not_null]
       - name: forecast_run_id
         tests: [not_null]
+      - name: weather_model
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['best_match', 'ecmwf_ifs']
       - name: ward_code
         tests:
           - not_null

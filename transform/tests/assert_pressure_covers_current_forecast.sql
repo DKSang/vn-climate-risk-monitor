@@ -6,7 +6,7 @@ SELECT
 FROM {{ ref('fct_rain_forecast_current_hourly') }} AS forecast
 JOIN {{ ref('bridge_ward_grid') }} AS bridge
     ON bridge.grid_cell_id = forecast.grid_cell_id
-   AND bridge.weather_model = 'ecmwf_ifs_fc'
+   AND bridge.weather_model = forecast.weather_model
    AND bridge.is_active = TRUE
 LEFT JOIN {{ ref('fct_rain_pressure_alert') }} AS pressure
     ON pressure.forecast_run_id = forecast.forecast_run_id

@@ -6,7 +6,7 @@
 ) }}
 
 {% set archive_model = ref('int_weather_archive_hourly') %}
-{% set forecast_source = source('silver_staging', 'stg_weather_forecast') %}
+{% set forecast_source = ref('int_weather_forecast_hourly') %}
 {% if execute %}
     {% set archive_exists = adapter.get_relation(
         database=archive_model.database,
@@ -40,10 +40,10 @@ WITH observations AS (
 
     {% if forecast_exists %}
     SELECT
-        {{ grid_cell_id("'ecmwf_ifs_fc'", 'ROUND(grid_latitude, 6)', 'ROUND(grid_longitude, 6)') }} AS grid_cell_id,
-        'ecmwf_ifs_fc' AS weather_model,
-        ROUND(grid_latitude, 6) AS grid_latitude,
-        ROUND(grid_longitude, 6) AS grid_longitude,
+        grid_cell_id,
+        weather_model,
+        grid_latitude,
+        grid_longitude,
         valid_time_utc
     FROM {{ forecast_source }}
     {% endif %}

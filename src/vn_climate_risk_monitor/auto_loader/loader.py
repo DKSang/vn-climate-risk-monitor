@@ -28,6 +28,7 @@ class SourceConfig:
     target: str
     batch_size: int
     parameters: Mapping[str, str]
+    target_columns: Mapping[str, str] = field(default_factory=dict)
     base_dir: Path = field(default=Path("."))
     scope: str = "production"
     lease_seconds: int = 300
@@ -267,6 +268,12 @@ class AutoLoader:
             self.sql.execute(
                 f"CREATE TABLE IF NOT EXISTS {target} AS "
                 f"SELECT * FROM ({select_sql}) AS shape WHERE false"
+            )
+        for column, data_type in self.config.target_columns.items():
+            quoted_column = '"' + column.replace('"', '""') + '"'
+            self.sql.execute(
+                f"ALTER TABLE {target} ADD COLUMN IF NOT EXISTS "
+                f"{quoted_column} {data_type}"
             )
         self._target_ready = True
 

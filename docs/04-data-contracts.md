@@ -6,17 +6,16 @@ Source groups are immutable `SourceConfig` values in
 `vn_climate_risk_monitor.auto_loader.config`; no runtime YAML parser is involved. Forecast and
 archive use separate parser SQL files because their API payloads and grains differ.
 
-Open-Meteo forecast covers the current 72-hour horizon. Archive uses ERA5 before
-2017 and ECMWF IFS from 2017 onward; the models remain distinct. Requests are
-planned on weather-grid cells and joined back to wards through the versioned
-mapping seed.
+Open-Meteo forecast is fixed to ECMWF IFS and covers the current 72-hour horizon.
+Archive uses ERA5 before 2017 and ECMWF IFS from 2017 onward. Forecast requests
+are batched by ward; archive requests are deduplicated to weather-grid cells.
 
 ## Bronze and Silver
 
-Bronze object keys are immutable and retain the existing `bronze/files/...`
-layout. The raw object is the exact HTTP response body, including an API error
-payload if one was received. The response is inspected in memory for error
-metadata before it is stored; no parse/re-serialize cycle changes the bytes.
+Bronze object keys are immutable. Forecast keys include
+`model=ecmwf_ifs/YYYY/MM/DD/HH/run_...`; the raw object remains the exact HTTP
+response body. The response is inspected in memory for error metadata before it
+is stored; no parse/re-serialize cycle changes the bytes.
 
 Physical staging tables are stable public interfaces:
 
@@ -30,13 +29,14 @@ DuckLake transaction.
 
 ## Grain and quality
 
-The forecast physical grain is one weather grid cell and valid UTC hour per
-forecast run. A publishable run contains exactly 126 locations and 72 distinct
-valid hours. Duplicate records cannot mask a missing location.
+The forecast physical grain is one model, weather grid cell, and valid UTC hour
+per logical retrieval run. A publishable run contains exactly 126 locations and
+72 distinct valid hours. Current selection orders by logical run time; ingestion
+time only breaks ties.
 
 The archive physical grain is one weather model, weather grid cell, and valid UTC
-hour per source vintage. `era5` and `ecmwf_ifs` are accepted model values and are
-never silently blended into one grid.
+hour per source vintage. A month is covered only when every expected seed grid
+contains every UTC hour. `era5` and `ecmwf_ifs` are never silently blended.
 
 dbt generic tests cover non-empty sources, required columns, accepted model
 values, precipitation ranges, and source freshness. dbt singular tests cover

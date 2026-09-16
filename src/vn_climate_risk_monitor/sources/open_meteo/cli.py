@@ -52,28 +52,41 @@ def covered_months(
     table: str = STAGING_HOURLY,
     *,
     weather_model: str | None = None,
+    expected_cells: Sequence[grid.GridCell],
 ) -> frozenset[date]:
-    """Return months with complete hourly staging coverage."""
+    """Return months where every expected grid cell has every hourly value."""
     try:
         # Coverage is model-specific in the shared staging table.
         predicate = "" if weather_model is None else "WHERE weather_model = ?"
         parameters = [] if weather_model is None else [weather_model]
         rows = connection.execute(
             f"""
-            SELECT date_trunc('month', valid_time_utc) AS month_start,
+            SELECT date_trunc('month', valid_time_utc AT TIME ZONE 'UTC')
+                       AS month_start,
+                   ROUND(grid_latitude, 6)             AS grid_latitude,
+                   ROUND(grid_longitude, 6)            AS grid_longitude,
                    count(DISTINCT valid_time_utc)      AS hours
             FROM {table}
             {predicate}
-            GROUP BY 1
+            GROUP BY 1, 2, 3
             """,
             parameters,
         ).fetchall()
     except duckdb.Error:
         return frozenset()  # bảng chưa tồn tại: chưa có gì được phủ
+    expected = {
+        (round(cell.latitude, 6), round(cell.longitude, 6))
+        for cell in expected_cells
+    }
+    complete_by_month: dict[date, set[tuple[float, float]]] = {}
+    for month_start, latitude, longitude, hours in rows:
+        month = month_start.date().replace(day=1)
+        if hours >= days_in_month(month) * 24:
+            complete_by_month.setdefault(month, set()).add((latitude, longitude))
     return frozenset(
-        month_start.date().replace(day=1)
-        for month_start, hours in rows
-        if hours >= days_in_month(month_start.date()) * 24
+        month
+        for month, complete_cells in complete_by_month.items()
+        if expected <= complete_cells
     )
 
 
@@ -153,19 +166,23 @@ def _cmd_map_grid(args, settings) -> int:
 def _cmd_archive(args, settings) -> int:
     open_meteo = settings.open_meteo
     months = list(months_between(args.start, args.end))
-    connection = get_connection()
-    try:
-        covered = {
-            m.name: covered_months(connection, weather_model=m.name)
-            for m in ARCHIVE_MODELS
-        }
-    finally:
-        connection.close()
-    client = get_minio_client(settings.minio)
     cells_by_model = {
         model.name: grid.cells_for(model.name, grid.SEED_PATH)
         for model in ARCHIVE_MODELS
     }
+    connection = get_connection()
+    try:
+        covered = {
+            model.name: covered_months(
+                connection,
+                weather_model=model.name,
+                expected_cells=cells_by_model[model.name],
+            )
+            for model in ARCHIVE_MODELS
+        }
+    finally:
+        connection.close()
+    client = get_minio_client(settings.minio)
     prefixes = [
         month_params(month, model_for_month(month))[0]
         for month in months

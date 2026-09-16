@@ -17,7 +17,7 @@ from .common import (
 
 logger = logging.getLogger(__name__)
 
-FORECAST_MODEL = "ecmwf_ifs_fc"
+FORECAST_MODEL = "ecmwf_ifs"
 
 _CURRENT_FORECAST_CTE = """
     WITH current_forecast AS (

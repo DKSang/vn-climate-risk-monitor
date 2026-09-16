@@ -4,6 +4,7 @@
     materialized = 'incremental',
     unique_key = 'weather_forecast_hourly_key',
     incremental_strategy = 'delete+insert',
+    on_schema_change = 'sync_all_columns',
     tags = ['intermediate', 'forecast']
 ) }}
 
@@ -17,7 +18,7 @@
 
 WITH raw_rows AS (
     SELECT
-        'ecmwf_ifs_fc' AS weather_model,
+        COALESCE(NULLIF(weather_model, ''), 'best_match') AS weather_model,
         ROUND(grid_latitude, 6) AS grid_latitude,
         ROUND(grid_longitude, 6) AS grid_longitude,
         valid_time_utc,
@@ -26,11 +27,17 @@ WITH raw_rows AS (
         showers_mm,
         precipitation_probability_pct,
         weather_code,
-        REGEXP_EXTRACT(
-            _source_file,
-            '/incremental/[0-9]{4}/[0-9]{2}/[0-9]{2}/[0-9]{2}/(run_[0-9]{8}T[0-9]{6})/',
-            1
+        COALESCE(
+            NULLIF(forecast_run_id, ''),
+            REGEXP_EXTRACT(_source_file, '/(run_[0-9]{8}T[0-9]{6})/', 1)
         ) AS forecast_run_id,
+        COALESCE(
+            forecast_run_at,
+            TRY_STRPTIME(
+                REGEXP_EXTRACT(_source_file, '/run_([0-9]{8}T[0-9]{6})/', 1),
+                '%Y%m%dT%H%M%S'
+            ) AT TIME ZONE 'UTC'
+        ) AS forecast_run_at,
         _source_file,
         _ingested_at
     FROM {{ source('silver_staging', 'stg_weather_forecast') }}
@@ -47,15 +54,15 @@ changed_rows AS (
 ),
 
 changed_runs AS (
-    SELECT DISTINCT forecast_run_id
+    SELECT DISTINCT weather_model, forecast_run_id
     FROM changed_rows
     WHERE forecast_run_id <> ''
 ),
 
 staged AS (
-    SELECT *
+    SELECT raw_rows.*
     FROM raw_rows
-    WHERE forecast_run_id IN (SELECT forecast_run_id FROM changed_runs)
+    INNER JOIN changed_runs USING (weather_model, forecast_run_id)
 ),
 
 normalized AS (
@@ -68,18 +75,19 @@ normalized AS (
 
 run_hours AS (
     SELECT
+        weather_model,
         forecast_run_id,
         valid_time_utc,
         COUNT(*) AS locations
     FROM normalized
     WHERE forecast_run_id <> ''
-    GROUP BY forecast_run_id, valid_time_utc
+    GROUP BY weather_model, forecast_run_id, valid_time_utc
 ),
 
 complete_runs AS (
-    SELECT forecast_run_id
+    SELECT weather_model, forecast_run_id
     FROM run_hours
-    GROUP BY forecast_run_id
+    GROUP BY weather_model, forecast_run_id
     HAVING COUNT(DISTINCT valid_time_utc) = {{ var('forecast_expected_hours', 72) }}
        AND COUNT(*) = {{ var('forecast_expected_hours', 72) }}
        AND MIN(locations) = {{ var('forecast_expected_locations', 126) }}
@@ -87,9 +95,9 @@ complete_runs AS (
 ),
 
 deduplicated AS (
-    SELECT *
+    SELECT normalized.*
     FROM normalized
-    WHERE forecast_run_id IN (SELECT forecast_run_id FROM complete_runs)
+    INNER JOIN complete_runs USING (weather_model, forecast_run_id)
     QUALIFY ROW_NUMBER() OVER (
         PARTITION BY
             forecast_run_id,
@@ -123,6 +131,7 @@ incoming AS (
         {% endfor %}
         {{ stable_row_hash(value_columns) }} AS _row_hash,
         forecast_run_id,
+        forecast_run_at,
         _source_file,
         _ingested_at
     FROM deduplicated

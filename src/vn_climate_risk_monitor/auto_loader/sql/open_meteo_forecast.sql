@@ -14,6 +14,19 @@ WITH raw AS (
 exploded AS (
     SELECT
         filename,
+        COALESCE(
+            NULLIF(REGEXP_EXTRACT(filename, '/model=([^/]+)/', 1), ''),
+            'best_match'
+        ) AS weather_model,
+        REGEXP_EXTRACT(
+            filename,
+            '/(run_[0-9]{8}T[0-9]{6})/',
+            1
+        ) AS forecast_run_id,
+        STRPTIME(
+            REGEXP_EXTRACT(filename, '/run_([0-9]{8}T[0-9]{6})/', 1),
+            '%Y%m%dT%H%M%S'
+        ) AT TIME ZONE 'UTC' AS forecast_run_at,
         latitude,
         longitude,
         elevation,
@@ -32,6 +45,9 @@ exploded AS (
 )
 
 SELECT
+    weather_model,
+    forecast_run_id,
+    forecast_run_at,
     TRY_CAST(latitude  AS DOUBLE)                     AS grid_latitude,
     TRY_CAST(longitude AS DOUBLE)                     AS grid_longitude,
     TRY_CAST(elevation AS DOUBLE)                     AS elevation_m,

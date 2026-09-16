@@ -187,7 +187,8 @@ def test_silver_forecast_accepts_fewer_weather_grids_than_wards() -> None:
         """
         CREATE TABLE catalog1.silver.stg_weather_forecast AS
         SELECT
-            '/incremental/2026/09/14/00/run_20260914T000000/response.json'
+            'run_20260914T000000'::VARCHAR AS forecast_run_id,
+            '/incremental/model=ecmwf_ifs/2026/09/13/00/run_20260913T000000/response.json'
                 AS _source_file,
             TIMESTAMPTZ '2026-09-14 00:00:00+00' AS _ingested_at
         """,
@@ -215,7 +216,8 @@ def test_silver_forecast_requires_72_hours_per_grid() -> None:
         """
         CREATE TABLE catalog1.silver.stg_weather_forecast AS
         SELECT
-            '/incremental/2026/09/14/00/run_20260914T000000/response.json'
+            'run_20260914T000000'::VARCHAR AS forecast_run_id,
+            '/incremental/model=ecmwf_ifs/2026/09/14/00/run_20260914T000000/response.json'
                 AS _source_file,
             TIMESTAMPTZ '2026-09-14 00:00:00+00' AS _ingested_at
         """,
@@ -240,17 +242,49 @@ def test_silver_forecast_requires_72_hours_per_grid() -> None:
         run_suite_or_raise(build_silver_suite("forecast"), connector=connector)
 
 
-def test_silver_forecast_rejects_source_path_without_run_id() -> None:
+def test_silver_forecast_requires_contiguous_72_hour_horizon() -> None:
     connector = connector_with(
         """
         CREATE TABLE catalog1.silver.stg_weather_forecast AS
-        SELECT '/forecast/malformed/response.json' AS _source_file,
-               TIMESTAMPTZ '2026-09-14 00:01:00+00' AS _ingested_at
+        SELECT
+            'run_20260914T000000'::VARCHAR AS forecast_run_id,
+            '/incremental/model=ecmwf_ifs/2026/09/14/00/run_20260914T000000/response.json'
+                AS _source_file,
+            TIMESTAMPTZ '2026-09-14 00:00:00+00' AS _ingested_at
         """,
         """
         CREATE TABLE catalog1.silver.int_weather_forecast_hourly AS
         SELECT
             'run_20260914T000000'::VARCHAR AS forecast_run_id,
+            'cell-1'::VARCHAR AS grid_cell_id,
+            TIMESTAMPTZ '2026-09-14 00:00:00+00' + hour * INTERVAL '1 hour'
+                AS valid_time_utc,
+            1.0::DOUBLE AS precipitation_mm,
+            1.0::DOUBLE AS rain_mm,
+            0.0::DOUBLE AS showers_mm,
+            50::INTEGER AS precipitation_probability_pct
+        FROM range(73) AS hours(hour)
+        WHERE hour <> 35
+        """,
+    )
+
+    with pytest.raises(QualityGateError, match="quality_silver_int_forecast"):
+        run_suite_or_raise(build_silver_suite("forecast"), connector=connector)
+
+
+@pytest.mark.parametrize("forecast_run_id", ["", "   "])
+def test_silver_forecast_rejects_blank_run_id(forecast_run_id: str) -> None:
+    connector = connector_with(
+        f"""
+        CREATE TABLE catalog1.silver.stg_weather_forecast AS
+        SELECT '{forecast_run_id}'::VARCHAR AS forecast_run_id,
+               '/forecast/malformed/response.json' AS _source_file,
+               TIMESTAMPTZ '2026-09-14 00:01:00+00' AS _ingested_at
+        """,
+        f"""
+        CREATE TABLE catalog1.silver.int_weather_forecast_hourly AS
+        SELECT
+            '{forecast_run_id}'::VARCHAR AS forecast_run_id,
             'cell-' || cell::VARCHAR AS grid_cell_id,
             TIMESTAMPTZ '2026-09-14 00:00:00+00' + hour * INTERVAL '1 hour'
                 AS valid_time_utc,

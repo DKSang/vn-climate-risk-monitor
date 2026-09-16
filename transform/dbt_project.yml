@@ -18,6 +18,7 @@ vars:
   # Keep completeness aligned with the fetch horizon.
   forecast_expected_hours: "{{ env_var('OPEN_METEO_FORECAST_HOURS', '72') }}"
   forecast_expected_locations: 126
+  forecast_model: ecmwf_ifs
   # Portfolio thresholds; not official hazard warnings.
   rain_pressure_thresholds:
     watch_next_6h_mm: 30
