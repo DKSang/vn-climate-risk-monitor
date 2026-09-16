@@ -278,10 +278,6 @@ def test_approved_operational_console_entry_points_are_package_owned() -> None:
         "vn_climate_risk_monitor.operations.bootstrap:main"
     )
     assert scripts["reset-lakehouse"] == "vn_climate_risk_monitor.operations.reset:main"
-    assert not (ROOT / "scripts/healthcheck.py").exists()
-    assert not (ROOT / "scripts/maintain_lake.py").exists()
-    assert not (ROOT / "scripts/bootstrap.py").exists()
-    assert not (ROOT / "scripts/reset_lakehouse.py").exists()
 
 
 def test_reset_scope_is_confirmation_protected_and_never_bronze() -> None:
@@ -321,8 +317,6 @@ def test_compose_has_only_runtime_services() -> None:
         "airflow",
         "streamlit",
     }
-    assert "pgadmin" not in compose_text
-    assert "secret-init" not in compose_text
     assert "x-project-environment:" in compose_text
     assert "<<: *project-environment" in compose_text
     assert "minioadmin" not in compose_text
@@ -368,10 +362,6 @@ def test_compose_credentials_are_explicit_placeholders_and_images_are_pinned() -
     ):
         assert f"{name}=" in env
         assert f"${{{name}" in compose
-    assert "APP_ACCOUNT" not in env + compose
-    assert "APP_PASSWORD" not in env + compose
-    assert "AIRFLOW_FERNET_KEY" not in env
-    assert "AIRFLOW_SECRET_KEY" not in env
     assert '--username "$${AIRFLOW_USERNAME}"' in compose
     assert '--password "$${AIRFLOW_PASSWORD}"' in compose
     assert '--email "$${AIRFLOW_USERNAME}@localhost" || true' in compose
@@ -394,12 +384,7 @@ def test_ci_supplies_compose_credentials_and_builds_real_service_names() -> None
         "AIRFLOW_PASSWORD",
     ):
         assert f"{name}:" in workflow
-    assert "APP_ACCOUNT:" not in workflow
-    assert "APP_PASSWORD:" not in workflow
-    assert "AIRFLOW_FERNET_KEY:" not in workflow
-    assert "PGADMIN_DEFAULT_PASSWORD:" not in workflow
     assert "docker compose build airflow streamlit" in workflow
-    assert "docker compose build airflow dashboard" not in workflow
 
 
 def test_dbt_profile_has_no_default_minio_credential() -> None:

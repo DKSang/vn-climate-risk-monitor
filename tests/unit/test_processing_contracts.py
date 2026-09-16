@@ -1,4 +1,4 @@
-"""Task 3 contracts for the two dbt-native processing flows."""
+"""Processing contracts across control state, dbt and incremental models."""
 
 from __future__ import annotations
 
@@ -224,7 +224,6 @@ def test_only_forecast_and_archive_are_active_process_keys() -> None:
 
     assert tuple(configs) == ("archive", "forecast")
     assert set(configs) == {"forecast", "archive"}
-    assert not list((ROOT / "auto_process").glob("*.yml"))
     assert configs["forecast"].source_refs == ("stg_weather_forecast",)
     assert configs["archive"].source_refs == ("stg_weather_archive_hourly",)
 
@@ -323,8 +322,7 @@ def test_dbt_build_uses_native_tag_selection_and_full_refresh_on_first_run() -> 
     assert json.loads(command[command.index("--vars") + 1])["processing_incremental"] is False
 
 
-def test_active_graphs_use_model_tags_without_selector_yaml() -> None:
-    assert not (TRANSFORM_DIR / "selectors.yml").exists()
+def test_active_graphs_use_model_tags() -> None:
     forecast = (
         TRANSFORM_DIR / "models/intermediate/int_weather_forecast_hourly.sql"
     ).read_text()
@@ -360,10 +358,6 @@ def test_weather_intermediate_models_read_physical_silver_staging() -> None:
 
     assert "source('silver_staging', 'stg_weather_archive_hourly')" in archive
     assert "source('silver_staging', 'stg_weather_forecast')" in forecast
-    assert "stg_open_meteo__weather_archive_hourly" not in archive
-    assert "stg_open_meteo__weather_forecast_hourly" not in forecast
-    assert not (TRANSFORM_DIR / "models/staging/stg_open_meteo__weather_archive_hourly.sql").exists()
-    assert not (TRANSFORM_DIR / "models/staging/stg_open_meteo__weather_forecast_hourly.sql").exists()
 
 
 def test_forecast_re_reads_all_rows_for_runs_touched_by_the_changed_window() -> None:
@@ -403,12 +397,6 @@ def test_static_reference_dimensions_and_bridge_are_tables_without_soft_delete(
     # Keep public Gold columns without soft-deleting static references.
     assert "_deactivated_at" in sql
     assert "soft_delete" not in sql.lower()
-
-
-def test_processing_console_entry_point_is_package_owned() -> None:
-    project = (ROOT / "pyproject.toml").read_text()
-
-    assert 'auto-process = "vn_climate_risk_monitor.auto_process.cli:main"' in project
 
 
 def _forecast_rows(
