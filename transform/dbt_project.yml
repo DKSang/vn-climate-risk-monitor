@@ -17,6 +17,8 @@ vars:
   forecast_expected_hours: "{{ env_var('OPEN_METEO_FORECAST_HOURS', '72') }}"
   forecast_expected_locations: 126
   forecast_model: ecmwf_ifs
+  # Start time of the last successful job run, passed by pipeline/job_run.py.
+  watermark: null
   # Portfolio thresholds; not official hazard warnings.
   rain_pressure_thresholds:
     watch_next_6h_mm: 30
@@ -59,6 +61,12 @@ models:
   transform:
     # All dbt models share the DuckLake catalog.
     +database: catalog1
+
+    # Silver built by the rebuilt pipeline (docs/adr/0001): clean_ tables merge
+    # the Python-loaded stg_ tables incrementally from a watermark var.
+    silver:
+      +schema: silver
+      +tags: ['silver']
 
     # Staging/intermediate map to Silver; marts map to Gold.
     # This staging layer normalizes seeds only.

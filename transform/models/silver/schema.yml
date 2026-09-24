@@ -1,0 +1,28 @@
+version: 2
+
+models:
+  - name: clean_weather_forecast_hourly
+    description: >
+      One row per forecast run x grid cell x hour, merged from
+      silver.stg_open_meteo_forecast with the watermark pattern (docs/adr/0001).
+      Data-quality dimensions (validity, volume) are checked by Great
+      Expectations in pipeline/quality.py; these tests guard the keys.
+    tests:
+      - unique_combination:
+          arguments:
+            columns: [forecast_run, grid_cell_id, valid_at]
+    columns:
+      - name: forecast_run
+        tests: [not_null]
+      - name: grid_cell_id
+        tests: [not_null]
+      - name: valid_at
+        tests: [not_null]
+      - name: precipitation_mm
+        tests: [not_null]
+      - name: rain_mm
+        tests: [not_null]
+      - name: _inserted_at
+        tests: [not_null]
+      - name: _updated_at
+        tests: [not_null]
