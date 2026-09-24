@@ -18,7 +18,6 @@ dependencies = [
     "pydeck>=0.9.1",
     "pandas>=2.2.0",
     "altair>=5.0.0",
-    "provero==0.2.1",
 ]
 
 [dependency-groups]
@@ -30,14 +29,9 @@ dev = [
 ]
 
 [project.scripts]
-fetch-open-meteo = "vn_climate_risk_monitor.sources.open_meteo.cli:main"
-auto-loader = "vn_climate_risk_monitor.auto_loader.cli:main"
-auto-process = "vn_climate_risk_monitor.auto_process.cli:main"
-pipeline-health = "vn_climate_risk_monitor.quality.health:main"
-quality-gate = "vn_climate_risk_monitor.quality.gates:main"
-maintain-lakehouse = "vn_climate_risk_monitor.operations.maintenance:main"
-bootstrap-lakehouse = "vn_climate_risk_monitor.operations.bootstrap:main"
-reset-lakehouse = "vn_climate_risk_monitor.operations.reset:main"
+init-lakehouse = "pipeline.init:main"
+maintain-lakehouse = "pipeline.maintain:main"
+fetch-open-meteo = "pipeline.open_meteo.cli:main"
 
 [tool.uv.build-backend]
 # Flat layout: the only Python package is ./pipeline.

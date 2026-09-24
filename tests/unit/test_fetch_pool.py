@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import threading
 
-from vn_climate_risk_monitor.sources.open_meteo.fetch import FetchTask, run_fetch_pool
+from pipeline.open_meteo.fetch import FetchTask, run_fetch_pool
 
 
 def tasks(count: int, units: int = 1) -> list[FetchTask]:
