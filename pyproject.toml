@@ -18,6 +18,8 @@ dependencies = [
     "pydeck>=0.9.1",
     "pandas>=2.2.0",
     "altair>=5.0.0",
+    "requests>=2.32",
+    "tenacity>=9.0",
 ]
 
 [dependency-groups]
@@ -26,12 +28,13 @@ dev = [
     # Render macro dbt trong unit test, không cần DuckDB/Postgres chạy thật.
     "jinja2>=3.1.0",
     "ruff>=0.11.0",
+    "responses>=0.25",
 ]
 
 [project.scripts]
 init-lakehouse = "pipeline.init:main"
 maintain-lakehouse = "pipeline.maintain:main"
-fetch-open-meteo = "pipeline.open_meteo.cli:main"
+fetch-forecast = "pipeline.open_meteo.forecast:main"
 
 [tool.uv.build-backend]
 # Flat layout: the only Python package is ./pipeline.

@@ -1,7 +1,6 @@
 """Hourly Open-Meteo forecast pipeline.
 
-Rebuild in progress: phase 1 only prepares the lake; fetch, load, transform and
-publish tasks are added by the following phases.
+Rebuild in progress: load, transform and publish tasks are added by later phases.
 """
 
 from __future__ import annotations
@@ -28,3 +27,12 @@ with DAG(
         cwd=PROJECT_DIR,
         bash_command="uv run init-lakehouse",
     )
+
+    fetch = BashOperator(
+        task_id="fetch",
+        pool=POOL,
+        cwd=PROJECT_DIR,
+        bash_command="uv run fetch-forecast --slot '{{ data_interval_end.isoformat() }}'",
+    )
+
+    init >> fetch
