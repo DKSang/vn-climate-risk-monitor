@@ -7,4 +7,5 @@ We chose this technology-agnostic pattern over dbt's native `is_incremental()` /
 ## Consequences
 
 - The pattern is safe only because Airflow serialises writers (single-writer pool). A concurrent writer could commit rows stamped before a run's start time after that run has read its source.
+- Object stores keep `LastModified` to the second, so the loader compares against the watermark rounded down to the second. It may re-read a file landed in that second, which is harmless, but it can never skip one.
 - Tables that aggregate over their whole history (`fct_rain_pressure_alert`, `fct_rain_forecast_current_hourly`, dimensions) are rebuilt in full, not processed incrementally.

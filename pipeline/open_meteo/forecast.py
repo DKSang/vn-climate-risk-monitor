@@ -23,6 +23,7 @@ from pipeline.settings import load_settings
 MODEL = "ecmwf_ifs"
 HOURLY_FIELDS = "precipitation,rain,showers,precipitation_probability,weather_code"
 RETRY_STATUSES = {429, 500, 502, 503, 504}
+BRONZE_PREFIX = "bronze/open_meteo/forecast/"
 GRID_SEED = Path(__file__).parents[2] / "transform/seeds/ward_grid_map_seed.csv"
 
 
@@ -31,7 +32,7 @@ def fetch_forecast(slot: datetime) -> list[str]:
     slot = slot.astimezone(UTC)
     settings = load_settings()
     client = lake.minio_client()
-    prefix = _run_prefix(slot)
+    prefix = run_prefix(slot)
     # Bronze is immutable: batches already landed (e.g. before an Airflow retry) are kept.
     landed = {
         obj.object_name
@@ -39,7 +40,7 @@ def fetch_forecast(slot: datetime) -> list[str]:
     }
     keys = []
     for index, cells in enumerate(
-        batched(_grid_cells(), settings.open_meteo.location_batch_size)
+        batched(grid_cells(), settings.open_meteo.location_batch_size)
     ):
         key = f"{prefix}batch_{index:03}.json"
         if key in landed:
@@ -91,14 +92,15 @@ def _get(url: str, params: dict) -> bytes:
     return response.content
 
 
-def _run_prefix(slot: datetime) -> str:
+def run_prefix(slot: datetime) -> str:
+    """Bronze folder of one forecast run (Hive-style partitions)."""
     return (
-        f"bronze/open_meteo/forecast/year={slot:%Y}/month={slot:%m}/day={slot:%d}/"
+        f"{BRONZE_PREFIX}year={slot:%Y}/month={slot:%m}/day={slot:%d}/"
         f"forecast_run={slot:%Y%m%dT%H}/"
     )
 
 
-def _grid_cells() -> list[tuple[str, str]]:
+def grid_cells() -> list[tuple[str, str]]:
     with GRID_SEED.open(encoding="utf-8") as seed:
         cells = {
             (row["grid_latitude"], row["grid_longitude"])

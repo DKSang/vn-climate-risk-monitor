@@ -1,6 +1,10 @@
 # Operations
 
-## Bootstrap
+> The pipeline is being rebuilt (see `docs/adr/`). The first two sections below
+> describe the new pipeline; later sections still describe the old one and are
+> rewritten in the final phase.
+
+## Start
 
 Create local credentials first; do not commit `.env`:
 
@@ -10,9 +14,32 @@ docker compose up -d --build
 docker compose ps
 ```
 
-The one-shot `bootstrap` service creates the MinIO bucket, attaches DuckLake to
-PostgreSQL, creates control-plane tables, seeds static references, and builds the
-small static Gold dependencies. It is safe to rerun against an existing volume.
+Every forecast DAG run starts with `init`, which creates the MinIO bucket, the
+DuckLake schemas and the `meta.*` tables; it is safe to rerun.
+
+## Forecast loader is blocked by a bad Bronze file
+
+The loader (`load` task) checks every new Bronze file with Great Expectations and
+loads nothing if one fails. Bronze is immutable, so a genuinely bad Open-Meteo
+response blocks every later load until you skip it. The failed run's reason is in
+Postgres:
+
+```sql
+SELECT started_at, error FROM meta.job_runs
+WHERE asset = 'silver.stg_open_meteo_forecast' ORDER BY id DESC LIMIT 5;
+```
+
+To skip the bad file, move the watermark past its landing time (`LastModified`
+in MinIO); the next run loads only files that landed later:
+
+```sql
+UPDATE meta.watermarks SET watermark = '<landing time + 1 second>'
+WHERE asset = 'silver.stg_open_meteo_forecast';
+```
+
+To reprocess a range instead, move the watermark back; re-read rows are
+deduplicated downstream.
+
 When running dbt directly from Windows PowerShell, force Python UTF-8 mode so
 Vietnamese place names in models and seeds are decoded consistently:
 
