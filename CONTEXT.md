@@ -15,8 +15,8 @@ _Avoid_: grid, point, station
 ## Weather data
 
 **Forecast run**:
-One issuance of a weather model's forecast, identified by the time it was issued; it covers the next 72 hours.
-_Avoid_: forecast vintage, run, batch
+The 72-hour forecast as fetched at one hourly slot, identified by that slot; the same model issuance can appear in several consecutive forecast runs.
+_Avoid_: forecast vintage, model run, batch
 
 **Archive**:
 Historical hourly weather for past days, as reanalysed by a weather model.
