@@ -1,12 +1,12 @@
 -- Each run/grid needs a complete forward horizon from its first hour.
 WITH first_hour AS (
     SELECT
-        forecast_run_id,
+        forecast_run,
         grid_cell_id,
         forecast_next_24h_mm,
         ROW_NUMBER() OVER (
-            PARTITION BY forecast_run_id, grid_cell_id
-            ORDER BY valid_time_utc
+            PARTITION BY forecast_run, grid_cell_id
+            ORDER BY valid_at
         ) AS row_number
     FROM {{ ref('fct_rain_forecast_hourly') }}
 )

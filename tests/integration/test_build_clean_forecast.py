@@ -4,15 +4,14 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-import pandas as pd
 import psycopg
 import pytest
+from staging import stage
 
 from pipeline import lake
 from pipeline.init import main as init_lake
 from pipeline.job_run import create_meta_tables
 from pipeline.open_meteo.clean import build_clean_forecast
-from pipeline.open_meteo.forecast import grid_cells
 from pipeline.open_meteo.load import CREATE_STAGING
 from pipeline.settings import load_settings
 
@@ -30,39 +29,6 @@ def empty_silver() -> None:
     with psycopg.connect(load_settings().postgres.dsn, autocommit=True) as conn:
         conn.execute("DROP SCHEMA IF EXISTS meta CASCADE")
     create_meta_tables()
-
-
-def stage(
-    run: datetime,
-    *,
-    rain: float,
-    inserted_at: datetime,
-    file: str,
-    weather_code: float = 61.0,
-) -> None:
-    """Append one full forecast run to staging, as the loader would."""
-    rows = pd.DataFrame(
-        [
-            {
-                "forecast_run": run,
-                "grid_latitude": float(lat),
-                "grid_longitude": float(lon),
-                "valid_at": run + timedelta(hours=h),
-                "precipitation": rain,
-                "rain": rain,
-                "showers": 0.0,
-                "precipitation_probability": 40.0,
-                "weather_code": weather_code,
-                "_source_file": file,
-                "_inserted_at": inserted_at,
-            }
-            for lat, lon in grid_cells()
-            for h in range(72)
-        ]
-    )
-    with lake.connect() as con:
-        con.register("new_rows", rows)
-        con.execute("INSERT INTO silver.stg_open_meteo_forecast SELECT * FROM new_rows")
 
 
 def clean() -> list[tuple]:

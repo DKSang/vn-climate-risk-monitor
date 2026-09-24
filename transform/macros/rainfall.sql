@@ -5,7 +5,7 @@
 
 
 {# RANGE giữ đúng time window khi nguồn thiếu giờ. #}
-{% macro rolling_rain_sums(windows, partition_by, order_by='valid_time_utc') %}
+{% macro rolling_rain_sums(windows, partition_by, order_by='valid_at') %}
     {%- for hours in windows %}
     SUM(precipitation_mm) OVER (
         PARTITION BY {{ partition_by }}
@@ -31,7 +31,7 @@
 
 
 {# Forward window gồm current hour và H-1 giờ kế tiếp. #}
-{% macro forward_rain_sums(windows, partition_by, order_by='valid_time_utc') %}
+{% macro forward_rain_sums(windows, partition_by, order_by='valid_at') %}
     {%- for hours in windows %}
     SUM(precipitation_mm) OVER (
         PARTITION BY {{ partition_by }}

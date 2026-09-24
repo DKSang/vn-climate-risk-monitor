@@ -2,7 +2,9 @@
 {% set windows = rain_windows() %}
 
 SELECT
-    rain_forecast_hourly_key,
+    forecast_run,
+    grid_cell_id,
+    valid_at,
     {%- for hours in windows %}
     rain_{{ hours }}h_mm{{ "," if not loop.last }}
     {%- endfor %}
