@@ -194,8 +194,8 @@ volume and latency requirements do not justify their operational complexity.
 ## Repository structure
 
 > The codebase is being rebuilt in small phases (see [`CONTEXT.md`](CONTEXT.md) and
-> [`docs/adr/`](docs/adr/)). Phases 1–2 laid the foundation below; the forecast DAG currently
-> prepares the lake and lands raw forecasts in Bronze, and the dashboard's snapshot lookup is rebuilt in a later phase.
+> [`docs/adr/`](docs/adr/)). Phases 1–3 laid the foundation below; the forecast DAG currently
+> lands raw forecasts in Bronze and loads them into `silver.stg_open_meteo_forecast`, and the dashboard's snapshot lookup is rebuilt in a later phase.
 
 ```text
 vn-climate-risk-monitor/
@@ -206,7 +206,8 @@ vn-climate-risk-monitor/
 │   ├── meta.sql            # meta.watermarks, meta.job_runs
 │   ├── init.py             # idempotent lake setup (`uv run init-lakehouse`)
 │   ├── maintain.py         # DuckLake snapshot/file retention
-│   └── open_meteo/         # forecast fetch into Bronze (`uv run fetch-forecast --slot ...`)
+│   ├── quality.py          # Great Expectations gates
+│   └── open_meteo/         # fetch into Bronze, auto loader into silver.stg_
 ├── dags/                   # Airflow DAGs
 ├── transform/              # dbt project
 ├── dashboard/              # Streamlit app
