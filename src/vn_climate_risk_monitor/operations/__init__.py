@@ -1,1 +1,0 @@
-"""Lakehouse operational commands."""

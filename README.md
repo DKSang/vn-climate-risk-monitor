@@ -193,24 +193,29 @@ volume and latency requirements do not justify their operational complexity.
 
 ## Repository structure
 
+> The codebase is being rebuilt in small phases (see [`CONTEXT.md`](CONTEXT.md) and
+> [`docs/adr/`](docs/adr/)). Phase 1 laid the foundation below; the forecast DAG currently only
+> prepares the lake, and the dashboard's snapshot lookup is rebuilt in a later phase.
+
 ```text
 vn-climate-risk-monitor/
-├── .github/workflows/ci.yml        # CI quality and runtime checks
-├── docker/                         # Airflow and dashboard images
-├── docs/                           # Architecture, contracts and operations
-├── orchestration/dags/             # Forecast, archive and maintenance DAGs
-├── scripts/                        # Backup, restore and repository checks
-├── serving/dashboard/              # Streamlit application and query modules
-├── src/vn_climate_risk_monitor/
-│   ├── sources/open_meteo/         # Source planning and ingestion
-│   ├── auto_loader/                # Bronze → Silver
-│   ├── auto_process/               # Incremental processing and publication state
-│   ├── quality/                    # Runtime quality and health gates
-│   ├── operations/                 # Bootstrap, maintenance and reset
-│   └── platform/                   # Storage/catalog configuration
-├── tests/unit/                     # Behavioral and contract tests
-├── tools/                          # One-time reproducible data preparation tools
-├── transform/                      # dbt models, macros, seeds and singular tests
+├── pipeline/               # Python package run by Airflow
+│   ├── settings.py         # environment variables
+│   ├── lake.py             # the one place that attaches DuckLake (Postgres catalog + MinIO)
+│   ├── job_run.py          # start-time watermark pattern (ADR 0001)
+│   ├── meta.sql            # meta.watermarks, meta.job_runs
+│   ├── init.py             # idempotent lake setup (`uv run init-lakehouse`)
+│   ├── maintain.py         # DuckLake snapshot/file retention
+│   └── open_meteo/         # Open-Meteo request planning and fetch
+├── dags/                   # Airflow DAGs
+├── transform/              # dbt project
+├── dashboard/              # Streamlit app
+├── docker/                 # Dockerfiles, Postgres init script
+├── scripts/                # repository checks and one-time data tools
+├── tests/
+│   ├── unit/
+│   └── integration/        # needs a running Postgres
+├── docs/                   # architecture, ADRs, agent docs
 ├── docker-compose.yml
 ├── pyproject.toml
 └── uv.lock
@@ -247,6 +252,7 @@ users and never commit the generated `.env` file.
 ```powershell
 uv sync --frozen
 uv run ruff check .
+docker compose up -d postgres   # tests/integration need a real Postgres
 uv run pytest -q
 $env:PYTHONUTF8 = "1"
 uv run dbt parse --project-dir transform --profiles-dir transform

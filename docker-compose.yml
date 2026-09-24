@@ -24,6 +24,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-vnclimate} -d ${POSTGRES_DB:-vnclimate}"]
       interval: 5s
@@ -48,26 +49,6 @@ services:
       timeout: 5s
       retries: 10
 
-  bootstrap:
-    build:
-      context: .
-      dockerfile: docker/dashboard.Dockerfile
-    image: vn-climate-risk-monitor-dashboard:0.1.0
-    depends_on:
-      postgres:
-        condition: service_healthy
-      minio:
-        condition: service_healthy
-    environment:
-      <<: *project-environment
-    command:
-      - bash
-      - -ec
-      - |
-        uv run bootstrap-lakehouse
-        uv run dbt seed --project-dir transform --profiles-dir transform
-        uv run dbt build --project-dir transform --profiles-dir transform --indirect-selection cautious --select stg_seed__ward stg_seed__ward_grid dim_ward
-
   airflow:
     build:
       context: .
@@ -82,8 +63,6 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
-      bootstrap:
-        condition: service_completed_successfully
     ports:
       - "127.0.0.1:${AIRFLOW_PORT:-8080}:8080"
     environment:
@@ -153,8 +132,6 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
-      bootstrap:
-        condition: service_completed_successfully
     environment:
       <<: *project-environment
       DASHBOARD_PORT: ${DASHBOARD_PORT:-8501}

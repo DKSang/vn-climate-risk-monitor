@@ -20,6 +20,9 @@ RUN uv sync --frozen --no-dev --no-install-project
 COPY --chown=airflow:root . /project
 RUN uv sync --frozen --no-dev
 
+# Bake DuckDB extensions into the image so nothing is downloaded at runtime.
+RUN uv run python -c "import duckdb; [duckdb.install_extension(e) for e in ('ducklake', 'httpfs', 'postgres')]"
+
 # Airflow parses these files with its own environment; tasks use the locked
 # project environment through `uv run`.
-COPY --chown=airflow:root orchestration/dags /opt/airflow/dags
+COPY --chown=airflow:root dags /opt/airflow/dags

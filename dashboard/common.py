@@ -1,0 +1,219 @@
+"""Shared read-only dashboard queries and snapshot resolution."""
+
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+import pandas as pd
+from vn_climate_risk_monitor.auto_loader.state import connect_control_plane
+from vn_climate_risk_monitor.auto_process.config import PROCESS_CONFIGS
+from vn_climate_risk_monitor.platform.lakehouse import get_connection
+from vn_climate_risk_monitor.platform.settings import load_settings
+
+logger = logging.getLogger(__name__)
+
+_PUBLICATION_PROCESS = {
+    config.target.rsplit(".", 1)[-1]: process_key
+    for process_key, config in PROCESS_CONFIGS.items()
+}
+
+RAIN_METRICS = frozenset(
+    {
+        "rain_1h_mm",
+        "rain_12h_mm",
+        "rain_24h_mm",
+        "forecast_next_1h_mm",
+        "forecast_next_3h_mm",
+        "forecast_next_6h_mm",
+        "forecast_next_12h_mm",
+        "forecast_next_24h_mm",
+    }
+)
+
+
+def _validate_rain_metric(metric: str) -> str:
+    if metric not in RAIN_METRICS:
+        raise ValueError(f"Rain metric không hợp lệ: {metric}")
+    return metric
+
+
+def load_serving_snapshot(
+    table_schema: str = "gold",
+    table_name: str = "fct_rain_forecast_hourly",
+) -> dict[str, Any]:
+    """Resolve the latest successfully published Gold snapshot."""
+    process_key = _PUBLICATION_PROCESS.get(table_name)
+    if process_key is None:
+        raise ValueError(f"Không có publication process cho {table_name!r}")
+    settings = load_settings()
+    connection = connect_control_plane(settings.postgres.ducklake_connection_string)
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                WITH published_run AS (
+                    SELECT published_snapshot_id AS snapshot_id
+                    FROM processing.processing_runs
+                    WHERE process_key = %s
+                      AND scope = 'production'
+                      AND status = 'SUCCEEDED'
+                      AND published_snapshot_id IS NOT NULL
+                    ORDER BY completed_at_utc DESC
+                    LIMIT 1
+                ),
+                catalog_snapshot AS (
+                    SELECT
+                        snapshot.snapshot_id,
+                        snapshot.snapshot_time
+                    FROM ducklake.ducklake_snapshot AS snapshot
+                    JOIN published_run USING (snapshot_id)
+                ),
+                target_schema AS (
+                    SELECT schema.schema_id
+                    FROM ducklake.ducklake_schema AS schema
+                    CROSS JOIN catalog_snapshot
+                    WHERE schema.schema_name = %s
+                      AND schema.begin_snapshot <= catalog_snapshot.snapshot_id
+                      AND (
+                          schema.end_snapshot IS NULL
+                          OR schema.end_snapshot > catalog_snapshot.snapshot_id
+                      )
+                    ORDER BY schema.begin_snapshot DESC
+                    LIMIT 1
+                ),
+                target_table AS (
+                    SELECT
+                        tbl.table_id,
+                        tbl.begin_snapshot
+                    FROM ducklake.ducklake_table AS tbl
+                    JOIN target_schema USING (schema_id)
+                    CROSS JOIN catalog_snapshot
+                    WHERE tbl.table_name = %s
+                      AND tbl.begin_snapshot <= catalog_snapshot.snapshot_id
+                      AND (
+                          tbl.end_snapshot IS NULL
+                          OR tbl.end_snapshot > catalog_snapshot.snapshot_id
+                      )
+                    ORDER BY tbl.begin_snapshot DESC
+                    LIMIT 1
+                ),
+                tracked_table_snapshot AS (
+                    SELECT
+                        snapshot.snapshot_id,
+                        snapshot.snapshot_time
+                    FROM ducklake.ducklake_snapshot AS snapshot
+                    JOIN ducklake.ducklake_snapshot_changes AS changes
+                      USING (snapshot_id)
+                    CROSS JOIN target_table
+                    CROSS JOIN catalog_snapshot
+                    WHERE changes.changes_made ~ (
+                        '(^|,)(inserted_into_table|deleted_from_table|'
+                        || 'compacted_table|altered_table):'
+                        || target_table.table_id::text
+                        || '(,|$)'
+                    )
+                      AND snapshot.snapshot_id <= catalog_snapshot.snapshot_id
+                    ORDER BY snapshot.snapshot_id DESC
+                    LIMIT 1
+                ),
+                table_snapshot AS (
+                    SELECT
+                        COALESCE(
+                            tracked.snapshot_id,
+                            created.snapshot_id,
+                            target_table.begin_snapshot
+                        )
+                            AS snapshot_id,
+                        COALESCE(tracked.snapshot_time, created.snapshot_time)
+                            AS snapshot_time
+                    FROM target_table
+                    LEFT JOIN tracked_table_snapshot AS tracked ON TRUE
+                    LEFT JOIN ducklake.ducklake_snapshot AS created
+                      ON created.snapshot_id = target_table.begin_snapshot
+                )
+                SELECT
+                    catalog_snapshot.snapshot_id,
+                    catalog_snapshot.snapshot_time,
+                    table_snapshot.snapshot_id AS table_snapshot_id,
+                    table_snapshot.snapshot_time AS table_snapshot_time
+                FROM catalog_snapshot
+                CROSS JOIN table_snapshot
+                """,
+                (process_key, table_schema, table_name),
+            )
+            row = cursor.fetchone()
+            if row is not None:
+                columns = [column.name for column in cursor.description]
+                return dict(zip(columns, row, strict=True))
+        logger.info("Chưa có validated processing snapshot cho %s", table_name)
+        return {}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Không thể resolve validated DuckLake serving snapshot: %s", exc)
+        return {}
+    finally:
+        connection.close()
+
+def _read_dataframe(
+    query: str,
+    params: list[Any] | None = None,
+    *,
+    snapshot_version: int | None = None,
+) -> pd.DataFrame:
+    """Chỉ materialize DataFrame cho các bảng mà component UI cần render."""
+    con = get_connection(read_only=True, snapshot_version=snapshot_version)
+    try:
+        return con.execute(query, params or []).df()
+    finally:
+        con.close()
+
+def _read_record(
+    query: str,
+    params: list[Any] | None = None,
+    *,
+    snapshot_version: int | None = None,
+) -> dict[str, Any]:
+    """Lấy một record trực tiếp từ DuckDB, không đi vòng qua pandas."""
+    con = get_connection(read_only=True, snapshot_version=snapshot_version)
+    try:
+        cursor = con.execute(query, params or [])
+        row = cursor.fetchone()
+        if row is None:
+            return {}
+        columns = [column[0] for column in cursor.description]
+        return dict(zip(columns, row, strict=True))
+    finally:
+        con.close()
+
+def _read_records(
+    query: str,
+    params: list[Any] | None = None,
+    *,
+    snapshot_version: int | None = None,
+) -> list[dict[str, Any]]:
+    """Lấy danh sách record trực tiếp từ DuckDB cho dữ liệu điều khiển nhỏ."""
+    con = get_connection(read_only=True, snapshot_version=snapshot_version)
+    try:
+        cursor = con.execute(query, params or [])
+        columns = [column[0] for column in cursor.description]
+        return [dict(zip(columns, row, strict=True)) for row in cursor.fetchall()]
+    finally:
+        con.close()
+
+def load_all_wards(
+    snapshot_version: int | None = None,
+) -> list[dict[str, Any]]:
+    """Danh sách 126 phường/xã hiện hành cho selector và bản đồ."""
+    try:
+        return _read_records(
+            """
+            SELECT ward_code, ward_name, ward_latitude, ward_longitude
+            FROM gold.dim_ward
+            WHERE is_active = TRUE
+            ORDER BY ward_name
+            """,
+            snapshot_version=snapshot_version,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Không thể đọc danh sách phường: %s", exc)
+        return []

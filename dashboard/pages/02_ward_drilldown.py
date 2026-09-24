@@ -1,0 +1,197 @@
+"""Tra cứu forecast và áp lực mưa theo phường/xã."""
+# ruff: noqa: N999
+
+from __future__ import annotations
+
+import altair as alt
+import streamlit as st
+
+from dashboard.common import load_all_wards, load_serving_snapshot
+from dashboard.forecast import (
+    load_forecast_metadata,
+    load_ward_forecast_summary,
+    load_ward_forecast_timeseries,
+)
+from dashboard.ui import (
+    configure_page,
+    local_time,
+    metric_strip,
+    navigation,
+    number,
+    page_header,
+    pressure_score_label,
+    to_local_naive,
+    warn_if_stale,
+)
+
+configure_page("Chi tiết phường/xã", "⌖")
+navigation("ward")
+
+published = load_serving_snapshot()
+if not published:
+    st.error("Không resolve được snapshot DuckLake hiện hành từ metadata PostgreSQL.")
+    st.stop()
+snapshot_version = int(published["snapshot_id"])
+table_snapshot_version = int(published["table_snapshot_id"])
+wards = load_all_wards(snapshot_version)
+metadata = load_forecast_metadata(snapshot_version)
+if not wards:
+    st.warning("Chưa có danh mục phường/xã hiện hành trong Lakehouse.")
+    st.stop()
+
+page_header(
+    "Ward intelligence",
+    "Chi tiết phường/xã",
+    "Chọn một địa bàn để đọc lượng mưa dự kiến phía trước, tín hiệu áp lực "
+    "và điều kiện kích hoạt của tín hiệu áp lực mưa.",
+    f"Forecast S{table_snapshot_version} · {local_time(metadata.get('updated_at_utc'), '%H:%M · %d/%m')}",
+)
+
+warn_if_stale(metadata)
+
+ward_options = {f"{ward['ward_name']} · {ward['ward_code']}": ward for ward in wards}
+with st.container(border=True):
+    selected_label = st.selectbox(
+        "Chọn phường/xã",
+        options=list(ward_options),
+        help="Tìm theo tên hoặc mã hành chính 5 ký tự.",
+    )
+selected_ward = ward_options[selected_label]
+ward_code = str(selected_ward["ward_code"])
+ward_name = str(selected_ward["ward_name"])
+
+summary = load_ward_forecast_summary(ward_code, snapshot_version)
+df_ts = load_ward_forecast_timeseries(ward_code, snapshot_version)
+
+available_hours = int(summary.get("available_hours") or 0)
+metric_strip(
+    [
+        (
+            "Tổng mưa 24 giờ đầu",
+            f"{number(summary.get('next_24h_rain_mm')):.1f} mm",
+            ward_name,
+        ),
+        (
+            "Tổng mưa horizon",
+            f"{number(summary.get('horizon_rain_mm')):.1f} mm",
+            f"{available_hours} giờ",
+        ),
+        (
+            "Đỉnh mưa 1 giờ",
+            f"{number(summary.get('peak_1h_mm')):.1f} mm",
+            local_time(summary.get("peak_time_utc"), "%H:%M · %d/%m"),
+        ),
+        (
+            "Áp lực mưa đầu horizon",
+            str(summary.get("pressure_level") or "Chưa có"),
+            pressure_score_label(summary.get("pressure_score")),
+        ),
+    ]
+)
+
+if df_ts.empty:
+    st.info("Phường/xã này chưa có dữ liệu trong forecast horizon hiện hành.")
+    st.stop()
+
+df_ts = df_ts.copy()
+df_ts["Giờ Hà Nội"] = to_local_naive(df_ts["valid_time_utc"])
+
+st.markdown(f"### Diễn biến mưa · {ward_name}")
+metric_choice = st.radio(
+    "Chỉ số hiển thị",
+    ("Mưa từng giờ", "Mưa dự kiến 6 giờ tới", "Mưa dự kiến 24 giờ tới"),
+    horizontal=True,
+    label_visibility="collapsed",
+)
+field, mark, label = {
+    "Mưa từng giờ": ("precipitation_mm", "bar", "Mưa trong giờ (mm)"),
+    "Mưa dự kiến 6 giờ tới": (
+        "forecast_next_6h_mm",
+        "line",
+        "Mưa dự kiến 6 giờ tới (mm)",
+    ),
+    "Mưa dự kiến 24 giờ tới": (
+        "forecast_next_24h_mm",
+        "line",
+        "Mưa dự kiến 24 giờ tới (mm)",
+    ),
+}[metric_choice]
+
+base = alt.Chart(df_ts).encode(
+    x=alt.X(
+        "Giờ Hà Nội:T", title="Giờ Hà Nội", axis=alt.Axis(format="%H:%M\n%d/%m")
+    ),
+    y=alt.Y(f"{field}:Q", title=label),
+    tooltip=[
+        alt.Tooltip("Giờ Hà Nội:T", title="Thời gian", format="%H:%M · %d/%m/%Y"),
+        alt.Tooltip(f"{field}:Q", title=label, format=".1f"),
+        alt.Tooltip(
+            "precipitation_probability_pct:Q", title="Xác suất mưa", format=".0f"
+        ),
+    ],
+)
+if mark == "bar":
+    chart = base.mark_bar(
+        color="#FFE900", cornerRadiusTopLeft=3, cornerRadiusTopRight=3
+    )
+else:
+    chart = base.mark_line(
+        color="#FFE900",
+        strokeWidth=3,
+        point=alt.OverlayMarkDef(color="#F0B90B", size=35),
+    )
+chart = (
+    chart.configure(background="#181A1E")
+    .configure_view(strokeOpacity=0)
+    .configure_axis(
+        domainColor="#373943",
+        gridColor="#373943",
+        labelColor="#C4C5CB",
+        labelFont="Space Grotesk",
+        titleColor="#C4C5CB",
+        titleFont="Space Grotesk",
+    )
+    .configure_legend(
+        labelColor="#C4C5CB",
+        labelFont="Space Grotesk",
+        titleColor="#FFFFFF",
+        titleFont="Space Grotesk",
+    )
+)
+st.altair_chart(chart.properties(height=410), width="stretch")
+st.caption(
+    "Mưa từng giờ là lượng forecast tại timestamp. Cửa sổ 6/24 giờ là "
+    "tổng từ timestamp hiện tại, gồm H giờ liên tiếp; NULL ở đuôi horizon nghĩa "
+    "là chưa đủ dữ liệu forecast."
+)
+
+with st.expander("Bảng dữ liệu forecast theo giờ"):
+    table = df_ts[
+        [
+            "Giờ Hà Nội",
+            "precipitation_mm",
+            "precipitation_probability_pct",
+            "forecast_next_6h_mm",
+            "forecast_next_24h_mm",
+        ]
+    ].copy()
+    table.columns = ["Giờ Hà Nội", "Mưa giờ", "Xác suất", "Mưa tới 6h", "Mưa tới 24h"]
+    st.dataframe(
+        table,
+        hide_index=True,
+        width="stretch",
+        column_config={
+            "Giờ Hà Nội": st.column_config.DatetimeColumn(format="HH:mm · DD/MM/YYYY"),
+            "Mưa giờ": st.column_config.NumberColumn(format="%.1f mm"),
+            "Xác suất": st.column_config.ProgressColumn(
+                min_value=0, max_value=100, format="%.0f%%"
+            ),
+            "Mưa tới 6h": st.column_config.NumberColumn(format="%.1f mm"),
+            "Mưa tới 24h": st.column_config.NumberColumn(format="%.1f mm"),
+        },
+    )
+
+st.caption(
+    "Các KPI tổng hợp phía trên được tính trực tiếp trong DuckDB. Pandas chỉ chuyển bảng kết quả "
+    "sang định dạng mà Streamlit, Altair và PyDeck yêu cầu để render."
+)
