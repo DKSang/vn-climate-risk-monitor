@@ -41,8 +41,8 @@ build-clean-forecast = "pipeline.open_meteo.clean:main"
 build-gold-forecast = "pipeline.open_meteo.gold:main"
 
 [tool.uv.build-backend]
-# Flat layout: the only Python package is ./pipeline.
-module-name = "pipeline"
+# Flat layout: ./pipeline (runs in Airflow) and ./dashboard (Streamlit).
+module-name = ["pipeline", "dashboard"]
 module-root = ""
 
 [build-system]

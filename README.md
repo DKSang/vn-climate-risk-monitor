@@ -133,8 +133,11 @@ rows**. These are reproducible sample-run figures, not a production capacity cla
 
 ## Dashboard
 
-The Streamlit dashboard reads a pinned Gold snapshot for a consistent view of current forecast
-pressure across Hanoi wards and communes.
+A one-report Streamlit dashboard in the style of Power BI: a slicer bar (hour, map metric,
+ward), KPI cards, a ward choropleth, a Top 10 ranking, the pressure-level mix and the 72-hour
+trend, plus ward-detail and data-table pages. Clicking a ward on the map or in the ranking
+cross-filters every visual. It reads Gold only through the latest DuckLake snapshot the
+pipeline tagged `publish`, so one view never mixes two pipeline runs.
 
 ![Dashboard rainfall forecast](docs/dashboard-forecast-map.png)
 
@@ -194,8 +197,8 @@ volume and latency requirements do not justify their operational complexity.
 ## Repository structure
 
 > The codebase is being rebuilt in small phases (see [`CONTEXT.md`](CONTEXT.md) and
-> [`docs/adr/`](docs/adr/)). Phases 1–5 rebuilt the forecast pipeline end to end, from Bronze to a
-> published Gold snapshot; the dashboard and the archive pipeline are rebuilt next.
+> [`docs/adr/`](docs/adr/)). Phases 1–6 rebuilt the forecast pipeline end to end, from Bronze to a
+> published Gold snapshot and the dashboard; the archive pipeline is rebuilt next.
 
 ```text
 vn-climate-risk-monitor/
@@ -211,7 +214,7 @@ vn-climate-risk-monitor/
 │   └── open_meteo/         # fetch -> Bronze, load -> stg_, clean -> clean_, gold + publish
 ├── dags/                   # Airflow DAGs
 ├── transform/              # dbt project
-├── dashboard/              # Streamlit app
+├── dashboard/              # Streamlit report (app, queries, ui)
 ├── docker/                 # Dockerfiles, Postgres init script
 ├── scripts/                # repository checks and one-time data tools
 ├── tests/

@@ -1,22 +1,17 @@
+# Light report theme in the style of a Power BI canvas.
 [theme]
-base = "dark"
-primaryColor = "#FFE900"
-backgroundColor = "#14151A"
-secondaryBackgroundColor = "#181A1E"
-textColor = "#FFFFFF"
-linkColor = "#FFE900"
-borderColor = "#373943"
+base = "light"
+primaryColor = "#2a78d6"
+backgroundColor = "#f3f2f1"
+secondaryBackgroundColor = "#ffffff"
+textColor = "#252423"
+borderColor = "#e1dfdd"
 showWidgetBorder = true
-baseRadius = "medium"
-buttonRadius = "medium"
-
-[theme.sidebar]
-backgroundColor = "#181A1E"
-secondaryBackgroundColor = "#1E2026"
-textColor = "#C4C5CB"
+baseRadius = "small"
 
 [client]
 toolbarMode = "viewer"
+showSidebarNavigation = false
 
 [browser]
 gatherUsageStats = false
