@@ -10,7 +10,6 @@ SELECT
     latitude AS ward_latitude,
     longitude AS ward_longitude,
     region,
-    climate_zone,
-    TRUE AS is_active
+    climate_zone
 FROM {{ ref('ward_coordinates_seed') }}
 WHERE province_code = '01'

@@ -1,7 +1,7 @@
 /* Hanoi ward reference dimension. Rebuilt from the versioned seed. */
 {{ config(
     materialized = 'table',
-    tags = ['dim', 'forecast', 'archive']
+    tags = ['dim']
 ) }}
 
 SELECT
@@ -12,8 +12,5 @@ SELECT
     ward_latitude,
     ward_longitude,
     region,
-    climate_zone,
-    TRUE AS is_active,
-    CAST(NULL AS TIMESTAMPTZ) AS _deactivated_at,
-    CURRENT_TIMESTAMP AS _updated_at
+    climate_zone
 FROM {{ ref('stg_seed__ward') }}

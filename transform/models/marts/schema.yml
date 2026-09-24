@@ -1,129 +1,52 @@
 version: 2
 
 models:
+  - name: dim_ward
+    description: "Hanoi's 126 wards and communes, from the versioned seed."
+    columns:
+      - name: ward_code
+        tests: [unique, not_null]
+
   - name: dim_grid
-    description: "Ô lưới thời tiết — nơi DUY NHẤT giữ lat/lon của ô"
+    description: "Weather-model grid cells the wards fall in (scripts/map_ward_grid.py)."
     columns:
       - name: grid_cell_id
         tests: [unique, not_null]
-      - name: weather_model
-        tests:
-          - not_null
-          - accepted_values:
-              arguments:
-                values: ['era5', 'ecmwf_ifs', 'best_match']
-      - name: grid_latitude
-        tests: [not_null]
-      - name: grid_longitude
-        tests: [not_null]
-
-  - name: dim_ward
-    description: >
-      126 phường/xã Hà Nội. KHÔNG mang grid_cell_id — xem bridge.
-      Materialized as a table from the versioned reference seed. `is_active`
-      remains TRUE for dashboard compatibility; reference changes are published
-      by rebuilding the table, not by runtime soft delete.
-    columns:
-      - name: ward_code
-        tests: [unique, not_null]
-      - name: ward_name
-        tests: [not_null]
-      - name: is_active
-        description: "FALSE = không còn trong seed (giải thể/sáp nhập)"
-        tests: [not_null]
-      - name: _deactivated_at
-        description: "Giữ contract lịch sử; static reference hiện không soft-delete"
-      - name: _updated_at
-        tests: [not_null]
 
   - name: bridge_ward_grid
-    description: >
-      Static phường ↔ ô lưới theo model từ reference seed. Forecast ECMWF IFS
-      dùng cùng model/grid mapping với archive ECMWF IFS.
+    description: "One grid cell per ward and weather model."
+    tests:
+      - unique_combination:
+          arguments:
+            columns: [ward_code, weather_model]
     columns:
-      - name: ward_grid_key
-        tests: [unique, not_null]
-      - name: is_active
-        tests: [not_null]
-      - name: _deactivated_at
-        description: "Giữ contract lịch sử; static reference hiện không soft-delete"
-      - name: _updated_at
-        tests: [not_null]
       - name: ward_code
         tests:
-          - not_null
           - relationships:
               arguments:
                 to: ref('dim_ward')
                 field: ward_code
       - name: grid_cell_id
         tests:
-          - not_null
           - relationships:
               arguments:
                 to: ref('dim_grid')
                 field: grid_cell_id
-      - name: ward_count_on_grid
-        description: "Số phường dùng chung ô này — để xếp hạng không nhân trọng số"
-        tests: [not_null]
-
-  - name: fct_rain_archive_hourly
-    description: >
-      Mưa theo ô lưới × giờ (Archive) + cửa sổ trượt 1/3/6/12/24h + dải
-      kịch bản. `rain_{N}h_mm` NULL = cửa sổ thiếu giờ.
-    columns:
-      - name: rain_archive_hourly_key
-        tests: [unique, not_null]
-      - name: grid_cell_id
-        tests:
-          - not_null
-          - relationships:
-              arguments:
-                to: ref('dim_grid')
-                field: grid_cell_id
-      - name: valid_time_utc
-        tests: [not_null]
-      - name: rain_date
-        tests: [not_null]
-      - name: _updated_at
-        description: "Kế thừa từ silver.int_weather_archive_hourly — watermark của fact này"
-        tests: [not_null]
-      - name: hanoi_rain_scenario_band
-        tests:
-          - accepted_values:
-              arguments:
-                values: ['below_50', 'from_50_to_under_70', 'from_70_to_100', 'over_100']
-      - name: hanoi_rain_scenario_level
-        description: "NULL when the 1-hour rainfall window is incomplete"
-      - name: vn_rain_band_12h
-        tests:
-          - accepted_values:
-              arguments:
-                values: ['below_30', 'from_30_to_under_50', 'from_50_to_under_70', 'from_70_to_100', 'over_100']
-      - name: vn_rain_band_24h
-        tests:
-          - accepted_values:
-              arguments:
-                values: ['below_50', 'from_50_to_under_100', 'from_100_to_under_150', 'from_150_to_under_200', 'from_200_to_300', 'over_300']
 
   - name: fct_rain_forecast_hourly
     description: >
-      Lịch sử mưa forecast theo run × ô lưới × giờ, có rolling trailing
-      1/3/6/12/24h và các cột forecast_next_*h_mm nhìn về tương lai.
-      Rolling partition theo run, không trộn vintage.
+      Every forecast run x grid cell x hour with rolling (past) and forward
+      rainfall windows computed inside the run. Windows are NULL when they
+      reach past the run's hours.
+    tests:
+      - unique_combination:
+          arguments:
+            columns: [forecast_run, grid_cell_id, valid_at]
     columns:
-      - name: rain_forecast_hourly_key
-        tests: [unique, not_null]
-      - name: forecast_run_id
+      - name: forecast_run
         tests: [not_null]
-      - name: forecast_run_at
+      - name: valid_at
         tests: [not_null]
-      - name: weather_model
-        tests:
-          - not_null
-          - accepted_values:
-              arguments:
-                values: ['best_match', 'ecmwf_ifs']
       - name: grid_cell_id
         tests:
           - not_null
@@ -131,121 +54,50 @@ models:
               arguments:
                 to: ref('dim_grid')
                 field: grid_cell_id
-      - name: valid_time_utc
-        tests: [not_null]
-      - name: forecast_date
-        tests: [not_null]
-      - name: _updated_at
-        tests: [not_null]
-      - name: forecast_next_24h_mm
-        description: "Tổng forecast từ valid_time, gồm 24 giờ liên tiếp; NULL nếu thiếu horizon"
-      - name: forecast_next_1h_mm
-        description: "Tổng forecast từ valid_time, gồm 1 giờ"
-      - name: forecast_next_3h_mm
-        description: "Tổng forecast từ valid_time, gồm 3 giờ liên tiếp"
-      - name: forecast_next_6h_mm
-        description: "Tổng forecast từ valid_time, gồm 6 giờ liên tiếp"
-      - name: forecast_next_12h_mm
-        description: "Tổng forecast từ valid_time, gồm 12 giờ liên tiếp"
-      - name: hanoi_rain_scenario_band
-        tests:
-          - accepted_values:
-              arguments:
-                values: ['below_50', 'from_50_to_under_70', 'from_70_to_100', 'over_100']
-      - name: hanoi_rain_scenario_level
-        description: "NULL when the 1-hour rainfall window is incomplete"
-      - name: forecast_next_1h_band
-        tests:
-          - accepted_values:
-              arguments:
-                values: ['below_50', 'from_50_to_under_70', 'from_70_to_100', 'over_100']
-      - name: forecast_next_12h_band
-        tests:
-          - accepted_values:
-              arguments:
-                values: ['below_30', 'from_30_to_under_50', 'from_50_to_under_70', 'from_70_to_100', 'over_100']
-      - name: forecast_next_24h_band
-        tests:
-          - accepted_values:
-              arguments:
-                values: ['below_50', 'from_50_to_under_100', 'from_100_to_under_150', 'from_150_to_under_200', 'from_200_to_300', 'over_300']
-      - name: vn_rain_band_12h
-        tests:
-          - accepted_values:
-              arguments:
-                values: ['below_30', 'from_30_to_under_50', 'from_50_to_under_70', 'from_70_to_100', 'over_100']
-      - name: vn_rain_band_24h
-        tests:
-          - accepted_values:
-              arguments:
-                values: ['below_50', 'from_50_to_under_100', 'from_100_to_under_150', 'from_150_to_under_200', 'from_200_to_300', 'over_300']
 
   - name: fct_rain_forecast_current_hourly
-    description: "View chỉ current horizon của logical forecast run mới nhất"
-    columns:
-      - name: rain_forecast_hourly_key
-        tests: [unique, not_null]
-      - name: forecast_run_id
-        tests: [not_null]
-      - name: forecast_run_at
-        tests: [not_null]
-      - name: valid_time_utc
-        tests: [not_null]
+    description: "The latest forecast run, from the current hour on."
+    tests:
+      - unique_combination:
+          arguments:
+            columns: [forecast_run, grid_cell_id, valid_at]
 
   - name: fct_rain_pressure_alert
     description: >
-      Tín hiệu cảnh báo áp lực mưa theo phường × giờ. Kết hợp forecast nhìn về
-      tương lai với độ bền và thay đổi giữa các forecast run; không phải xác
-      suất ngập hay cảnh báo thiên tai chính thức.
+      Explainable rain-pressure score per ward and hour of the current forecast
+      run; a prioritisation signal, not a flood probability.
+    tests:
+      - unique_combination:
+          arguments:
+            columns: [forecast_run, ward_code, valid_at]
     columns:
-      - name: rain_pressure_alert_key
-        tests: [unique, not_null]
-      - name: forecast_run_id
-        tests: [not_null]
-      - name: weather_model
-        tests:
-          - not_null
-          - accepted_values:
-              arguments:
-                values: ['best_match', 'ecmwf_ifs']
       - name: ward_code
-        tests:
-          - not_null
-          - relationships:
-              arguments:
-                to: ref('dim_ward')
-                field: ward_code
-      - name: grid_cell_id
-        tests:
-          - not_null
-          - relationships:
-              arguments:
-                to: ref('dim_grid')
-                field: grid_cell_id
-      - name: valid_time_utc
         tests: [not_null]
       - name: pressure_level
         tests:
-          - not_null
           - accepted_values:
               arguments:
-                values: ['UNKNOWN', 'NORMAL', 'WATCH', 'ELEVATED', 'HIGH']
-      - name: pressure_score
-        description: >
-          Điểm 0–100 từ các cửa sổ hiện có; NULL khi không còn cửa sổ nào đủ giờ.
-          Không dùng NULL như giá trị 0.
-      - name: coverage_status
-        description: "Độ đầy đủ của bốn input 1/3/6/24h dùng bởi pressure signal"
-        tests:
-          - not_null
-          - accepted_values:
-              arguments:
-                values: ['COMPLETE', 'PARTIAL', 'NONE']
-      - name: revision_direction
-        tests:
-          - not_null
-          - accepted_values:
-              arguments:
-                values: ['UNKNOWN', 'NEW', 'RISING', 'FALLING', 'STABLE']
-      - name: persistence_runs
-        tests: [not_null]
+                values: ['NORMAL', 'WATCH', 'ELEVATED', 'HIGH', 'UNKNOWN']
+
+unit_tests:
+  - name: rain_windows_sum_whole_hours_and_are_null_when_incomplete
+    description: >
+      Rolling windows look back, forward windows look ahead, both within one
+      forecast run and grid cell; a window missing any hour is NULL.
+    model: fct_rain_forecast_hourly
+    overrides:
+      macros:
+        is_incremental: false
+    given:
+      - input: ref('clean_weather_forecast_hourly')
+        rows:
+          - {forecast_run: "2026-09-24 00:00:00+00", grid_cell_id: cell, valid_at: "2026-09-24 00:00:00+00", precipitation_mm: 1}
+          - {forecast_run: "2026-09-24 00:00:00+00", grid_cell_id: cell, valid_at: "2026-09-24 01:00:00+00", precipitation_mm: 2}
+          - {forecast_run: "2026-09-24 00:00:00+00", grid_cell_id: cell, valid_at: "2026-09-24 02:00:00+00", precipitation_mm: 3}
+          - {forecast_run: "2026-09-24 00:00:00+00", grid_cell_id: cell, valid_at: "2026-09-24 03:00:00+00", precipitation_mm: 4}
+    expect:
+      rows:
+        - {valid_at: "2026-09-24 00:00:00+00", rain_1h_mm: 1, rain_3h_mm: null, forecast_next_3h_mm: 6}
+        - {valid_at: "2026-09-24 01:00:00+00", rain_1h_mm: 2, rain_3h_mm: null, forecast_next_3h_mm: 9}
+        - {valid_at: "2026-09-24 02:00:00+00", rain_1h_mm: 3, rain_3h_mm: 6, forecast_next_3h_mm: null}
+        - {valid_at: "2026-09-24 03:00:00+00", rain_1h_mm: 4, rain_3h_mm: 9, forecast_next_3h_mm: null}

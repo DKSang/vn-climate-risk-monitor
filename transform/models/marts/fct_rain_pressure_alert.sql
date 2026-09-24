@@ -1,8 +1,8 @@
-/* Rain pressure signal by forecast run × ward × hour. */
+/* Rain pressure signal for the current forecast run, per ward and hour. */
 
 {{ config(
     materialized = 'table',
-    tags = ['fact', 'forecast', 'alert']
+    tags = ['forecast']
 ) }}
 
 {% set thresholds = var('rain_pressure_thresholds', {}) %}
@@ -23,55 +23,51 @@ WITH history AS (
 
 ranked_runs AS (
     SELECT
-        forecast_run_id,
-        ROW_NUMBER() OVER (
-            ORDER BY {{ forecast_run_order() }}
-        ) AS run_rank
+        forecast_run,
+        ROW_NUMBER() OVER (ORDER BY forecast_run DESC) AS run_rank
     FROM history
-    GROUP BY forecast_run_id
+    GROUP BY forecast_run
 ),
 
 run_pressure AS (
     SELECT
         f.grid_cell_id,
-        f.valid_time_utc,
+        f.valid_at,
         MAX(CASE WHEN r.run_rank = 2 THEN f.forecast_next_24h_mm END)
             AS previous_next_24h_mm,
-        MAX(CASE WHEN r.run_rank = 2 THEN f.forecast_run_id END)
-            AS previous_forecast_run_id,
+        MAX(CASE WHEN r.run_rank = 2 THEN f.forecast_run END)
+            AS previous_forecast_run,
         COUNT(*) FILTER (
             WHERE r.run_rank <= 3
               AND f.forecast_next_6h_mm >= {{ watch_next_6h }}
         ) AS persistence_runs
     FROM history AS f
-    JOIN ranked_runs AS r USING (forecast_run_id)
+    JOIN ranked_runs AS r USING (forecast_run)
     WHERE r.run_rank <= 3
-    GROUP BY f.grid_cell_id, f.valid_time_utc
+    GROUP BY f.grid_cell_id, f.valid_at
 ),
 
 current_forecast AS (
     SELECT
-        f.forecast_run_id,
+        f.forecast_run,
         f.weather_model,
         f.grid_cell_id,
-        f.valid_time_utc,
-        f.forecast_run_at AS issued_at_utc,
+        f.valid_at,
         b.ward_code,
         f.forecast_next_1h_mm,
         f.forecast_next_3h_mm,
         f.forecast_next_6h_mm,
         f.forecast_next_24h_mm,
-        p.previous_forecast_run_id,
+        p.previous_forecast_run,
         p.previous_next_24h_mm,
         COALESCE(p.persistence_runs, 0) AS persistence_runs
     FROM {{ ref('fct_rain_forecast_current_hourly') }} AS f
     JOIN {{ ref('bridge_ward_grid') }} AS b
         ON b.grid_cell_id = f.grid_cell_id
        AND b.weather_model = f.weather_model
-       AND b.is_active = TRUE
     LEFT JOIN run_pressure AS p
         ON p.grid_cell_id = f.grid_cell_id
-       AND p.valid_time_utc = f.valid_time_utc
+       AND p.valid_at = f.valid_at
 ),
 
 features AS (
@@ -166,16 +162,11 @@ classified AS (
 )
 
 SELECT
-    MD5(CONCAT_WS(
-        '|', forecast_run_id, ward_code, {{ stable_timestamp('valid_time_utc') }}
-    ))
-        AS rain_pressure_alert_key,
-    forecast_run_id,
-    weather_model,
+    forecast_run,
     ward_code,
+    valid_at,
+    weather_model,
     grid_cell_id,
-    valid_time_utc,
-    issued_at_utc,
     pressure_level,
     pressure_score,
     coverage_status,
@@ -184,10 +175,10 @@ SELECT
     forecast_next_3h_mm,
     forecast_next_6h_mm,
     forecast_next_24h_mm,
-    previous_forecast_run_id,
+    previous_forecast_run,
     previous_next_24h_mm,
     revision_24h_mm,
     revision_direction,
     persistence_runs,
-    {{ processing_updated_at() }} AS _updated_at
+    NOW() AS _updated_at
 FROM classified
