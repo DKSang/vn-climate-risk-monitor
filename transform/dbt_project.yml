@@ -13,9 +13,6 @@ clean-targets:         # directories to be removed by `dbt clean`
   - "dbt_packages"
 
 vars:
-  # Keep completeness aligned with the fetch horizon.
-  forecast_expected_hours: "{{ env_var('OPEN_METEO_FORECAST_HOURS', '72') }}"
-  forecast_expected_locations: 126
   forecast_model: ecmwf_ifs
   # Start time of the last successful job run, passed by pipeline/job_run.py.
   watermark: null
@@ -68,20 +65,13 @@ models:
       +schema: silver
       +tags: ['silver']
 
-    # Staging/intermediate map to Silver; marts map to Gold.
-    # This staging layer normalizes seeds only.
+    # Seed references, normalised as views in Silver.
     staging:
       +schema: silver
       +materialized: view
       +tags: ['staging']
 
-    # Business logic trung gian: dedup, conform and incremental delete+insert.
-    intermediate:
-      +schema: silver
-      +materialized: view
-      +tags: ['intermediate']
-
-    # Gold defaults to tables; mutable facts override with incremental materialization.
+    # Gold: tables, except the forecast history fact (incremental merge).
     marts:
       +schema: gold
       +materialized: table

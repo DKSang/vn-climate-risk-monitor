@@ -1,14 +1,10 @@
 version: 2
 
 sources:
-  # Autoloader owns staging; dbt reads it via source().
+  # Tables the Python auto loader writes; dbt reads them through source().
   - name: silver_staging
     database: catalog1
     schema: silver
-    description: >
-      Bảng staging append-only do autoloader nạp từ landing zone. Giữ MỌI phiên
-      bản đã fetch của cùng một grain — đó là change log, không phải rác.
-      Dedup xảy ra ở lớp curated (`silver.int_weather_archive_hourly`).
     tables:
       - name: stg_open_meteo_forecast
         description: >
@@ -16,76 +12,3 @@ sources:
           (pipeline/open_meteo/load.py) after the Great Expectations Bronze gate.
           One row per forecast run x grid cell x hour; the same key can appear
           more than once when a file is re-read.
-
-      - name: stg_weather_archive_hourly
-        description: >
-          Quan trắc/reanalysis theo giờ (Archive). Một bảng cho nhiều model thời tiết,
-          phân biệt bằng `weather_model`: era5 (0,25°, 2000–2016) và ecmwf_ifs
-          (~9km, 2017→nay). Append-only: giữ mọi phiên bản đã fetch của cùng grain.
-        loaded_at_field: _ingested_at
-        freshness:
-          # Pipeline archive chạy hàng tháng; ngưỡng theo giờ sẽ gây alert fatigue.
-          warn_after: {count: 35, period: day}
-          error_after: {count: 45, period: day}
-        tests:
-          - not_empty
-        columns:
-          - name: weather_model
-            tests:
-              - not_null
-              - accepted_values:
-                  arguments:
-                    values: ['era5', 'ecmwf_ifs']
-          - name: valid_time_utc
-            tests: [not_null]
-          - name: grid_latitude
-            tests: [not_null]
-          - name: grid_longitude
-            tests: [not_null]
-          - name: precipitation_mm
-            tests:
-              - accepted_range:
-                  arguments:
-                    min_value: 0
-                    max_value: 500
-          - name: _source_file
-            tests: [not_null]
-          - name: _ingested_at
-            tests: [not_null]
-
-      - name: stg_weather_forecast
-        description: >
-          Forecast run theo giờ từ Open-Meteo API. Append-only, do autoloader ghi.
-          Model và logical run được lấy từ immutable object path; dữ liệu cũ
-          trước migration có metadata NULL và được Silver ghi nhận trung thực
-          là best_match từ legacy path.
-        loaded_at_field: _ingested_at
-        freshness:
-          warn_after: {count: 12, period: hour}
-          error_after: {count: 24, period: hour}
-        tests:
-          - not_empty
-        columns:
-          - name: weather_model
-            tests:
-              - accepted_values:
-                  arguments:
-                    values: ['best_match', 'ecmwf_ifs']
-          - name: forecast_run_id
-          - name: forecast_run_at
-          - name: valid_time_utc
-            tests: [not_null]
-          - name: grid_latitude
-            tests: [not_null]
-          - name: grid_longitude
-            tests: [not_null]
-          - name: precipitation_mm
-            tests:
-              - accepted_range:
-                  arguments:
-                    min_value: 0
-                    max_value: 500
-          - name: _source_file
-            tests: [not_null]
-          - name: _ingested_at
-            tests: [not_null]

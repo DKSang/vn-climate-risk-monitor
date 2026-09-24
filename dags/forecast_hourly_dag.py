@@ -1,6 +1,7 @@
-"""Hourly Open-Meteo forecast pipeline.
+"""Hourly Open-Meteo forecast pipeline: Bronze -> Silver -> Gold, then publish.
 
-Rebuild in progress: Gold and publish tasks are added by later phases.
+Each task after `fetch` is one asset processed with the watermark pattern
+(docs/adr/0001); a failed quality gate stops the chain before publication.
 """
 
 from __future__ import annotations
@@ -49,4 +50,11 @@ with DAG(
         bash_command="uv run build-clean-forecast",
     )
 
-    init >> fetch >> load >> clean
+    gold = BashOperator(
+        task_id="gold",
+        pool=POOL,
+        cwd=PROJECT_DIR,
+        bash_command="uv run build-gold-forecast",
+    )
+
+    init >> fetch >> load >> clean >> gold

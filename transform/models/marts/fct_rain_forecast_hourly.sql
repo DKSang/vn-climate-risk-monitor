@@ -1,79 +1,51 @@
-/* Forecast rain history by vintage × grid × hour. */
+/* Rainfall per forecast run x grid cell x hour, with rolling and forward windows. */
 
 {{ config(
     materialized = 'incremental',
-    unique_key = 'rain_forecast_hourly_key',
-    incremental_strategy = 'delete+insert',
-    on_schema_change = 'sync_all_columns',
-    tags = ['fact', 'rain', 'forecast']
+    incremental_strategy = 'merge',
+    unique_key = ['forecast_run', 'grid_cell_id', 'valid_at'],
+    merge_exclude_columns = ['_inserted_at'],
+    tags = ['forecast']
 ) }}
 
 {% set windows = rain_windows() %}
-{% set lookback = (windows | max - 1) ~ ' hours' %}
 
-WITH source AS (
+WITH runs AS (
+    -- Incremental pattern (docs/adr/0001). The unit of recompute is a whole
+    -- forecast run: its rain windows span all of its hours.
     SELECT *
-    FROM {{ ref('int_weather_forecast_hourly') }}
-    {{ incremental_input_scope(
-        relation = ref('int_weather_forecast_hourly'),
-        source_ref = 'stg_weather_forecast',
-        dimension = 'valid_time_utc',
-        change_column = '_updated_at',
-        expand_backward = lookback,
-        expand_forward = lookback,
-        keys = ['forecast_run_id', 'grid_cell_id']
-    ) }}
+    FROM {{ ref('clean_weather_forecast_hourly') }}
+    {% if is_incremental() and var('watermark', none) %}
+    WHERE forecast_run IN (
+        SELECT forecast_run
+        FROM {{ ref('clean_weather_forecast_hourly') }}
+        WHERE _updated_at > '{{ var("watermark") }}'::TIMESTAMPTZ
+    )
+    {% endif %}
 ),
 
 windowed AS (
     SELECT
-        grid_cell_id,
-        weather_model,
-        forecast_run_id,
-        forecast_run_at,
-        valid_time_utc,
-        precipitation_mm,
-        rain_mm,
-        showers_mm,
-        precipitation_probability_pct,
-        weather_code,
-        _source_file,
-        _ingested_at,
-        _updated_at,
-        {{ rolling_rain_sums(
-            windows,
-            partition_by='forecast_run_id, grid_cell_id'
-        ) }},
-        {{ forward_rain_sums(
-            windows,
-            partition_by='forecast_run_id, grid_cell_id'
-        ) }}
-    FROM source
+        *,
+        {{ rolling_rain_sums(windows, partition_by='forecast_run, grid_cell_id') }},
+        {{ forward_rain_sums(windows, partition_by='forecast_run, grid_cell_id') }}
+    FROM runs
 ),
 
-published AS (
+sums AS (
     SELECT
-        MD5(CONCAT_WS(
-            '|', forecast_run_id, grid_cell_id,
-            {{ stable_timestamp('valid_time_utc') }}
-        ))
-            AS rain_forecast_hourly_key,
-        forecast_run_id,
+        forecast_run,
         grid_cell_id,
+        valid_at,
         weather_model,
-        forecast_run_at,
-        valid_time_utc,
-        CAST(valid_time_utc AS DATE) AS forecast_date,
+        CAST(valid_at AS DATE) AS forecast_date,
         precipitation_mm,
         rain_mm,
         showers_mm,
         precipitation_probability_pct,
         weather_code,
         {{ rolling_rain_columns(windows) }},
-        {{ forward_rain_columns(windows) }},
-        _source_file,
-        _ingested_at,
-        _updated_at
+        {{ forward_rain_columns(windows) }}
     FROM windowed
 )
 
@@ -83,18 +55,9 @@ SELECT
     {{ hanoi_rain_scenario_level('rain_1h_mm') }} AS hanoi_rain_scenario_level,
     {{ vn_rain_band_12h('rain_12h_mm') }} AS vn_rain_band_12h,
     {{ vn_rain_band_24h('rain_24h_mm') }} AS vn_rain_band_24h,
-    {{ hanoi_rain_scenario_band('forecast_next_1h_mm') }}
-        AS forecast_next_1h_band,
-    {{ vn_rain_band_12h('forecast_next_12h_mm') }}
-        AS forecast_next_12h_band,
-    {{ vn_rain_band_24h('forecast_next_24h_mm') }}
-        AS forecast_next_24h_band
-FROM published
-{{ incremental_output_scope(
-    relation = ref('int_weather_forecast_hourly'),
-    source_ref = 'stg_weather_forecast',
-    dimension = 'valid_time_utc',
-    change_column = '_updated_at',
-    expand_backward = lookback,
-    expand_forward = lookback
-) }}
+    {{ hanoi_rain_scenario_band('forecast_next_1h_mm') }} AS forecast_next_1h_band,
+    {{ vn_rain_band_12h('forecast_next_12h_mm') }} AS forecast_next_12h_band,
+    {{ vn_rain_band_24h('forecast_next_24h_mm') }} AS forecast_next_24h_band,
+    NOW() AS _inserted_at,
+    NOW() AS _updated_at
+FROM sums

@@ -1,0 +1,13 @@
+selectors:
+  - name: gold_forecast
+    description: >
+      Everything the forecast Gold build needs and nothing from Silver: the seeds,
+      their staging views and the Gold models, each with its tests.
+    definition:
+      union:
+        - method: path
+          value: seeds
+        - method: path
+          value: models/staging
+        - method: path
+          value: models/marts

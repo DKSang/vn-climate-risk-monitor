@@ -16,7 +16,7 @@ def build_clean_forecast() -> int:
     """Merge rows staged since the watermark; return the rows inserted or updated."""
     with job_run(ASSET) as run:
         watermark = run.watermark.isoformat() if run.watermark else None
-        dbt_build("clean_weather_forecast_hourly", {"watermark": watermark})
+        dbt_build("clean_weather_forecast_hourly", vars={"watermark": watermark})
         with lake.connect() as con:
             touched = con.execute(
                 f"SELECT count(*) FROM {ASSET} WHERE _updated_at >= ?", [run.started_at]
