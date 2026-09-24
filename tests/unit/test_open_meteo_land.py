@@ -3,9 +3,8 @@ from io import BytesIO
 from unittest.mock import patch
 from urllib.error import HTTPError
 
-from vn_climate_risk_monitor.platform import minio as minio_storage
-from vn_climate_risk_monitor.sources.open_meteo import fetch
-from vn_climate_risk_monitor.sources.open_meteo.fetch import land
+from pipeline.open_meteo import fetch
+from pipeline.open_meteo.fetch import land
 
 
 class PutMinio:
@@ -28,8 +27,7 @@ class BucketMinio:
         self.created.append(bucket)
 
 
-def test_minio_storage_module_is_strictly_a_client_factory() -> None:
-    assert not hasattr(minio_storage, "ensure_bucket")
+def test_ensure_bucket_creates_a_missing_bucket() -> None:
     client = BucketMinio(exists=False)
 
     fetch.ensure_bucket(client, "vn-climate")
@@ -59,7 +57,7 @@ def test_exact_http_response_bytes_are_put_without_reserialization() -> None:
     body = b'{\n  "latitude": 21.0,\r\n  "generationtime_ms": 1.25\n}\n'
     client = PutMinio()
     with patch(
-        "vn_climate_risk_monitor.sources.open_meteo.fetch.urlopen",
+        "pipeline.open_meteo.fetch.urlopen",
         return_value=_ok(body),
     ):
         land(client, "vn-climate", "https://x", "k.json")
@@ -69,7 +67,7 @@ def test_exact_http_response_bytes_are_put_without_reserialization() -> None:
 def test_array_body_keeps_elements() -> None:
     client = PutMinio()
     with patch(
-        "vn_climate_risk_monitor.sources.open_meteo.fetch.urlopen",
+        "pipeline.open_meteo.fetch.urlopen",
         return_value=_ok(b'[{"latitude": 1}, {"latitude": 2}]'),
     ):
         land(client, "vn-climate", "https://x", "k.json")
@@ -80,7 +78,7 @@ def test_error_json_is_detected_before_it_can_poison_an_immutable_key() -> None:
     client = PutMinio()
     try:
         with patch(
-            "vn_climate_risk_monitor.sources.open_meteo.fetch.urlopen",
+            "pipeline.open_meteo.fetch.urlopen",
             return_value=_ok(b'{"error": true, "reason": "Rate limit"}'),
         ):
             land(client, "vn-climate", "https://x", "k.json")
@@ -102,8 +100,8 @@ def test_429_then_200_puts_once() -> None:
         return _ok(b'{"ok": true}')
 
     with (
-        patch("vn_climate_risk_monitor.sources.open_meteo.fetch.urlopen", side_effect=urlopen),
-        patch("vn_climate_risk_monitor.sources.open_meteo.fetch.time.sleep"),
+        patch("pipeline.open_meteo.fetch.urlopen", side_effect=urlopen),
+        patch("pipeline.open_meteo.fetch.time.sleep"),
     ):
         land(client, "vn-climate", "https://x", "k.json")
     assert client.objects["k.json"] == b'{"ok": true}'
@@ -113,10 +111,10 @@ def test_five_429s_do_not_put() -> None:
     client = PutMinio()
     with (
         patch(
-            "vn_climate_risk_monitor.sources.open_meteo.fetch.urlopen",
+            "pipeline.open_meteo.fetch.urlopen",
             side_effect=_http_error(429),
         ),
-        patch("vn_climate_risk_monitor.sources.open_meteo.fetch.time.sleep") as slept,
+        patch("pipeline.open_meteo.fetch.time.sleep") as slept,
     ):
         try:
             land(client, "vn-climate", "https://x", "k.json")
@@ -132,10 +130,10 @@ def test_400_does_not_retry() -> None:
     client = PutMinio()
     with (
         patch(
-            "vn_climate_risk_monitor.sources.open_meteo.fetch.urlopen",
+            "pipeline.open_meteo.fetch.urlopen",
             side_effect=_http_error(400),
         ),
-        patch("vn_climate_risk_monitor.sources.open_meteo.fetch.time.sleep") as slept,
+        patch("pipeline.open_meteo.fetch.time.sleep") as slept,
     ):
         try:
             land(client, "vn-climate", "https://x", "k.json")

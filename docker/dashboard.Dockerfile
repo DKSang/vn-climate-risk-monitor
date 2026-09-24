@@ -18,5 +18,8 @@ RUN uv sync --frozen --no-dev --no-install-project
 COPY --chown=app:app . /project
 RUN uv sync --frozen --no-dev
 
+# Bake DuckDB extensions into the image so nothing is downloaded at runtime.
+RUN uv run python -c "import duckdb; [duckdb.install_extension(e) for e in ('ducklake', 'httpfs', 'postgres')]"
+
 EXPOSE 8501
-CMD ["uv", "run", "streamlit", "run", "serving/dashboard/app.py", "--server.port", "8501", "--server.address", "0.0.0.0"]
+CMD ["uv", "run", "streamlit", "run", "dashboard/app.py", "--server.port", "8501", "--server.address", "0.0.0.0"]
