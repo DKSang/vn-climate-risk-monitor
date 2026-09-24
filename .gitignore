@@ -39,7 +39,8 @@ transform/dev.duckdb
 .ipynb_checkpoints/
 .DS_Store
 
-.claude/
+.claude/*
+!.claude/skills/
 .vscode/
 .pytest_cache/
 .ruff_cache/
