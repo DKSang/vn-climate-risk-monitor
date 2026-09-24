@@ -10,6 +10,13 @@ sources:
       bản đã fetch của cùng một grain — đó là change log, không phải rác.
       Dedup xảy ra ở lớp curated (`silver.int_weather_archive_hourly`).
     tables:
+      - name: stg_open_meteo_forecast
+        description: >
+          Append-only forecast rows written by the Python auto loader
+          (pipeline/open_meteo/load.py) after the Great Expectations Bronze gate.
+          One row per forecast run x grid cell x hour; the same key can appear
+          more than once when a file is re-read.
+
       - name: stg_weather_archive_hourly
         description: >
           Quan trắc/reanalysis theo giờ (Archive). Một bảng cho nhiều model thời tiết,

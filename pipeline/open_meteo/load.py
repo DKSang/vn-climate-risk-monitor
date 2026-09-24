@@ -79,7 +79,8 @@ def load_forecast() -> int:
             rows = con.execute(READ_BRONZE, {"files": files}).df()
             run.rows_in = len(rows)
             check_bronze_forecast(rows, rows_per_run=rows_per_run)
-            con.execute(f"INSERT INTO {ASSET} SELECT *, now() FROM rows")
+            con.register("new_rows", rows)
+            con.execute(f"INSERT INTO {ASSET} SELECT *, now() FROM new_rows")
         run.rows_out = len(rows)
         return len(rows)
 

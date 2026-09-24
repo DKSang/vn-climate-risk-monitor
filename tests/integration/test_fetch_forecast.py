@@ -28,7 +28,8 @@ def empty_bucket() -> None:
     bucket = load_settings().minio.bucket
     if not client.bucket_exists(bucket):
         client.make_bucket(bucket)
-    for obj in client.list_objects(bucket, recursive=True):
+    # Only Bronze: the rest of the bucket holds DuckLake data files other tests use.
+    for obj in client.list_objects(bucket, prefix="bronze/", recursive=True):
         client.remove_object(bucket, obj.object_name)
 
 

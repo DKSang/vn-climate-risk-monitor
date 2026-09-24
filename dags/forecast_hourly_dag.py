@@ -1,6 +1,6 @@
 """Hourly Open-Meteo forecast pipeline.
 
-Rebuild in progress: transform and publish tasks are added by later phases.
+Rebuild in progress: Gold and publish tasks are added by later phases.
 """
 
 from __future__ import annotations
@@ -42,4 +42,11 @@ with DAG(
         bash_command="uv run load-forecast",
     )
 
-    init >> fetch >> load
+    clean = BashOperator(
+        task_id="clean",
+        pool=POOL,
+        cwd=PROJECT_DIR,
+        bash_command="uv run build-clean-forecast",
+    )
+
+    init >> fetch >> load >> clean

@@ -37,6 +37,7 @@ init-lakehouse = "pipeline.init:main"
 maintain-lakehouse = "pipeline.maintain:main"
 fetch-forecast = "pipeline.open_meteo.forecast:main"
 load-forecast = "pipeline.open_meteo.load:main"
+build-clean-forecast = "pipeline.open_meteo.clean:main"
 
 [tool.uv.build-backend]
 # Flat layout: the only Python package is ./pipeline.

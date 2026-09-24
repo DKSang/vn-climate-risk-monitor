@@ -61,6 +61,37 @@ def check_bronze_forecast(
         )
 
 
+def check_silver_forecast(runs: pd.DataFrame, *, rows_per_run: int) -> None:
+    """Raise if a forecast run touched in silver.clean_ breaks an expectation.
+
+    `runs` holds every row of each touched run, so volume means the whole run.
+    Keys (unique, not null) are dbt tests on the model.
+    """
+    expectations = [
+        gxe.ExpectTableRowCountToEqual(value=rows_per_run),
+        *(
+            gxe.ExpectColumnValuesToBeBetween(column=column, min_value=0, max_value=500)
+            for column in ["precipitation_mm", "rain_mm", "showers_mm"]
+        ),
+        gxe.ExpectColumnValuesToBeBetween(
+            column="precipitation_probability_pct", min_value=0, max_value=100
+        ),
+        # WMO weather interpretation codes.
+        gxe.ExpectColumnValuesToBeBetween(
+            column="weather_code", min_value=0, max_value=99
+        ),
+    ]
+    failures = []
+    for run, run_rows in runs.groupby("forecast_run"):
+        failures += [
+            f"run {run:%Y%m%dT%H}: {f}" for f in _failures(run_rows, expectations)
+        ]
+    if failures:
+        raise RuntimeError(
+            "Silver forecast failed quality checks: " + "; ".join(failures)
+        )
+
+
 def _failures(rows: pd.DataFrame, expectations: list) -> list[str]:
     context = gx.get_context(mode="ephemeral")
     context.variables.progress_bars = {"globally": False}
