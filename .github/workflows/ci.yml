@@ -15,6 +15,21 @@ concurrency:
 jobs:
   checks:
     runs-on: ubuntu-latest
+    services:
+      # Integration tests (tests/integration) run against a real Postgres.
+      postgres:
+        image: postgres:17.5@sha256:aadf2c0696f5ef357aa7a68da995137f0cf17bad0bf6e1f17de06ae5c769b302
+        env:
+          POSTGRES_DB: vnclimate
+          POSTGRES_USER: vnclimate
+          POSTGRES_PASSWORD: ci-postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U vnclimate -d vnclimate"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     env:
       POSTGRES_USER: vnclimate
       POSTGRES_PASSWORD: ci-postgres

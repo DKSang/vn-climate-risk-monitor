@@ -40,8 +40,9 @@ bootstrap-lakehouse = "vn_climate_risk_monitor.operations.bootstrap:main"
 reset-lakehouse = "vn_climate_risk_monitor.operations.reset:main"
 
 [tool.uv.build-backend]
-# One product package; lifecycle stages are internal capabilities.
-module-name = ["vn_climate_risk_monitor"]
+# Flat layout: the only Python package is ./pipeline.
+module-name = "pipeline"
+module-root = ""
 
 [build-system]
 requires = ["uv_build>=0.12.3,<0.13.0"]
