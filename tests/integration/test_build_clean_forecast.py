@@ -12,7 +12,7 @@ from pipeline import lake
 from pipeline.init import main as init_lake
 from pipeline.job_run import create_meta_tables
 from pipeline.open_meteo.clean import build_clean_forecast
-from pipeline.open_meteo.load import CREATE_STAGING
+from pipeline.open_meteo.load import FORECAST_STAGING
 from pipeline.settings import load_settings
 
 RUN = datetime(2026, 9, 24, 10, tzinfo=UTC)
@@ -25,7 +25,7 @@ def empty_silver() -> None:
     with lake.connect() as con:
         con.execute("DROP TABLE IF EXISTS silver.clean_weather_forecast_hourly")
         con.execute("DROP TABLE IF EXISTS silver.stg_open_meteo_forecast")
-        con.execute(CREATE_STAGING)
+        con.execute(FORECAST_STAGING)
     with psycopg.connect(load_settings().postgres.dsn, autocommit=True) as conn:
         conn.execute("DROP SCHEMA IF EXISTS meta CASCADE")
     create_meta_tables()

@@ -39,6 +39,7 @@ models:
       rainfall windows computed inside the run. Windows are NULL when they
       reach past the run's hours.
     tests:
+      - rain_windows_monotonic
       - unique_combination:
           arguments:
             columns: [forecast_run, grid_cell_id, valid_at]
@@ -47,6 +48,24 @@ models:
         tests: [not_null]
       - name: valid_at
         tests: [not_null]
+      - name: grid_cell_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_grid')
+                field: grid_cell_id
+
+  - name: fct_rain_archive_hourly
+    description: >
+      Past rainfall per grid cell x hour with rolling windows over the whole
+      history (NULL until a window has all its hours).
+    tests:
+      - rain_windows_monotonic
+      - unique_combination:
+          arguments:
+            columns: [grid_cell_id, valid_at]
+    columns:
       - name: grid_cell_id
         tests:
           - not_null

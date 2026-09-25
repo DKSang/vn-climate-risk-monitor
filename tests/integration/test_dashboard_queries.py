@@ -16,7 +16,7 @@ from pipeline.init import main as init_lake
 from pipeline.job_run import create_meta_tables
 from pipeline.open_meteo.clean import build_clean_forecast
 from pipeline.open_meteo.gold import build_gold_forecast
-from pipeline.open_meteo.load import CREATE_STAGING
+from pipeline.open_meteo.load import FORECAST_STAGING
 from pipeline.settings import load_settings
 
 NOW = datetime.now(UTC).replace(minute=0, second=0, microsecond=0)
@@ -56,7 +56,7 @@ def published() -> int:
             "silver.stg_open_meteo_forecast",
         ):
             con.execute(f"DROP TABLE IF EXISTS {table}")
-        con.execute(CREATE_STAGING)
+        con.execute(FORECAST_STAGING)
     with psycopg.connect(load_settings().postgres.dsn, autocommit=True) as conn:
         conn.execute("DROP SCHEMA IF EXISTS meta CASCADE")
     create_meta_tables()
@@ -92,7 +92,9 @@ def test_gold_changes_after_the_publication_are_not_shown(published: int) -> Non
     assert "HIGH" not in set(queries.ward_hour(published, NOW)["pressure_level"])
 
 
-@pytest.mark.parametrize("page", ["Tổng quan", "Chi tiết phường", "Bảng dữ liệu"])
+@pytest.mark.parametrize(
+    "page", ["Tổng quan", "Chi tiết phường", "Lịch sử mưa", "Bảng dữ liệu"]
+)
 @pytest.mark.parametrize("ward", ["", "00004"])
 def test_every_report_page_renders(published: int, page: str, ward: str) -> None:
     app = AppTest.from_file("../../dashboard/app.py", default_timeout=120)
