@@ -1,4 +1,4 @@
--- Mọi ward × giờ của current view phải có pressure cùng forecast run.
+-- Every ward x hour of the current forecast has a pressure row from the same run.
 SELECT
     forecast.forecast_run,
     bridge.ward_code,

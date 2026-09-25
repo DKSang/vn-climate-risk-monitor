@@ -1,6 +1,8 @@
-# vn-climate-risk-monitor — local single-node runtime
+# Local single-node stack: `docker compose up -d --build` (settings in .env).
+name: vn-climate-risk-monitor
 
-x-project-environment: &project-environment
+# How the pipeline and the dashboard reach Postgres and MinIO inside the network.
+x-lakehouse-env: &lakehouse-env
   POSTGRES_HOST: postgres
   POSTGRES_PORT: 5432
   POSTGRES_DB: ${POSTGRES_DB:-vnclimate}
@@ -12,129 +14,108 @@ x-project-environment: &project-environment
   MINIO_BUCKET: ${MINIO_BUCKET:-vn-climate}
   MINIO_SECURE: "false"
 
+x-healthcheck: &healthcheck
+  interval: 10s
+  timeout: 5s
+  retries: 10
+
 services:
   postgres:
     image: postgres:17.5@sha256:aadf2c0696f5ef357aa7a68da995137f0cf17bad0bf6e1f17de06ae5c769b302
     restart: unless-stopped
-    ports:
-      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-vnclimate}
       POSTGRES_USER: ${POSTGRES_USER:-vnclimate}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-vnclimate} -d ${POSTGRES_DB:-vnclimate}"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
+      <<: *healthcheck
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
 
   minio:
-    image: minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+    # MinIO no longer publishes images; Chainguard builds it from source.
+    image: cgr.dev/chainguard/minio:latest@sha256:bd014394a80898e68c149f2311fdf8d5a2c2f3bb2c33b9327ae6d02b4b065ae1
     restart: unless-stopped
-    ports:
-      - "127.0.0.1:${MINIO_API_PORT:-9000}:9000"
-      - "127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001"
+    command: ["server", "/data", "--console-address", ":9001"]
     environment:
       MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:?Set MINIO_ACCESS_KEY in .env}
       MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:?Set MINIO_SECRET_KEY in .env}
-    command: ["server", "--console-address", ":9001", "/data"]
+    ports:
+      - "127.0.0.1:${MINIO_API_PORT:-9000}:9000"
+      - "127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001"
     volumes:
       - minio_data:/data
     healthcheck:
+      <<: *healthcheck
       test: ["CMD", "mc", "ready", "local"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
 
   airflow:
     build:
       context: .
       dockerfile: docker/airflow.Dockerfile
-    image: vn-climate-risk-monitor-airflow:2.10.5
     restart: unless-stopped
-    dns:
-      - 1.1.1.1
-      - 8.8.8.8
+    command: ["bash", "/project/docker/airflow-entrypoint.sh"]
     depends_on:
       postgres:
         condition: service_healthy
       minio:
         condition: service_healthy
-    ports:
-      - "127.0.0.1:${AIRFLOW_PORT:-8080}:8080"
     environment:
-      <<: *project-environment
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN_CMD: >-
-        python /project/scripts/airflow_sql_alchemy_conn.py
-      AIRFLOW__CORE__EXECUTOR: LocalExecutor
-      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
-      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: ${AIRFLOW_DAGS_PAUSED_AT_CREATION:-true}
-      AIRFLOW_USERNAME: ${AIRFLOW_USERNAME:-admin}
-      AIRFLOW_PASSWORD: ${AIRFLOW_PASSWORD:?Set AIRFLOW_PASSWORD in .env}
-      AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_PASSWORD:?Set AIRFLOW_PASSWORD in .env}
-      AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "false"
-      OPEN_METEO_FETCH_WORKERS: ${OPEN_METEO_FETCH_WORKERS:-4}
+      <<: *lakehouse-env
       OPEN_METEO_FORECAST_URL: ${OPEN_METEO_FORECAST_URL:-https://api.open-meteo.com/v1/forecast}
       OPEN_METEO_ARCHIVE_URL: ${OPEN_METEO_ARCHIVE_URL:-https://archive-api.open-meteo.com/v1/archive}
-      OPEN_METEO_FORECAST_MODEL: ${OPEN_METEO_FORECAST_MODEL:-ecmwf_ifs}
       OPEN_METEO_FORECAST_HOURS: ${OPEN_METEO_FORECAST_HOURS:-72}
       OPEN_METEO_LOCATION_BATCH_SIZE: ${OPEN_METEO_LOCATION_BATCH_SIZE:-25}
       PROJECT_DIR: /project
-      ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}
+      AIRFLOW_USERNAME: ${AIRFLOW_USERNAME:-admin}
+      AIRFLOW_PASSWORD: ${AIRFLOW_PASSWORD:?Set AIRFLOW_PASSWORD in .env}
+      # Airflow metadata lives in the `airflow` schema of the same Postgres.
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN_CMD: python /project/scripts/airflow_sql_alchemy_conn.py
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: ${AIRFLOW_DAGS_PAUSED_AT_CREATION:-true}
+      AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_PASSWORD:?Set AIRFLOW_PASSWORD in .env}
+      AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "false"
+    ports:
+      - "127.0.0.1:${AIRFLOW_PORT:-8080}:8080"
     volumes:
       - airflow_logs:/opt/airflow/logs
-    command:
-      - bash
-      - -ec
-      - |
-        export AIRFLOW__CORE__FERNET_KEY="$$(python -c 'import base64, hashlib, os; print(base64.urlsafe_b64encode(hashlib.sha256(os.environ["AIRFLOW_PASSWORD"].encode()).digest()).decode())')"
-        airflow db migrate
-        airflow users create \
-          --username "$${AIRFLOW_USERNAME}" \
-          --password "$${AIRFLOW_PASSWORD}" \
-          --firstname "VN" --lastname "Climate" --role Admin \
-          --email "$${AIRFLOW_USERNAME}@localhost" || true
-        airflow users reset-password \
-          --username "$${AIRFLOW_USERNAME}" \
-          --password "$${AIRFLOW_PASSWORD}"
-        airflow pools set lakehouse_single_writer_pool 1 \
-          "Single-writer lock for DuckLake and Open-Meteo quota"
-        # Docker/host shutdown can leave this runtime-only file behind in the
-        # container writable layer. Remove it before standalone reuses PIDs.
-        rm -f /opt/airflow/airflow-webserver.pid
-        exec airflow standalone
     healthcheck:
+      <<: *healthcheck
+      # /health answers 200 even when the scheduler is down, so read its body.
       test:
-        - CMD-SHELL
-        - >-
-          export AIRFLOW__CORE__FERNET_KEY="$$(python -c 'import base64, hashlib, os; print(base64.urlsafe_b64encode(hashlib.sha256(os.environ["AIRFLOW_PASSWORD"].encode()).digest()).decode())')"
-          &&
-          airflow jobs check --job-type SchedulerJob --allow-multiple --limit 100
-          && curl --fail --silent http://localhost:8080/health >/dev/null
+        - CMD
+        - python
+        - -c
+        - |
+          import json, urllib.request
+          health = json.load(urllib.request.urlopen("http://localhost:8080/health"))
+          assert health["metadatabase"]["status"] == health["scheduler"]["status"] == "healthy"
       interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 60s
+      start_period: 90s
 
-  streamlit:
+  dashboard:
     build:
       context: .
       dockerfile: docker/dashboard.Dockerfile
-    image: vn-climate-risk-monitor-dashboard:0.1.0
     restart: unless-stopped
-    ports:
-      - "127.0.0.1:${DASHBOARD_PORT:-8501}:8501"
     depends_on:
       postgres:
         condition: service_healthy
       minio:
         condition: service_healthy
     environment:
-      <<: *project-environment
-      DASHBOARD_PORT: ${DASHBOARD_PORT:-8501}
+      <<: *lakehouse-env
+    ports:
+      - "127.0.0.1:${DASHBOARD_PORT:-8501}:8501"
+    healthcheck:
+      <<: *healthcheck
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health')"]
+      start_period: 30s
 
 volumes:
   postgres_data:

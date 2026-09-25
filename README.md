@@ -1,285 +1,233 @@
 # VN Climate Risk Monitor
 
-Airflow • dbt • DuckDB/DuckLake • MinIO • PostgreSQL • Docker
+Airflow • dbt • DuckDB/DuckLake • MinIO • PostgreSQL • Great Expectations • Streamlit
 
-An end-to-end data platform that turns hourly Open-Meteo weather data into tested rainfall
-insights for 126 administrative areas in Hanoi.
+A batch lakehouse that turns Open-Meteo weather data into tested rainfall signals for
+Hanoi's 126 wards and communes: a 72-hour rain-pressure forecast, refreshed every hour, and a
+month-by-month rainfall history.
 
 ![Python](https://img.shields.io/badge/Python-3.12%2B-3776AB)
 ![Airflow](https://img.shields.io/badge/Orchestration-Airflow-017CEE)
 ![dbt](https://img.shields.io/badge/Transform-dbt-FF694B)
 ![DuckLake](https://img.shields.io/badge/Lakehouse-DuckLake-F9C74F)
-![MinIO](https://img.shields.io/badge/Object_Storage-MinIO-C72E49)
+![Great Expectations](https://img.shields.io/badge/Quality-Great_Expectations-FF6310)
 ![Streamlit](https://img.shields.io/badge/Serving-Streamlit-FF4B4B)
 [![CI](https://github.com/DKSang/vn-climate-risk-monitor/actions/workflows/ci.yml/badge.svg)](https://github.com/DKSang/vn-climate-risk-monitor/actions/workflows/ci.yml)
 
-> Portfolio scope: local single-node, single-writer system designed to demonstrate data
-> engineering fundamentals. It is not an official weather warning or flood prediction service.
+![Rain pressure report](docs/images/dashboard-overview.png)
 
-| 126 administrative areas | 72-hour forecast | Hourly orchestration | 141 dbt data tests · 216 unit tests |
+> Portfolio project: a local, single-node system built to show data engineering fundamentals.
+> The rain-pressure signal is a prioritisation aid, not an official weather warning or flood model.
+
+| 126 wards · 48 grid cells | Hourly forecast, monthly archive | 58 dbt tests · 41 pytest tests | One `docker compose up` |
 |---|---|---|---|
-| Hanoi wards/communes | Forecast horizon | Airflow forecast DAG | Quality and behavior coverage |
 
-## What this project demonstrates
+## What it demonstrates
 
-- Batch ingestion from external APIs with deterministic request windows and retry-safe object keys.
-- Immutable Bronze storage on MinIO with source-file lineage retained into Silver.
-- Stateful incremental loading with PostgreSQL leases, checkpoints, retries and processing audit.
-- dbt/DuckDB transformations with explicit grains, deduplication and data quality tests.
-- Airflow orchestration for forecast, archive and lakehouse maintenance workflows.
-- Fail-closed publication: Gold is exposed only after transformation and validation succeed.
-- Snapshot-pinned Streamlit serving so one dashboard view never mixes two pipeline publications.
-- Reproducible local deployment and CI checks using Docker Compose, uv, Ruff, pytest and dbt.
-
-## Business problem
-
-Heavy rainfall can disrupt transport and urban infrastructure in Hanoi. The project turns raw
-weather API responses into a traceable analytical product for 126 wards/communes:
-
-- 72-hour rainfall forecast;
-- rainfall-pressure signal by ward/commune;
-- historical rainfall replay by hour and weather model;
-- pipeline health, checkpoint, lineage and publication metadata.
-
-The pressure signal is an explainable prioritization metric based on rainfall forecasts and
-persistence. It is not a flood probability or flood-depth model.
+- **Immutable Bronze.** API responses land byte-for-byte in MinIO under Hive-style
+  `year=/month=/day=` paths. Deterministic keys make a retried fetch skip what already landed.
+- **Incremental loading with watermarks.** Each asset reads only rows newer than the start time
+  of its last successful run, kept in Postgres. One pattern covers Python and dbt
+  ([ADR 0001](docs/adr/0001-watermark-incremental-pattern.md)).
+- **Idempotent Silver.** Staging is append-only. dbt deduplicates new rows, then merges them on
+  the business key, so a re-run or a reprocessed range never creates duplicates.
+- **Two layers of data quality.** Great Expectations gates the data after Bronze and after Silver
+  (volume, completeness, uniqueness, validity, freshness). dbt tests the transformations
+  ([ADR 0003](docs/adr/0003-great-expectations-gates-and-dbt-tests.md)).
+- **Fail-closed publication.** Gold becomes visible only as a DuckLake snapshot tagged `publish`
+  after every model and test passes. The report pins that snapshot
+  ([ADR 0002](docs/adr/0002-publish-a-ducklake-snapshot.md)).
+- **Orchestration.** Airflow runs hourly and monthly DAGs with retries, backfill, and a
+  single-writer pool.
+- **Reproducible delivery.** Docker Compose, a locked `uv` environment and CI. CI runs Ruff, pytest
+  against real Postgres and S3, dbt compile, image builds and a DAG import check.
 
 ## Architecture
 
-![VN Climate Risk Monitor architecture](docs/vn-climate-risk-monitor-architecture.png)
+```mermaid
+flowchart LR
+    api[Open-Meteo<br/>forecast + archive APIs]
+    subgraph lake[DuckLake: Postgres catalog + MinIO data files]
+        direction LR
+        bronze[(Bronze<br/>raw JSON)]
+        stg[(Silver<br/>stg_ append-only)]
+        clean[(Silver<br/>clean_ deduplicated)]
+        gold[(Gold<br/>dims + facts)]
+    end
+    meta[(Postgres meta.*<br/>watermarks, job runs)]
+    dash[Streamlit report]
 
-```text
-Open-Meteo Forecast / Archive APIs
-                │
-                ▼
-        Python ingestion
-                │
-                ▼
-       MinIO Bronze objects
-       immutable raw bytes
-                │
-                ▼
-      Auto Loader + DuckLake
-          Silver staging
-                │
-                ▼
-          dbt + DuckDB
-   intermediate → Gold marts
-                │
-                ▼
-        Streamlit dashboard
-
-PostgreSQL: catalog + ingestion/process control state
-Airflow: schedule + dependencies + retries + single-writer coordination
+    api -- fetch --> bronze
+    bronze -- "load + GX gate" --> stg
+    stg -- "dbt merge + GX gate" --> clean
+    clean -- "dbt build + tests" --> gold
+    gold -- "publish snapshot" --> dash
+    meta -.- stg
+    meta -.- clean
+    meta -.- gold
 ```
 
 | Layer | Technology | Responsibility |
 |---|---|---|
-| Source | Open-Meteo | Forecast and historical hourly weather data |
-| Bronze | MinIO | Immutable raw HTTP responses for replay and audit |
-| Control plane | PostgreSQL | Catalog, leases, checkpoints, retries and publication state |
-| Silver | Auto Loader + DuckLake | Parse new files, append staging rows and preserve `_source_file` lineage |
-| Transform | dbt + DuckDB | Normalize, deduplicate, validate and build analytical marts |
-| Orchestration | Apache Airflow | Schedule workflows, manage retries and serialize writes |
-| Serving | Streamlit | Read validated Gold snapshots for maps and drill-down views |
+| Source | Open-Meteo (ECMWF IFS) | Hourly forecast and archive rainfall |
+| Bronze | MinIO | Raw responses kept for replay and audit |
+| Silver | Python + DuckLake, dbt | `stg_` append-only loads, then deduplicated `clean_` tables |
+| Gold | dbt + DuckDB | Star schema: ward and grid dimensions, rainfall facts, rain pressure |
+| Control | PostgreSQL | DuckLake catalog, `meta.watermarks`, `meta.job_runs`, Airflow metadata |
+| Orchestration | Airflow | Schedules, retries, backfill, single-writer pool |
+| Serving | Streamlit | Power BI-style report on the published snapshot |
 
-### Raw lakehouse layout
+More in [1. Architecture](docs/01-architecture.md).
 
-Bronze objects are organized by source, data mode and time window so a failed or historical run
-can be traced back to the exact raw responses that produced it.
+## Pipelines
 
-![Raw lakehouse directory layout](docs/raw-lakehouse-directory.png)
+Both data DAGs run the same five tasks: `init → fetch → load → clean → gold`.
 
-### Pipeline flow
-
-Both data pipelines follow the same seven-stage contract:
-
-```text
-ingest Bronze
-    ↓
-validate Bronze
-    ↓
-load Silver staging
-    ↓
-build Silver intermediate
-    ↓
-validate Silver intermediate
-    ↓
-publish Gold
-    ↓
-check pipeline health
-```
-
-The forecast DAG runs hourly. The archive DAG runs monthly. A maintenance DAG applies snapshot
-retention and safe file cleanup.
-
-![Airflow forecast DAG](docs/airflow-forecast-dag.png)
-
-### Pipeline scale and runtime
-
-The figures below combine design-time volume formulas with local runs measured on 16 Sep 2026.
-Runtime varies with API latency, machine resources and whether the run is a first load or an
-incremental update.
-
-| Pipeline | Input volume per run | Output volume per run | Processing time |
-|---|---|---|---|
-| Forecast, hourly | 126 locations × 72 hours = **9,072 source rows**; 6 API requests with batch size 25 | 48 weather grids × 72 hours = **3,456 curated rows**; ward serving layer = **9,072 rows** | **31–59s end-to-end** on recent successful Airflow runs; **18–32s** for processing and publication |
-| Archive, monthly | 31-day month: 48 IFS grids × 31 × 24 = **35,712 source rows**, or 12 ERA5 grids × 31 × 24 = **8,928 rows**; 2 IFS requests or 1 ERA5 request | 31-day IFS month = **35,712 rows**; 31-day ERA5 month = **8,928 rows** | **344.9s (~5m45s)** for a measured full IFS month processing run; **38.7s** for an already-covered rerun |
-
-The measured local Bronze footprint was approximately **2.76 MB for 8 forecast vintages** and
-**1.29 MB for one archive month**. The latest local Gold tables contained **27,648 forecast
-history rows**, **3,456 current forecast rows**, **9,072 pressure rows** and **35,712 archive
-rows**. These are reproducible sample-run figures, not a production capacity claim.
-
-## Dashboard
-
-A one-report Streamlit dashboard in the style of Power BI: a slicer bar (hour, map metric,
-ward), KPI cards, a ward choropleth, a Top 10 ranking, the pressure-level mix and the 72-hour
-trend, plus ward-detail and data-table pages. Clicking a ward on the map or in the ranking
-cross-filters every visual. It reads Gold only through the latest DuckLake snapshot the
-pipeline tagged `publish`, so one view never mixes two pipeline runs.
-
-![Dashboard rainfall forecast](docs/dashboard-forecast-map.png)
-
-## Reliability and data quality
-
-The project intentionally focuses on correctness and recoverability rather than scale for its own
-sake.
-
-| Concern | Design |
-|---|---|
-| Replay | Raw API response bytes are kept in Bronze with deterministic object paths |
-| Idempotency | Existing Bronze objects are not duplicated; Silver reloads replace rows by source file |
-| Incremental state | PostgreSQL stores file leases, processing runs and checkpoints |
-| Failure recovery | Checkpoints advance only after a successful publication |
-| Data quality | Provero gates Raw/Silver inputs; dbt generic and singular tests validate transformed data |
-| Consistent serving | Dashboard reads the latest validated `published_snapshot_id` |
-| Concurrency | Airflow uses a single-writer pool for DuckLake mutation |
-| Backup / restore | Operational scripts cover lakehouse and metadata backup, verification and restore |
-| CI | Ruff, pytest, docs validation, Compose validation, dbt parse/compile, image build and DAG import |
-
-Examples of tested contracts include uniqueness, non-null keys, rainfall ranges, forecast horizon
-coverage, stable time-based keys, ward-grid coverage and Gold table grains.
-
-![dbt lineage](docs/dbt-lineage.png)
-
-## Data products
-
-Important Gold models:
-
-| Model | Grain | Purpose |
+| DAG | Schedule | Unit of work |
 |---|---|---|
-| `dim_ward` | one row per Hanoi ward/commune | Geography dimension |
-| `dim_grid` | one row per weather grid cell | Weather-grid dimension |
-| `bridge_ward_grid` | ward × weather model | Stable mapping from administrative area to weather grid |
-| `fct_rain_archive_hourly` | grid × hour | Historical rainfall and rolling windows |
-| `fct_rain_forecast_hourly` | forecast run × grid × hour | Full forecast-vintage history |
-| `fct_rain_forecast_current_hourly` | latest run × grid × hour | Current forecast serving view |
-| `fct_rain_pressure_alert` | ward × hour | Explainable rainfall-pressure signal |
+| `open_meteo_forecast_hourly` | every hour at :15 | One forecast run: 48 grid cells × 72 hours |
+| `open_meteo_archive_monthly` | day 6 of each month | One calendar month; history is loaded with `airflow dags backfill` |
+| `lakehouse_maintenance_daily` | daily | Expire old snapshots, delete unreferenced files |
 
-Detailed grains, quality rules and model contracts are documented in
-[`docs/04-data-contracts.md`](docs/04-data-contracts.md).
+![Airflow DAGs](docs/images/airflow-dags.png)
 
-## Why these technologies
+![A forecast DAG run](docs/images/airflow-forecast-run.png)
 
-| Technology | Why it exists in this project |
-|---|---|
-| MinIO | Demonstrates durable object-storage landing and replay without requiring a cloud account |
-| DuckDB + DuckLake | Provides local analytical SQL plus lakehouse-style snapshots/catalog behavior |
-| PostgreSQL | Keeps durable control state separate from analytical data |
-| dbt | Makes SQL transformations, dependencies and data tests explicit and reviewable |
-| Airflow | Demonstrates scheduling, dependency management, retries and backfill-oriented orchestration |
-| Streamlit | Provides a small downstream consumer that proves Gold datasets are usable |
+Bronze keeps each forecast run under its own partition:
 
-The system deliberately avoids Kubernetes, Kafka and distributed compute because the current data
-volume and latency requirements do not justify their operational complexity.
+![Bronze layout in MinIO](docs/images/minio-bronze-forecast.png)
 
-## Repository structure
+## Data model
 
-> The codebase is being rebuilt in small phases (see [`CONTEXT.md`](CONTEXT.md) and
-> [`docs/adr/`](docs/adr/)). Phases 1–6 rebuilt the forecast pipeline end to end, from Bronze to a
-> published Gold snapshot and the dashboard; phase 7 added the monthly archive pipeline on the same
-> code path. The remaining phase cleans up the older docs.
+| Gold model | Grain | Purpose |
+|---|---|---|
+| `dim_ward` | ward | 126 Hanoi wards and communes |
+| `dim_grid` | grid cell | Weather-model grid cells |
+| `bridge_ward_grid` | ward × weather model | The grid cell each ward reads |
+| `fct_rain_forecast_hourly` | forecast run × grid cell × hour | Forecast history with rolling and forward rain windows |
+| `fct_rain_forecast_current_hourly` | grid cell × hour | The latest forecast run (view) |
+| `fct_rain_pressure_alert` | ward × hour | Rain-pressure level, 0–100 score and the reasons |
+| `fct_rain_archive_hourly` | grid cell × hour | Past rainfall with windows across month boundaries |
 
-```text
-vn-climate-risk-monitor/
-├── pipeline/               # Python package run by Airflow
-│   ├── settings.py         # environment variables
-│   ├── lake.py             # the one place that attaches DuckLake (Postgres catalog + MinIO)
-│   ├── job_run.py          # start-time watermark pattern (ADR 0001)
-│   ├── meta.sql            # meta.watermarks, meta.job_runs
-│   ├── init.py             # idempotent lake setup (`uv run init-lakehouse`)
-│   ├── maintain.py         # DuckLake snapshot/file retention
-│   ├── quality.py          # Great Expectations gates
-│   ├── dbt.py              # runs dbt in-process
-│   └── open_meteo/         # fetch -> Bronze, load -> stg_, clean -> clean_, gold + publish
-├── dags/                   # Airflow DAGs
-├── transform/              # dbt project
-├── dashboard/              # Streamlit report (app, queries, ui)
-├── docker/                 # Dockerfiles, Postgres init script
-├── scripts/                # repository checks and one-time data tools
-├── tests/
-│   ├── unit/
-│   └── integration/        # needs a running Postgres
-├── docs/                   # architecture, ADRs, agent docs
-├── docker-compose.yml
-├── pyproject.toml
-└── uv.lock
-```
+![dbt lineage](docs/images/dbt-lineage.png)
+
+Keys, grains and the pressure rules are in [2. Data contracts](docs/02-data-contracts.md). The
+checks are in [3. Data quality](docs/03-data-quality.md).
+
+## Report
+
+One report with page tabs, in the style of Power BI:
+
+- slicers for hour, map metric and ward;
+- KPI cards, a ward choropleth, a top-10 ranking and the pressure-level mix;
+- clicking a ward on the map or the ranking cross-filters every visual;
+- the **Lịch sử mưa** (rain history) page: a month slicer, monthly KPIs, daily rainfall and the
+  ten heaviest hours.
+
+![Rain history page](docs/images/dashboard-rain-history.png)
+
+## Measured run
+
+Measured on 25 Sep 2026 with the Compose stack on one machine. It ran three archive months
+(Jun–Aug 2026) and two hourly forecast runs through Airflow.
+
+| Pipeline | Bronze per run | Rows per run | Airflow DAG run |
+|---|---|---|---|
+| Forecast, hourly | 2 objects, ~0.12 MB | 3,456 grid rows; 9,072 ward pressure rows | ~37 s |
+| Archive, one month | 2 objects, ~0.8 MB | 35,712 grid rows (31 days) | ~40 s |
+| Maintenance | – | – | ~21 s |
+
+Within a run, loading to `stg_` takes 1 s or less, the clean merge about 6 s and the Gold build with
+its tests about 7 s. The rest is task start-up. These are sample figures from a local run, not a
+capacity claim.
 
 ## Run locally
 
-Requirements: Git and Docker Desktop.
+Requirements: Git and Docker.
 
 ```powershell
 git clone https://github.com/DKSang/vn-climate-risk-monitor.git
 cd vn-climate-risk-monitor
-Copy-Item .env.example .env
+Copy-Item .env.example .env        # then change the passwords
 docker compose up -d --build
-docker compose ps
 ```
 
-Local interfaces:
-
-| Service | URL | Default local account |
+| Service | URL | Login |
 |---|---|---|
-| Streamlit | http://localhost:8501 | none |
-| Airflow | http://localhost:8080 | `admin` / `admin` |
-| MinIO Console | http://localhost:9001 | `minioadmin` / `minioadmin` |
+| Report | http://localhost:8501 | none |
+| Airflow | http://localhost:8080 | from `.env` (`admin` / `admin`) |
+| MinIO console | http://localhost:9001 | from `.env` (`minioadmin` / `minioadmin`) |
 
-Unpause and trigger `open_meteo_forecast_hourly` in Airflow to populate the current forecast.
-`open_meteo_archive_monthly` loads one calendar month per run; backfill history with
-`airflow dags backfill open_meteo_archive_monthly -s 2024-01-01 -e 2024-12-31` inside the Airflow
-container. The dashboard's "Lịch sử mưa" page reads the published archive.
-
-`.env.example` contains local-only credentials. Change them when the machine is accessible to other
-users and never commit the generated `.env` file.
-
-## Development checks
+In Airflow, unpause `open_meteo_forecast_hourly` for the live forecast. Load history with:
 
 ```powershell
-uv sync --frozen
+docker compose exec airflow airflow dags backfill open_meteo_archive_monthly -s 2026-01-01 -e 2026-08-31
+```
+
+Day-to-day operation (reprocessing, skipping a bad file, maintenance) is covered in
+[4. Operations](docs/04-operations.md).
+
+## Development
+
+Integration tests reset the lake they connect to (tables, Bronze objects and `meta`), so run them
+against a fresh stack, not one that holds data you want to keep.
+
+```powershell
+uv sync
+docker compose up -d postgres minio     # integration tests need both
 uv run ruff check .
-docker compose up -d postgres   # tests/integration need a real Postgres
-uv run pytest -q
-$env:PYTHONUTF8 = "1"
+uv run pytest
 uv run dbt parse --project-dir transform --profiles-dir transform
-docker compose config --quiet
 uv run python scripts/check_docs.py
 ```
 
-CI additionally compiles the dbt project, builds the runtime images and imports every Airflow DAG.
+## Repository structure
+
+```text
+├── pipeline/              # Python package run by Airflow
+│   ├── settings.py        # environment variables
+│   ├── lake.py            # the one place that attaches DuckLake (Postgres catalog + MinIO)
+│   ├── job_run.py         # start-time watermark pattern (ADR 0001)
+│   ├── meta.sql           # meta.watermarks, meta.job_runs
+│   ├── quality.py         # Great Expectations gates
+│   ├── dbt.py             # runs dbt in-process
+│   ├── init.py            # idempotent lake setup
+│   ├── maintain.py        # snapshot and file retention
+│   └── open_meteo/        # fetch -> Bronze, load -> stg_, clean -> clean_, gold + publish
+├── transform/             # dbt project (Silver clean, Gold, tests, seeds)
+├── dags/                  # Airflow DAGs
+├── dashboard/             # Streamlit report: app, queries, ui
+├── docker/                # Dockerfiles, Airflow entrypoint, Postgres init
+├── scripts/               # one-time reference-data tools and repo checks
+├── tests/                 # pytest: integration (Postgres + S3) and unit
+├── docs/                  # numbered docs, ADRs, images
+├── CONTEXT.md             # domain glossary
+└── docker-compose.yml
+```
 
 ## Documentation
 
-- [`docs/03-architecture.md`](docs/03-architecture.md) — ownership, publication model and engineering trade-offs.
-- [`docs/04-data-contracts.md`](docs/04-data-contracts.md) — source/model grains, quality rules and Gold contracts.
-- [`docs/05-operations.md`](docs/05-operations.md) — retry, backfill, health checks, backup, restore and recovery.
-- [`transform/README.md`](transform/README.md) — dbt build and seed workflow.
+1. [Architecture](docs/01-architecture.md): components, layers, pipelines, trade-offs
+2. [Data contracts](docs/02-data-contracts.md): sources, keys and grains per layer, Gold, publication
+3. [Data quality](docs/03-data-quality.md): Great Expectations gates, dbt tests, pytest
+4. [Operations](docs/04-operations.md): start, backfill, reprocess, troubleshoot
 
-## Current limitations
+- Decisions: [ADR 0001](docs/adr/0001-watermark-incremental-pattern.md) watermarks,
+  [ADR 0002](docs/adr/0002-publish-a-ducklake-snapshot.md) publication,
+  [ADR 0003](docs/adr/0003-great-expectations-gates-and-dbt-tests.md) data quality
+- dbt project: [`transform/README.md`](transform/README.md)
+- Glossary: [`CONTEXT.md`](CONTEXT.md)
 
-- Single-node and single-writer: no high availability or horizontal write scaling.
-- Local Docker Compose deployment: production IAM, secret management and network isolation are out of scope.
-- Static versioned geography references rather than a real-time administrative boundary source.
-- Rainfall pressure is a meteorological prioritization signal, not an official hazard alert.
+## Limitations
+
+- Single node and single writer: no high availability, no parallel writes.
+- Local deployment: IAM, secret management and network isolation are out of scope.
+- Wards and grid cells are static, reviewed references.
+- Rain pressure is a prioritisation signal with portfolio thresholds, not an official alert.
+
+## Data sources
+
+- Weather data by [Open-Meteo](https://open-meteo.com/) (CC BY 4.0).
+- Ward boundaries from
+  [vietnamese-provinces-database](https://github.com/ThangLeQuoc/vietnamese-provinces-database),
+  pinned in `scripts/fetch_hanoi_geojson.py`.

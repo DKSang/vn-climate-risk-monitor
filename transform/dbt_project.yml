@@ -13,6 +13,7 @@ clean-targets:         # directories to be removed by `dbt clean`
   - "dbt_packages"
 
 vars:
+  # The one weather model the pipeline fetches (pipeline/open_meteo/fetch.py).
   forecast_model: ecmwf_ifs
   # Start time of the last successful job run, passed by pipeline/job_run.py.
   watermark: null
@@ -26,7 +27,6 @@ vars:
     high_next_3h_mm: 50
     high_next_6h_mm: 100
     revision_up_mm: 10
-# Retention runs only in lakehouse_maintenance_daily.
 
 # Seeds are versioned references; keep code-like IDs as VARCHAR.
 seeds:
@@ -53,14 +53,15 @@ seeds:
         longitude: DOUBLE
         region: VARCHAR
         climate_zone: VARCHAR
-# Bronze is autoloader-owned; dbt starts from source() in Silver.
+
+# Bronze is Python-owned; dbt starts from the silver.stg_ sources.
 models:
   transform:
     # All dbt models share the DuckLake catalog.
     +database: catalog1
 
-    # Silver built by the rebuilt pipeline (docs/adr/0001): clean_ tables merge
-    # the Python-loaded stg_ tables incrementally from a watermark var.
+    # clean_ tables merge the Python-loaded stg_ tables incrementally from
+    # the watermark var (docs/adr/0001-watermark-incremental-pattern.md).
     silver:
       +schema: silver
       +tags: ['silver']

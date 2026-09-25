@@ -1,4 +1,4 @@
--- NORMAL chỉ hợp lệ khi đủ mọi input; NONE phải có score NULL và UNKNOWN.
+-- Scores stay in 0-100; NORMAL needs complete inputs; no coverage means UNKNOWN with no score.
 SELECT *
 FROM {{ ref('fct_rain_pressure_alert') }}
 WHERE pressure_score < 0

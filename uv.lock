@@ -1658,7 +1658,6 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
-    { name = "jinja2" },
     { name = "pytest" },
     { name = "responses" },
     { name = "ruff" },
@@ -1682,7 +1681,6 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "jinja2", specifier = ">=3.1.0" },
     { name = "pytest", specifier = ">=8.3.0" },
     { name = "responses", specifier = ">=0.25" },
     { name = "ruff", specifier = ">=0.11.0" },

@@ -1,19 +1,4 @@
-{% test not_empty(model) %}
-
-select 1 as failure
-where not exists (select 1 from {{ model }})
-
-{% endtest %}
-
-{% test accepted_range(model, column_name, min_value, max_value) %}
-
-select {{ column_name }}
-from {{ model }}
-where {{ column_name }} < {{ min_value }}
-   or {{ column_name }} > {{ max_value }}
-
-{% endtest %}
-
+{# No two rows may share the values of `columns` (the model's grain). #}
 {% test unique_combination(model, columns) %}
 
 select {{ columns | join(', ') }}
