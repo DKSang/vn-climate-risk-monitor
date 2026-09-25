@@ -12,3 +12,8 @@ sources:
           (pipeline/open_meteo/load.py) after the Great Expectations Bronze gate.
           One row per forecast run x grid cell x hour; the same key can appear
           more than once when a file is re-read.
+
+      - name: stg_open_meteo_archive
+        description: >
+          Append-only archive rows (one row per grid cell x hour) written by the
+          Python auto loader after the Great Expectations Bronze gate.

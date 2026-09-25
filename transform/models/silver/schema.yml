@@ -26,3 +26,19 @@ models:
         tests: [not_null]
       - name: _updated_at
         tests: [not_null]
+
+  - name: clean_weather_archive_hourly
+    description: >
+      One row per grid cell x hour of archive weather, merged from
+      silver.stg_open_meteo_archive with the watermark pattern (docs/adr/0001).
+    tests:
+      - unique_combination:
+          arguments:
+            columns: [grid_cell_id, valid_at]
+    columns:
+      - name: grid_cell_id
+        tests: [not_null]
+      - name: valid_at
+        tests: [not_null]
+      - name: precipitation_mm
+        tests: [not_null]

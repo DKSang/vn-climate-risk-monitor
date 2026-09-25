@@ -7,6 +7,7 @@ hue, light -> dark); a single series is slot-1 blue, context is gray.
 
 from __future__ import annotations
 
+import math
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -131,3 +132,15 @@ def style(chart):
             labelLimit=180,
         )
     )
+
+
+def axis_ticks(top: float, *, count: int = 5) -> list[float]:
+    """Round 1-2-5 ticks from 0 whose last tick sits at or above `top`."""
+    raw = max(top, 1) / count
+    step = next(
+        base * 10**exp
+        for exp in range(-1, 6)
+        for base in (1, 2, 5)
+        if base * 10**exp >= raw
+    )
+    return [round(step * i, 6) for i in range(math.ceil(max(top, 1) / step) + 1)]

@@ -13,7 +13,7 @@ from pipeline.init import main as init_lake
 from pipeline.job_run import create_meta_tables
 from pipeline.open_meteo.clean import build_clean_forecast
 from pipeline.open_meteo.gold import build_gold_forecast
-from pipeline.open_meteo.load import CREATE_STAGING
+from pipeline.open_meteo.load import FORECAST_STAGING
 from pipeline.settings import load_settings
 
 NOW = datetime.now(UTC).replace(minute=0, second=0, microsecond=0)
@@ -27,12 +27,14 @@ def empty_lake() -> None:
     with lake.connect() as con:
         for table in (
             "gold.fct_rain_forecast_hourly",
+            # A lake whose archive was never built must still build forecast Gold.
+            "gold.fct_rain_archive_hourly",
             "gold._publications",
             "silver.clean_weather_forecast_hourly",
             "silver.stg_open_meteo_forecast",
         ):
             con.execute(f"DROP TABLE IF EXISTS {table}")
-        con.execute(CREATE_STAGING)
+        con.execute(FORECAST_STAGING)
     with psycopg.connect(load_settings().postgres.dsn, autocommit=True) as conn:
         conn.execute("DROP SCHEMA IF EXISTS meta CASCADE")
     create_meta_tables()
@@ -59,9 +61,7 @@ def test_the_first_run_is_built_into_gold_and_published() -> None:
             GROUP BY forecast_run, valid_at
             """
         ).fetchall()
-        publications = con.execute(
-            "SELECT forecast_run FROM gold._publications"
-        ).fetchall()
+        publications = con.execute("SELECT asset FROM gold._publications").fetchall()
         # Snapshot history outlives DROP TABLE, so count only this test's snapshots.
         publish_snapshots = con.execute(
             """
@@ -72,7 +72,7 @@ def test_the_first_run_is_built_into_gold_and_published() -> None:
         ).fetchone()
     assert facts == [(NOW, ROWS_PER_RUN)]
     assert wards_per_hour == [(WARDS,)]
-    assert publications == [(NOW,)]
+    assert publications == [("gold.fct_rain_forecast_hourly",)]
     assert publish_snapshots == (1,)
 
 
