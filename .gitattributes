@@ -1,0 +1,6 @@
+# Check out text files with LF everywhere: scripts and configs run inside Linux
+# containers, where CRLF breaks bash (e.g. docker/airflow-entrypoint.sh).
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
