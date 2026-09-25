@@ -58,7 +58,7 @@ services:
       context: .
       dockerfile: docker/airflow.Dockerfile
     restart: unless-stopped
-    command: ["bash", "/project/docker/airflow-entrypoint.sh"]
+    command: bash /project/docker/airflow-entrypoint.sh
     depends_on:
       postgres:
         condition: service_healthy
