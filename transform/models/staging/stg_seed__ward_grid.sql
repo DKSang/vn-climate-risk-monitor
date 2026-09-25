@@ -3,7 +3,7 @@
 {{ config(materialized = 'view') }}
 
 SELECT
-    -- CSV inference có thể làm mất leading zero của ward_code.
+    -- CSV type inference would drop the leading zeros of ward_code.
     LPAD(CAST(ward_code AS VARCHAR), 5, '0') AS ward_code,
     model AS weather_model,
     {{ grid_cell_id(

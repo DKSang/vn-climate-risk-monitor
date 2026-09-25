@@ -9,9 +9,9 @@ transform:
         threads: 4
         memory_limit: '6GB'
       extensions:
-        - httpfs      # đọc file trên MinIO (S3)
+        - httpfs      # data files on MinIO (S3 API)
         - ducklake    # lakehouse catalog
-        - postgres    # metadata catalog của DuckLake nằm trong Postgres
+        - postgres    # DuckLake's metadata lives in Postgres
 
       secrets:
         - type: s3
@@ -29,4 +29,3 @@ transform:
           options:
             data_path: "s3://{{ env_var('MINIO_BUCKET', 'vn-climate') }}"
             metadata_schema: "ducklake"
-        # Ward references come only from versioned seeds.

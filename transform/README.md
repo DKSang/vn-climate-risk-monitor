@@ -1,30 +1,25 @@
 # dbt project
 
-This directory contains the dbt/DuckDB transformation graph. The autoloader
-writes the two physical Silver staging tables; dbt reads them directly and builds
-intermediate and Gold models.
+The transformation graph from Silver staging to Gold, run on DuckDB against the
+DuckLake catalog `catalog1`. Python loads the `silver.stg_*` tables (declared in
+`models/sources.yml`); dbt builds everything after them.
 
-## Parse and build
+| Folder | Builds |
+|---|---|
+| `models/silver` | `silver.clean_*`: deduplicated, merged incrementally from the `watermark` var |
+| `models/staging` | views over the versioned seeds |
+| `models/marts` | Gold dimensions, bridge and facts |
+| `tests`, `macros` | singular tests, generic tests and shared SQL |
+
+The pipeline runs dbt in-process (`pipeline/dbt.py`) with one selector per Gold
+asset from `selectors.yml`, so a failed model or test stops publication. By hand:
 
 ```powershell
 uv run dbt parse --project-dir transform --profiles-dir transform
-uv run dbt build --project-dir transform --profiles-dir transform --select tag:forecast
-uv run dbt build --project-dir transform --profiles-dir transform --select tag:archive
+uv run dbt build --project-dir transform --profiles-dir transform --selector gold_forecast
+uv run dbt build --project-dir transform --profiles-dir transform --selector gold_archive
 ```
 
-The `forecast` and `archive` model tags select their shared reference models and
-the corresponding intermediate and mart models. `dbt build` is the quality
-gate: a failed generic or singular test prevents processing publication.
-
-## Seeds
-
-Reference seeds are static data products. Bootstrap loads them once; the monthly
-archive DAG does not rerun `dbt seed`. After an intentional seed change, run:
-
-```powershell
-uv run dbt seed --project-dir transform --profiles-dir transform
-uv run dbt build --project-dir transform --profiles-dir transform --select dim_ward dim_grid bridge_ward_grid
-```
-
-One-time GeoJSON generation lives under `tools/`; its output is reviewed and
-committed as a reference asset.
+Seeds are reviewed reference data: `ward_coordinates_seed` lists the 126 wards
+and `ward_grid_map_seed` is produced once by `scripts/map_ward_grid.py`. Both
+Gold selectors include them.

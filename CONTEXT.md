@@ -19,7 +19,7 @@ The 72-hour forecast as fetched at one hourly slot, identified by that slot; the
 _Avoid_: forecast vintage, model run, batch
 
 **Archive**:
-Historical hourly weather for past days, as reanalysed by a weather model.
+Hourly weather for past days from the weather model's archive, processed one calendar month at a time.
 _Avoid_: history, backfill data
 
 **Rain pressure**:

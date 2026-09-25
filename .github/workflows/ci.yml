@@ -110,7 +110,7 @@ jobs:
         run: uv run dbt compile --profiles-dir /tmp/vn-climate-dbt-ci --target ci
 
       - name: Build reproducible runtime images
-        run: docker compose build airflow streamlit
+        run: docker compose build airflow dashboard
 
       - name: Parse DAGs in the runtime image
         run: |

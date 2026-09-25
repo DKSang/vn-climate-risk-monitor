@@ -1,4 +1,9 @@
-"""Đồng bộ bộ ranh giới S13 đã ghim phiên bản cho 126 phường/xã Hà Nội."""
+"""One-time tool: write the pinned S13 boundaries of Hanoi's 126 wards.
+
+Writes dashboard/data/hanoi_wards.geojson, which the dashboard map reads:
+
+    uv run python scripts/fetch_hanoi_geojson.py
+"""
 
 from __future__ import annotations
 

@@ -38,10 +38,8 @@ class MinioSettings:
 class OpenMeteoSettings:
     forecast_url: str
     archive_url: str
-    forecast_model: str
     forecast_hours: int
     location_batch_size: int
-    fetch_workers: int
 
 
 @dataclass(frozen=True)
@@ -78,9 +76,7 @@ def load_settings() -> Settings:
                 "OPEN_METEO_ARCHIVE_URL",
                 "https://archive-api.open-meteo.com/v1/archive",
             ),
-            forecast_model=env.get("OPEN_METEO_FORECAST_MODEL", "ecmwf_ifs"),
             forecast_hours=int(env.get("OPEN_METEO_FORECAST_HOURS", "72")),
             location_batch_size=int(env.get("OPEN_METEO_LOCATION_BATCH_SIZE", "25")),
-            fetch_workers=int(env.get("OPEN_METEO_FETCH_WORKERS", "4")),
         ),
     )

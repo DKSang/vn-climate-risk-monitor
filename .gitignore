@@ -1,47 +1,27 @@
-# Python-generated files
+# Python
 __pycache__/
 *.py[oc]
+*.egg-info
 build/
 dist/
-wheels/
-*.egg-info
-
-# Virtual environments
 .venv
+.pytest_cache/
+.ruff_cache/
 
-# Secrets / local config
+# Local secrets
 .env
-.cache/
-.dlt/secrets.toml
-**/.dlt/secrets.toml
+.streamlit/secrets.toml
 
-# Data lake / lakehouse local state (gitignored — tái tạo được)
-lake/
-catalog/
-
-# Airflow runtime
-orchestration/airflow_logs/
-logs/
-airflow.db
-
-# dbt runtime artifacts
-# (dbt project nằm ở transform/, không phải transform/dbt/)
+# dbt artifacts
 transform/target/
 transform/dbt_packages/
 transform/logs/
 transform/.user.yml
-transform/dev.duckdb
 
-# dlt local state (future source loaders)
-.dlt/pipelines/
-
-# Notebook / OS
-.ipynb_checkpoints/
+# Editors and OS
+.vscode/
 .DS_Store
 
+# Claude Code: only the repo's skills are shared
 .claude/*
 !.claude/skills/
-.vscode/
-.pytest_cache/
-.ruff_cache/
-.streamlit/
