@@ -14,7 +14,7 @@ import pytest
 from pipeline import lake
 from pipeline.init import main as init_lake
 from pipeline.job_run import create_meta_tables
-from pipeline.open_meteo.forecast import grid_cells, run_prefix
+from pipeline.open_meteo.fetch import grid_cells, run_prefix
 from pipeline.open_meteo.load import load_forecast
 from pipeline.settings import load_settings
 

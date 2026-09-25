@@ -54,7 +54,7 @@ def pick_from_ranking() -> None:
 head, pages = st.columns([3, 2], vertical_alignment="bottom")
 with head:
     st.markdown(
-        '<div class="report-title">Áp lực mưa Hà Nội · 72 giờ tới</div>'
+        '<div class="report-title">Áp lực mưa Hà Nội</div>'
         f'<div class="report-meta">Forecast run {ui.local(info["forecast_run"])} · '
         f"publish {ui.local(info['published_at'])} (giờ Hà Nội) · snapshot {snapshot}</div>",
         unsafe_allow_html=True,
@@ -62,7 +62,7 @@ with head:
 with pages:
     page = st.segmented_control(
         "Trang",
-        ["Tổng quan", "Chi tiết phường", "Bảng dữ liệu"],
+        ["Tổng quan", "Chi tiết phường", "Lịch sử mưa", "Bảng dữ liệu"],
         default="Tổng quan",
         key="page",
         label_visibility="collapsed",
@@ -73,16 +73,30 @@ wards_now = queries.ward_hour(snapshot, hours[0])
 names = dict(zip(wards_now["ward_code"], wards_now["ward_name"], strict=True))
 st.session_state.setdefault("ward", ALL)
 
+history = page == "Lịch sử mưa"
+months = queries.archive_months(snapshot) if history else []
+
 with ui.card("slicers"):
-    hour_col, metric_col, ward_col, clear_col = st.columns(
+    # Page-level slicers, as in a Power BI report: history pages pick a month.
+    first_col, second_col, ward_col, clear_col = st.columns(
         [3, 3, 2, 1], vertical_alignment="bottom"
     )
-    hour = hour_col.select_slider(
-        "Giờ", options=hours, format_func=ui.local, key="hour"
-    )
-    metric_name = metric_col.segmented_control(
-        "Chỉ số bản đồ", list(ui.MAP_METRICS), default="Áp lực mưa", key="metric"
-    )
+    if history:
+        month = first_col.selectbox(
+            "Tháng",
+            months,
+            format_func=lambda m: f"{m:%m/%Y}",
+            key="month",
+            placeholder="Chưa có dữ liệu lịch sử",
+        )
+        hour, metric_name = st.session_state.get("hour", hours[0]), None
+    else:
+        hour = first_col.select_slider(
+            "Giờ", options=hours, format_func=ui.local, key="hour"
+        )
+        metric_name = second_col.segmented_control(
+            "Chỉ số bản đồ", list(ui.MAP_METRICS), default="Áp lực mưa", key="metric"
+        )
     ward_col.selectbox(
         "Phường/xã",
         [ALL, *sorted(names, key=names.get)],
@@ -329,6 +343,94 @@ def hourly(
     st.altair_chart(ui.style((marks + rule).properties(height=240)), width="stretch")
 
 
+def rain_history(month) -> None:
+    rows = queries.archive_month(snapshot, month)
+    if ward:
+        rows = rows[rows["ward_code"] == ward]
+    # City figures average the wards, so a ward shared by many grid cells counts once.
+    hourly_rain = rows.groupby("valid_at")["precipitation_mm"].mean()
+    peak = rows.loc[rows["precipitation_mm"].idxmax()]
+    heavy_hours = (rows.groupby("valid_at")["precipitation_mm"].max() >= 10).sum()
+    cols = st.columns(3)
+    for col, (label, value, note) in zip(
+        cols,
+        [
+            ("Tổng mưa trong tháng", ui.mm(hourly_rain.sum()), where),
+            (
+                "Giờ mưa lớn nhất",
+                ui.mm(peak["precipitation_mm"]),
+                f"{peak['ward_name']} · {ui.local(peak['valid_at'])}",
+            ),
+            (
+                "Số giờ có mưa ≥ 10 mm",
+                f"{heavy_hours}",
+                "ở ít nhất một phường" if not ward else where,
+            ),
+        ],
+        strict=True,
+    ):
+        with col:
+            ui.tile(f"h_{label}", label, value, note)
+
+    daily = (
+        hourly_rain.rename("mm")
+        .reset_index()
+        .assign(
+            day=lambda d: (
+                d["valid_at"].dt.tz_convert(ui.HANOI).dt.tz_localize(None).dt.floor("D")
+            )
+        )
+        .groupby("day", as_index=False)["mm"]
+        .sum()
+    )
+    ticks = ui.axis_ticks(daily["mm"].max())
+    left, right = st.columns([3, 2])
+    with left, ui.card("history_daily"):
+        ui.visual_title(f"Mưa theo ngày (mm) · {where} · {month:%m/%Y}")
+        chart = (
+            alt.Chart(daily)
+            .mark_bar(color=ui.ACCENT, cornerRadiusEnd=4)
+            .encode(
+                # One band per day, labelled by day of month.
+                x=alt.X(
+                    "date(day):O",
+                    title="Ngày",
+                    axis=alt.Axis(labelAngle=0),
+                    scale=alt.Scale(paddingInner=0.2),
+                ),
+                y=alt.Y(
+                    "mm:Q",
+                    title="mm",
+                    scale=alt.Scale(domain=[0, ticks[-1]]),
+                    axis=alt.Axis(values=ticks),
+                ),
+                tooltip=[
+                    alt.Tooltip("day:T", title="Ngày", format="%d/%m/%Y"),
+                    alt.Tooltip("mm:Q", title="Mưa", format=".1f"),
+                ],
+            )
+            .properties(height=300)
+        )
+        st.altair_chart(ui.style(chart), width="stretch")
+    with right, ui.card("history_top"):
+        ui.visual_title("10 giờ mưa lớn nhất")
+        top = rows.nlargest(10, "precipitation_mm").assign(
+            time=lambda d: d["valid_at"].map(ui.local)
+        )[["ward_name", "time", "precipitation_mm"]]
+        st.dataframe(
+            top,
+            hide_index=True,
+            height=390,
+            column_config={
+                "ward_name": "Phường/xã",
+                "time": "Giờ",
+                "precipitation_mm": st.column_config.NumberColumn(
+                    "Mưa", format="%.1f mm"
+                ),
+            },
+        )
+
+
 # ── Pages ───────────────────────────────────────────────────────────────────
 where = names[ward] if ward else "toàn thành phố"
 
@@ -367,6 +469,15 @@ elif page == "Chi tiết phường":
         with ui.card("ward_reasons"):
             ui.visual_title(f"Lý do ở giờ {ui.local(hour)}")
             st.write(row["trigger_reasons"] or "Không có ngưỡng nào bị vượt.")
+
+elif history:
+    if not months:
+        st.info(
+            "Chưa có dữ liệu lịch sử. Chạy DAG `open_meteo_archive_monthly`, "
+            "hoặc backfill: `airflow dags backfill open_meteo_archive_monthly -s 2024-01-01 -e 2024-12-31`."
+        )
+    else:
+        rain_history(month)
 
 else:
     with ui.card("table"):

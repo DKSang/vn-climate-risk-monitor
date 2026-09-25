@@ -2,12 +2,43 @@ selectors:
   - name: gold_forecast
     description: >
       Everything the forecast Gold build needs and nothing from Silver: the seeds,
-      their staging views and the Gold models, each with its tests.
+      their staging views, the shared dimensions and the forecast Gold models,
+      each with its tests. The archive fact (and its tests) is left out, so a
+      lake whose archive was never built still builds.
     definition:
       union:
         - method: path
           value: seeds
         - method: path
           value: models/staging
+        - method: tag
+          value: dim
+        - method: tag
+          value: bridge
+        - method: tag
+          value: forecast
+        - exclude:
+            - method: path
+              value: models/silver
+            - method: fqn
+              value: fct_rain_archive_hourly
+
+  - name: gold_archive
+    description: >
+      The archive Gold fact with the seeds and shared dimensions its tests need;
+      never Silver, never the forecast facts.
+    definition:
+      union:
         - method: path
-          value: models/marts
+          value: seeds
+        - method: path
+          value: models/staging
+        - method: tag
+          value: dim
+        - method: tag
+          value: bridge
+        - method: fqn
+          value: fct_rain_archive_hourly
+        - exclude:
+            - method: tag
+              value: forecast

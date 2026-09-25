@@ -198,7 +198,8 @@ volume and latency requirements do not justify their operational complexity.
 
 > The codebase is being rebuilt in small phases (see [`CONTEXT.md`](CONTEXT.md) and
 > [`docs/adr/`](docs/adr/)). Phases 1–6 rebuilt the forecast pipeline end to end, from Bronze to a
-> published Gold snapshot and the dashboard; the archive pipeline is rebuilt next.
+> published Gold snapshot and the dashboard; phase 7 added the monthly archive pipeline on the same
+> code path. The remaining phase cleans up the older docs.
 
 ```text
 vn-climate-risk-monitor/
@@ -247,7 +248,9 @@ Local interfaces:
 | MinIO Console | http://localhost:9001 | `minioadmin` / `minioadmin` |
 
 Unpause and trigger `open_meteo_forecast_hourly` in Airflow to populate the current forecast.
-Trigger `open_meteo_archive_monthly` when historical replay data is needed.
+`open_meteo_archive_monthly` loads one calendar month per run; backfill history with
+`airflow dags backfill open_meteo_archive_monthly -s 2024-01-01 -e 2024-12-31` inside the Airflow
+container. The dashboard's "Lịch sử mưa" page reads the published archive.
 
 `.env.example` contains local-only credentials. Change them when the machine is accessible to other
 users and never commit the generated `.env` file.

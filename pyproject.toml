@@ -35,10 +35,14 @@ dev = [
 [project.scripts]
 init-lakehouse = "pipeline.init:main"
 maintain-lakehouse = "pipeline.maintain:main"
-fetch-forecast = "pipeline.open_meteo.forecast:main"
-load-forecast = "pipeline.open_meteo.load:main"
-build-clean-forecast = "pipeline.open_meteo.clean:main"
-build-gold-forecast = "pipeline.open_meteo.gold:main"
+fetch-forecast = "pipeline.open_meteo.fetch:main_forecast"
+load-forecast = "pipeline.open_meteo.load:main_forecast"
+build-clean-forecast = "pipeline.open_meteo.clean:main_forecast"
+build-gold-forecast = "pipeline.open_meteo.gold:main_forecast"
+fetch-archive = "pipeline.open_meteo.fetch:main_archive"
+load-archive = "pipeline.open_meteo.load:main_archive"
+build-clean-archive = "pipeline.open_meteo.clean:main_archive"
+build-gold-archive = "pipeline.open_meteo.gold:main_archive"
 
 [tool.uv.build-backend]
 # Flat layout: ./pipeline (runs in Airflow) and ./dashboard (Streamlit).

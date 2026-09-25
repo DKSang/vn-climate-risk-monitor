@@ -12,7 +12,7 @@ import pytest
 import responses
 
 from pipeline import lake
-from pipeline.open_meteo.forecast import fetch_forecast
+from pipeline.open_meteo.fetch import fetch_forecast
 from pipeline.settings import load_settings
 
 SLOT = datetime(2026, 9, 24, 10, 15, tzinfo=UTC)
