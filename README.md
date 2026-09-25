@@ -44,6 +44,8 @@ month-by-month rainfall history.
 
 ## Architecture
 
+![Pipeline architecture](docs/images/pipeline-architecture.png)
+
 ```mermaid
 flowchart LR
     api[Open-Meteo<br/>forecast + archive APIs]
