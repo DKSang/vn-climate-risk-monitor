@@ -61,11 +61,39 @@ def check_bronze_forecast(
         )
 
 
+def check_bronze_archive(rows: pd.DataFrame, *, cells: int) -> None:
+    """Raise if archive rows read from Bronze break an expectation.
+
+    Each calendar month is checked on its own: every grid cell for every hour.
+    No freshness check: the archive is history, often backfilled years later.
+    """
+    months = rows["valid_at"].dt.strftime("%Y-%m")
+    failures = []
+    for month, month_rows in rows.groupby(months):
+        hours = pd.Period(month).days_in_month * 24
+        expectations = [
+            gxe.ExpectTableRowCountToEqual(value=cells * hours),
+            *(gxe.ExpectColumnValuesToNotBeNull(column=column) for column in KEY),
+            gxe.ExpectCompoundColumnsToBeUnique(column_list=KEY),
+            *(
+                gxe.ExpectColumnValuesToBeBetween(
+                    column=column, min_value=0, max_value=500
+                )
+                for column in ["precipitation", "rain"]
+            ),
+        ]
+        failures += [f"month {month}: {f}" for f in _failures(month_rows, expectations)]
+    if failures:
+        raise RuntimeError(
+            "Bronze archive failed quality checks: " + "; ".join(failures)
+        )
+
+
 def check_silver_forecast(runs: pd.DataFrame, *, rows_per_run: int) -> None:
     """Raise if a forecast run touched in silver.clean_ breaks an expectation.
 
-    `runs` holds every row of each touched run, so volume means the whole run.
-    Keys (unique, not null) are dbt tests on the model.
+    `runs` holds every row of each touched run (grouped by its `period` column),
+    so volume means the whole run. Keys (unique, not null) are dbt tests.
     """
     expectations = [
         gxe.ExpectTableRowCountToEqual(value=rows_per_run),
@@ -89,6 +117,35 @@ def check_silver_forecast(runs: pd.DataFrame, *, rows_per_run: int) -> None:
     if failures:
         raise RuntimeError(
             "Silver forecast failed quality checks: " + "; ".join(failures)
+        )
+
+
+def check_silver_archive(months: pd.DataFrame, *, cells: int) -> None:
+    """Raise if a month touched in silver.clean_weather_archive_hourly breaks an expectation.
+
+    `months` holds every row of each touched month (its `period` column).
+    """
+    failures = []
+    for month, month_rows in months.groupby("period"):
+        hours = month.days_in_month * 24
+        expectations = [
+            gxe.ExpectTableRowCountToEqual(value=cells * hours),
+            *(
+                gxe.ExpectColumnValuesToBeBetween(
+                    column=column, min_value=0, max_value=500
+                )
+                for column in ["precipitation_mm", "rain_mm"]
+            ),
+            gxe.ExpectColumnValuesToBeBetween(
+                column="weather_code", min_value=0, max_value=99
+            ),
+        ]
+        failures += [
+            f"month {month:%Y-%m}: {f}" for f in _failures(month_rows, expectations)
+        ]
+    if failures:
+        raise RuntimeError(
+            "Silver archive failed quality checks: " + "; ".join(failures)
         )
 
 

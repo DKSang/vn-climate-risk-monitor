@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 import pandas as pd
 
 from pipeline import lake
-from pipeline.open_meteo.forecast import grid_cells
+from pipeline.open_meteo.fetch import grid_cells
 
 
 def stage(

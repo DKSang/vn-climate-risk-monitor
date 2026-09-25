@@ -121,6 +121,7 @@ jobs:
           assert not dagbag.import_errors, dagbag.import_errors
           assert set(dagbag.dags) == {
               'lakehouse_maintenance_daily',
+              'open_meteo_archive_monthly',
               'open_meteo_forecast_hourly',
           }
           PY

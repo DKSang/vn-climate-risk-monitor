@@ -1,7 +1,7 @@
 # Operations
 
-> The pipeline is being rebuilt (see `docs/adr/`). The first two sections below
-> describe the new pipeline; later sections still describe the old one and are
+> The pipeline is being rebuilt (see `docs/adr/`). The sections up to "Archive
+> history" describe the new pipeline; later sections still describe the old one and are
 > rewritten in the final phase.
 
 ## Start
@@ -14,7 +14,7 @@ docker compose up -d --build
 docker compose ps
 ```
 
-Every forecast DAG run starts with `init`, which creates the MinIO bucket, the
+Every forecast and archive DAG run starts with `init`, which creates the MinIO bucket, the
 DuckLake schemas and the `meta.*` tables; it is safe to rerun.
 
 ## Forecast loader is blocked by a bad Bronze file
@@ -50,12 +50,21 @@ uv run dbt parse --project-dir transform --profiles-dir transform
 
 Linux containers and CI already use UTF-8 locales.
 
-The first environment initialization must create both physical Silver weather
-tables before a tagged Gold build. Fetch at least one forecast run and the intended
-archive window, then trigger the archive DAG followed by the forecast DAG. The DAG
-order is archive then forecast because the shared grid dimension reads the archive
-intermediate model. Missing cross-domain relations fail fast; dbt no longer hides
-them behind relation-existence branches or empty placeholder CTEs.
+## Archive history
+
+`open_meteo_archive_monthly` processes the month of its data interval, on day 6
+because Open-Meteo's archive trails real time by about five days. Load history
+with a backfill from inside the Airflow container:
+
+```text
+airflow dags backfill open_meteo_archive_monthly -s 2024-01-01 -e 2024-12-31
+```
+
+Fetching skips batches already in Bronze, so re-running a month is harmless. The
+archive and forecast DAGs are independent: either can run first on a fresh lake.
+The archive loader rejects a month that lacks any grid cell or hour; skip or
+reprocess it with the `silver.stg_open_meteo_archive` watermark exactly as for the
+forecast above.
 
 ## Normal runs
 

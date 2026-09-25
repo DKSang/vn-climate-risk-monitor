@@ -5,7 +5,7 @@ A snapshot never changes, so query results are cached per snapshot for good.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
 import duckdb
 import pandas as pd
@@ -112,4 +112,38 @@ def timeseries(snapshot: int, ward_code: str | None = None) -> pd.DataFrame:
         ORDER BY f.valid_at
         """,
         [MODEL, ward_code, ward_code],
+    )
+
+
+@st.cache_data
+def archive_months(snapshot: int) -> list[date]:
+    """Months with archive data in the snapshot, newest first (empty before any)."""
+    try:
+        months = _query(
+            snapshot,
+            """
+            SELECT DISTINCT CAST(date_trunc('month', rain_date) AS DATE) AS month
+            FROM gold.fct_rain_archive_hourly ORDER BY month DESC
+            """,
+        )
+    except duckdb.CatalogException:  # the archive has never been published
+        return []
+    return list(months["month"].dt.date)
+
+
+@st.cache_data
+def archive_month(snapshot: int, month: date) -> pd.DataFrame:
+    """Hourly past rain of every ward over one calendar month (UTC)."""
+    return _query(
+        snapshot,
+        """
+        SELECT w.ward_code, w.ward_name, a.valid_at, a.precipitation_mm
+        FROM gold.fct_rain_archive_hourly AS a
+        JOIN gold.bridge_ward_grid AS b
+          ON b.grid_cell_id = a.grid_cell_id AND b.weather_model = ?
+        JOIN gold.dim_ward AS w ON w.ward_code = b.ward_code
+        WHERE date_trunc('month', a.rain_date) = ?
+        ORDER BY a.valid_at, w.ward_code
+        """,
+        [MODEL, month],
     )
