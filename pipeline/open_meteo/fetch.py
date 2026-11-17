@@ -5,7 +5,8 @@ from __future__ import annotations
 import argparse
 import calendar
 import csv
-from datetime import UTC, date, datetime
+import sys
+from datetime import UTC, date, datetime, timedelta
 from io import BytesIO
 from itertools import batched
 from pathlib import Path
@@ -29,10 +30,29 @@ FORECAST_PREFIX = "bronze/open_meteo/forecast/"
 ARCHIVE_PREFIX = "bronze/open_meteo/archive/"
 GRID_SEED = Path(__file__).parents[2] / "transform/seeds/ward_grid_map_seed.csv"
 
+# The forecast API only answers "from now", so a run fetched long after its slot
+# would be filed under the wrong forecast_run. Allows for pool queueing and retries.
+MAX_SLOT_AGE = timedelta(hours=3)
+# Airflow's BashOperator marks a task skipped (not failed, not retried) on this code.
+SKIP_EXIT_CODE = 99
 
-def fetch_forecast(slot: datetime) -> list[str]:
-    """Fetch the forecast run for `slot` and return the Bronze keys it wrote."""
+
+class StaleSlotError(RuntimeError):
+    """The slot is too old to fetch: the API cannot return that forecast run."""
+
+
+def fetch_forecast(slot: datetime, *, now: datetime | None = None) -> list[str]:
+    """Fetch the forecast run for `slot` and return the Bronze keys it wrote.
+
+    Raises StaleSlotError, landing nothing, if the slot is older than MAX_SLOT_AGE.
+    """
     slot = slot.astimezone(UTC)
+    age = (now or datetime.now(UTC)) - slot
+    if age > MAX_SLOT_AGE:
+        raise StaleSlotError(
+            f"Slot {slot:%Y-%m-%dT%H:%M%z} is {age} old (max {MAX_SLOT_AGE}); "
+            "Open-Meteo only returns the current forecast, so a later run covers it"
+        )
     settings = load_settings().open_meteo
     return land(
         run_prefix(slot),
@@ -150,7 +170,11 @@ def main_forecast() -> None:
         help="timezone-aware ISO time of the hourly slot, e.g. 2026-09-24T10:00:00+00:00",
     )
     slot = parser.parse_args().slot
-    keys = fetch_forecast(slot)
+    try:
+        keys = fetch_forecast(slot)
+    except StaleSlotError as error:
+        print(f"Skipping: {error}")
+        sys.exit(SKIP_EXIT_CODE)
     print(
         f"Landed {len(keys)} object(s) for forecast run {slot.astimezone(UTC):%Y%m%dT%H}"
     )

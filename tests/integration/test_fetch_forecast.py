@@ -6,13 +6,13 @@ HTTP is faked at the transport edge with `responses`; storage is real.
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 import responses
 
 from pipeline import lake
-from pipeline.open_meteo.fetch import fetch_forecast
+from pipeline.open_meteo.fetch import MAX_SLOT_AGE, StaleSlotError, fetch_forecast
 from pipeline.settings import load_settings
 
 SLOT = datetime(2026, 9, 24, 10, 15, tzinfo=UTC)
@@ -20,6 +20,8 @@ RUN_PREFIX = (
     "bronze/open_meteo/forecast/year=2026/month=09/day=24/forecast_run=20260924T10/"
 )
 FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
+# Shortly after the slot, as in a normal Airflow run.
+NOW = SLOT + timedelta(minutes=1)
 
 
 @pytest.fixture(autouse=True)
@@ -51,7 +53,7 @@ def test_each_batch_of_grid_cells_lands_as_one_object_with_the_raw_bytes() -> No
     responses.get(FORECAST_URL, body=_body(0))
     responses.get(FORECAST_URL, body=_body(1))
 
-    keys = fetch_forecast(SLOT)
+    keys = fetch_forecast(SLOT, now=NOW)
 
     # 48 ecmwf_ifs grid cells in batches of 25 -> 2 requests.
     assert keys == [RUN_PREFIX + "batch_000.json", RUN_PREFIX + "batch_001.json"]
@@ -65,10 +67,10 @@ def test_each_batch_of_grid_cells_lands_as_one_object_with_the_raw_bytes() -> No
 def test_rerunning_a_slot_neither_calls_the_api_nor_rewrites_bronze() -> None:
     responses.get(FORECAST_URL, body=_body(0))
     responses.get(FORECAST_URL, body=_body(1))
-    fetch_forecast(SLOT)
+    fetch_forecast(SLOT, now=NOW)
     landed = _bronze()
 
-    assert fetch_forecast(SLOT) == []
+    assert fetch_forecast(SLOT, now=NOW) == []
     assert len(responses.calls) == 2
     assert _bronze() == landed
 
@@ -82,7 +84,7 @@ def test_an_open_meteo_error_payload_fails_and_lands_nothing() -> None:
     )
 
     with pytest.raises(RuntimeError, match="Cannot initialize WeatherVariable"):
-        fetch_forecast(SLOT)
+        fetch_forecast(SLOT, now=NOW)
     assert _bronze() == {}
 
 
@@ -92,6 +94,25 @@ def test_a_temporary_server_error_is_retried() -> None:
     responses.get(FORECAST_URL, body=_body(0))
     responses.get(FORECAST_URL, body=_body(1))
 
-    keys = fetch_forecast(SLOT)
+    keys = fetch_forecast(SLOT, now=NOW)
 
     assert _bronze() == {keys[0]: _body(0), keys[1]: _body(1)}
+
+
+@responses.activate
+def test_a_slot_older_than_the_max_age_lands_nothing_and_never_calls_the_api() -> None:
+    # Airflow can run a slot weeks late after downtime; the API would answer with
+    # today's forecast, to be filed under that old run.
+    with pytest.raises(StaleSlotError, match="only returns the current forecast"):
+        fetch_forecast(SLOT, now=SLOT + MAX_SLOT_AGE + timedelta(seconds=1))
+
+    assert len(responses.calls) == 0
+    assert _bronze() == {}
+
+
+@responses.activate
+def test_a_slot_exactly_at_the_max_age_is_still_fetched() -> None:
+    responses.get(FORECAST_URL, body=_body(0))
+    responses.get(FORECAST_URL, body=_body(1))
+
+    assert len(fetch_forecast(SLOT, now=SLOT + MAX_SLOT_AGE)) == 2
